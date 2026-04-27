@@ -6,3 +6,7 @@ class IdentityConfig(AppConfig):
     label = "identity"
     verbose_name = "Identity"
     default_auto_field = "django.db.models.BigAutoField"
+
+    def ready(self) -> None:
+        # Wire auth signal handlers — login/logout/login-failed → audit log.
+        from . import signals  # noqa: F401

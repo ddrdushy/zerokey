@@ -44,9 +44,11 @@ export function Header() {
           >
             Sign in
           </Link>
-          <Button size="sm" variant="primary">
-            Start free trial
-          </Button>
+          <Link href="/sign-up">
+            <Button size="sm" variant="primary">
+              Start free trial
+            </Button>
+          </Link>
         </div>
       </div>
     </header>

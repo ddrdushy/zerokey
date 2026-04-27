@@ -28,7 +28,7 @@ postgres_only = pytest.mark.skipif(
 class TestTenantIsolation:
     @pytest.fixture
     def two_tenants(self) -> tuple[Organization, Organization, Role]:
-        role = Role.objects.create(name=Role.SystemRole.OWNER)
+        role, _ = Role.objects.get_or_create(name=Role.SystemRole.OWNER)
         a = Organization.objects.create(
             legal_name="Tenant A", tin="C10000000001", contact_email="a@example"
         )

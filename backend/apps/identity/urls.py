@@ -1,7 +1,12 @@
 """URL routes for the identity context.
 
-Authentication, organizations, memberships, sessions, SSO. Phase 1 is intentionally
-a single placeholder endpoint; real routes land as the auth flows are implemented.
+Phase 1 surface:
+  POST  /register                — create user + organization + owner membership
+  POST  /login                   — session login
+  POST  /logout                  — session logout
+  GET   /me                      — current user, memberships, active org
+  POST  /switch-organization     — switch active org for users with multiple memberships
+  GET   /ping                    — placeholder healthcheck
 """
 
 from django.urls import path
@@ -12,4 +17,10 @@ app_name = "identity"
 
 urlpatterns = [
     path("ping/", views.ping, name="ping"),
+    path("csrf/", views.csrf, name="csrf"),
+    path("register/", views.register, name="register"),
+    path("login/", views.login_view, name="login"),
+    path("logout/", views.logout_view, name="logout"),
+    path("me/", views.me, name="me"),
+    path("switch-organization/", views.switch_organization, name="switch-organization"),
 ]

@@ -23,7 +23,8 @@ class TestIdentity:
             tin="C20880050010",
             contact_email="ops@acme.example",
         )
-        role = Role.objects.create(name=Role.SystemRole.OWNER)
+        # Seed migration already created system roles; just look it up.
+        role, _ = Role.objects.get_or_create(name=Role.SystemRole.OWNER)
         user = User.objects.create_user(email="a@example.com", password="x")
         OrganizationMembership.objects.create(user=user, organization=org, role=role)
 

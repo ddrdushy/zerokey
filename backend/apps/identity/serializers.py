@@ -1,0 +1,70 @@
+"""DRF serializers for the identity context."""
+
+from __future__ import annotations
+
+from rest_framework import serializers
+
+from .models import Organization, OrganizationMembership, User
+
+
+class RegisterSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(
+        write_only=True, min_length=12, style={"input_type": "password"}
+    )
+    organization_legal_name = serializers.CharField(max_length=255)
+    organization_tin = serializers.CharField(max_length=32)
+    contact_email = serializers.EmailField()
+
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, style={"input_type": "password"})
+
+
+class OrganizationSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Organization
+        fields = ["id", "legal_name", "tin", "subscription_state", "trial_state"]
+
+
+class MembershipSerializer(serializers.ModelSerializer):
+    organization = OrganizationSummarySerializer(read_only=True)
+    role = serializers.CharField(source="role.name", read_only=True)
+
+    class Meta:
+        model = OrganizationMembership
+        fields = ["id", "organization", "role", "joined_date"]
+
+
+class UserSerializer(serializers.ModelSerializer):
+    memberships = serializers.SerializerMethodField()
+    active_organization_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "email",
+            "preferred_language",
+            "preferred_timezone",
+            "two_factor_enabled",
+            "memberships",
+            "active_organization_id",
+        ]
+
+    def get_memberships(self, obj: User) -> list[dict]:
+        from .services import memberships_for
+
+        return MembershipSerializer(memberships_for(obj), many=True).data
+
+    def get_active_organization_id(self, obj: User) -> str | None:
+        request = self.context.get("request")
+        if request is None:
+            return None
+        session = getattr(request, "session", None)
+        return session.get("organization_id") if session is not None else None
+
+
+class SwitchOrganizationSerializer(serializers.Serializer):
+    organization_id = serializers.UUIDField()
