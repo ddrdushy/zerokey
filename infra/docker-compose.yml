@@ -1,0 +1,197 @@
+# Local development stack for ZeroKey.
+#
+# Mirrors the production tier shape from docs/ARCHITECTURE.md:
+#   - data tier:        postgres, redis, qdrant
+#   - application tier: backend (Django + DRF)
+#   - work tier:        worker (Celery, default + high + low queues)
+#   - signing tier:     signer (Celery, signing queue only — production runs
+#                       this on isolated containers with stricter IAM)
+#   - frontend tier:    Next.js dev server
+#
+# All services share a single bridge network. Postgres data is persisted in a
+# named volume; everything else is ephemeral.
+#
+# Production deployment uses ECS Fargate (see ARCHITECTURE.md §"Deployment topology");
+# this compose file is for local development only.
+
+name: zerokey
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zerokey}
+      POSTGRES_USER: ${POSTGRES_USER:-zerokey}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zerokey_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-zerokey}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    environment:
+      DJANGO_SETTINGS_MODULE: zerokey.settings.dev
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-key-change-me}
+      DJANGO_DEBUG: "true"
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-zerokey}
+      POSTGRES_USER: ${POSTGRES_USER:-zerokey}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zerokey_dev}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-zerokey_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-zerokey_app_dev}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      QDRANT_URL: http://qdrant:6333
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app
+      - backend_venv:/opt/venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # General-purpose Celery worker — handles default/high/low queues.
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    command:
+      [
+        "celery",
+        "-A",
+        "zerokey",
+        "worker",
+        "--loglevel=info",
+        "-Q",
+        "high,default,low",
+        "-n",
+        "worker@%h",
+      ]
+    environment:
+      DJANGO_SETTINGS_MODULE: zerokey.settings.dev
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-key-change-me}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-zerokey}
+      POSTGRES_USER: ${POSTGRES_USER:-zerokey}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zerokey_dev}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-zerokey_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-zerokey_app_dev}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    volumes:
+      - ../backend:/app
+      - backend_venv:/opt/venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Signing-service worker — dedicated to the signing queue only.
+  # In production this runs on isolated containers with restricted IAM
+  # (read-only S3 to the cert prefix, KMS decrypt to the cert envelope key,
+  # nothing else). Local dev shares the same image.
+  signer:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    command:
+      [
+        "celery",
+        "-A",
+        "zerokey",
+        "worker",
+        "--loglevel=info",
+        "-Q",
+        "signing",
+        "-n",
+        "signer@%h",
+        "--concurrency=2",
+      ]
+    environment:
+      DJANGO_SETTINGS_MODULE: zerokey.settings.dev
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-key-change-me}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-zerokey}
+      POSTGRES_USER: ${POSTGRES_USER:-zerokey}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zerokey_dev}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    volumes:
+      - ../backend:/app
+      - backend_venv:/opt/venv
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000/api/v1
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next_cache:/app/.next
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:
+  backend_venv:
+  frontend_node_modules:
+  frontend_next_cache:

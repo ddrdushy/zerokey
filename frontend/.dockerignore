@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+build
+dist
+.git
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.eslintcache

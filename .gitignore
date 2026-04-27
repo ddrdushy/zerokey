@@ -1,0 +1,56 @@
+# macOS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+*.log
+.python-version
+
+# uv / virtualenvs
+.venv/
+venv/
+
+# Django
+backend/staticfiles/
+backend/media/
+backend/db.sqlite3*
+backend/*.sqlite3*
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+.npm/
+.pnpm-store/
+*.tsbuildinfo
+.eslintcache
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Local volumes
+infra/volumes/

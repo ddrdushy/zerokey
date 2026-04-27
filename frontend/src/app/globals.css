@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Semantic tokens layer — semantic-over-literal, per VISUAL_IDENTITY.md.
+   Component code references these (e.g. text-text-primary) rather than literal
+   colour names. The literal mapping is an implementation detail that may change. */
+@layer base {
+  :root {
+    --surface-page: theme(colors.paper);
+    --surface-elevated: #ffffff;
+    --surface-muted: theme(colors.slate.50);
+    --text-primary: theme(colors.ink);
+    --text-secondary: theme(colors.slate.600);
+    --text-tertiary: theme(colors.slate.400);
+    --border-default: theme(colors.slate.100);
+    --border-strong: theme(colors.slate.200);
+    --accent-signal: theme(colors.signal);
+    --focus-ring: theme(colors.signal);
+  }
+
+  html,
+  body {
+    background: var(--surface-page);
+    color: var(--text-primary);
+  }
+
+  body {
+    @apply font-sans text-base antialiased;
+  }
+
+  /* Visible focus state in Signal at 2px — never removed for visual cleanliness. */
+  *:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  /* Reduced-motion is a first-class state, not a fallback. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 80ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
