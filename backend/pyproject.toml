@@ -47,8 +47,10 @@ select = [
     "RUF",
 ]
 ignore = [
-    "S101",
-    "E501",
+    "S101",   # assert (pytest)
+    "E501",   # handled by formatter
+    "RUF012", # mutable defaults in Meta — idiomatic in Django
+    "RUF001", # ambiguous Unicode — false-positive on legit non-Latin chars
 ]
 
 [tool.ruff.lint.per-file-ignores]

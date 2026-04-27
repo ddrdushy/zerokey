@@ -4,7 +4,7 @@ Production hardening lives here. Anything sensitive (SECRET_KEY, DB password, KM
 key alias) comes from the environment — never from this file.
 """
 
-from .base import *  # noqa: F401,F403
+from .base import *  # noqa: F403
 from .base import env
 
 DEBUG = False
