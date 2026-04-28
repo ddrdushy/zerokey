@@ -965,6 +965,132 @@ What's deferred (and where it should plug in):
   exact + alias matches start missing recurring buyers. Premature
   today; revisit when we see the miss patterns in production.
 
+### Slice 15 — Edit + save: closing the correction feedback loop
+
+The review screen (Slice 12) was read-only; every field shown was
+extraction output and the user had no way to fix it. The masters
+(Slice 14) couldn't learn from corrections because there were no
+corrections to learn from. This slice puts both halves on the chain:
+fields are editable in place, Save runs the full re-pipeline, and
+buyer corrections propagate to the matched CustomerMaster.
+
+Backend:
+
+- **`PATCH /api/v1/invoices/<id>/`** accepts a partial update payload
+  shaped against a strict allowlist (``EDITABLE_HEADER_FIELDS``).
+  Anything outside that set raises a 400 — an attacker (or a bug)
+  can't flip ``lhdn_uuid`` / ``status`` / ``signed_xml_s3_key`` /
+  ``raw_extracted_text`` via this endpoint. A dedicated test pins
+  the allowlist's omissions.
+- **`update_invoice` service** does five things in one transaction:
+  applies edits with type coercion (decimals tolerate "RM 1,234.56",
+  dates accept ISO 8601 or DD/MM/YYYY), bumps ``per_field_confidence``
+  to 1.0 for each changed field (matches the master-autofill
+  convention so the review UI's confidence dot is consistent across
+  both signals), emits a single ``invoice.updated`` audit event whose
+  payload lists field NAMES but never values (PII), pushes buyer
+  corrections to the matched CustomerMaster, and re-runs
+  ``enrich_invoice`` + ``validate_invoice`` so the response carries
+  fresh issues against the new field set.
+- **Master propagation**: a corrected ``buyer_msic_code`` /
+  ``buyer_address`` / etc. **overwrites** the matched master's
+  corresponding column. This is the deliberate inversion of the
+  enrichment rule (which never overwrites) — user corrections are
+  the strongest evidence we have, stronger than any LLM output the
+  master previously absorbed. If the user renames the buyer, the
+  previous canonical name is filed as an alias before being
+  overwritten so the match history is preserved.
+
+Frontend:
+
+- **`FieldRow` is dual-mode.** Read mode (no `onChange` prop) renders
+  static text; edit mode (`onChange` provided) renders an inline
+  `<input>` with the same visual frame. The dirty marker (a
+  Signal-tinted dot labelled "Edited") replaces the confidence dot
+  when a field has unsaved edits, so the reviewer's attention shifts
+  from "how sure are we" to "you've changed this, save". `kind="date"`
+  switches to the native date picker; `kind="decimal"` stays on text
+  so the user can paste currency strings.
+- **Page draft state** carries pending edits as a `Partial<Record<EditableField, string>>`.
+  Each FieldRow's value is `draft[name] ?? invoice[name]`; the
+  comparison drives both the value displayed and the dirty marker.
+- **`SaveBar`** sticks to the bottom of the right pane only when
+  `dirtyCount > 0` (UX_PRINCIPLES principle 2: one primary action
+  per screen). Shows count + helper copy ("Save to re-validate
+  against LHDN rules. Your masters learn from this."), Discard +
+  Save buttons. On save, the response replaces the invoice state
+  and clears the draft.
+- **Type narrowing**: `EditableField` is a string-literal union that
+  must match the backend's `EDITABLE_HEADER_FIELDS`. A typo in the
+  page's `onChange` flow becomes a TypeScript error rather than a
+  silent runtime 400.
+
+A small visibility bug also fixed: the `required.line_items` rule's
+`field_path = "line_items"` (no `[N]`) was being filtered out of the
+orphan-issues stack because the predicate used `startsWith("line_items")`
+which also matched the indexed paths the table renders. Tightened to
+`startsWith("line_items[")` so collection-level findings render in
+the orphan stack alongside other field-less issues.
+
+Tests: 16 new (174 passing total). Service-level coverage of single-
+field updates, multi-field batching into one audit event, no-op when
+nothing changed, decimal coercion, unknown-field rejection, invalid-
+decimal rejection, master propagation (corrects blank, overwrites
+wrong value, files old name as alias), revalidation clearing
+resolved issues, revalidation surfacing newly-broken invariants.
+Endpoint-level: PATCH happy path, PATCH unknown-field 400, PATCH
+unauth 403, PATCH cross-tenant 404. Allowlist invariant test pins
+the submission-lifecycle field omissions.
+
+Verified live with Playwright: signed up fresh, dropped the
+synthetic empty-PDF, the review screen rendered with 6 error pills
+(missing required fields). Filled invoice number, issue date,
+supplier name, supplier TIN, buyer name, buyer TIN — all six fields
+showed the "Edited" dirty marker, SaveBar appeared with "6 unsaved
+corrections". Clicked Save, the response cleared the draft, errors
+dropped to 0 inline pills, banner softened to "1 ERROR" (the
+line-items rule, now correctly orphan-rendered), every edited field
+showed a 100% green confidence dot. Reloaded the page —
+`invoice_number = "EDIT-INV-001"` persisted.
+
+Durable design decisions:
+
+- **Allowlist over denylist for editable fields.** The set is small,
+  explicit, and tested; new fields opt in deliberately. The
+  alternative (deny submission-lifecycle fields) would have to be
+  kept in sync forever and would silently grow holes.
+- **User corrections OVERWRITE master values; the master values
+  never overwrite invoice values.** Two opposite rules at the same
+  master/invoice boundary, both intentional. The review UI is the
+  only place a human commits a value; everything else is
+  machine-generated. The master learns from humans.
+- **Confidence 1.0 on user-edited fields** matches the
+  master-autofill convention. The review UI doesn't need to
+  distinguish "from your correction" from "from your master" —
+  both are user-confirmed signals. If we later need the
+  distinction, a separate flag carries it without changing the
+  visual treatment.
+- **Single audit event per save**, not one per field. The user's
+  mental model is "I saved a batch of corrections", not "I
+  changed seven fields in atomic order"; the audit log matches.
+- **Re-enrich AFTER user edits**, then re-validate. Order
+  matters: the enrichment pass picks the right master if the
+  user just corrected the TIN, and validation sees the
+  post-enrichment field set so master-filled fields don't
+  trip "missing" warnings.
+
+What's deferred:
+
+- **Editable line items.** Tables with editable cells are fiddly
+  UI work; header-only edits ship the bulk of the value. Line-item
+  editing is the next-but-one slice on this surface.
+- **Save-on-blur**, optimistic updates, undo within a session.
+  Polish that becomes worth the complexity once the slice is in
+  production use and we see the actual editing patterns.
+- **Bulk corrections across invoices** ("update all invoices that
+  reference this buyer's TIN"). Useful operator surface, but
+  premature without volume.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -1048,7 +1174,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 158 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 174 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -1097,6 +1223,14 @@ Coverage:
   blank-fields auto-fill (never overwrites), legal-name protection
   (never silently changed), per-line item code inheritance,
   audit-payload PII redaction, cross-tenant isolation.
+- Invoice updates (PATCH) — service-level: single + multi field,
+  no-op detection, decimal coercion of currency-symbol input,
+  unknown-field allowlist rejection, master propagation (corrects
+  blank, overwrites wrong value, files old name as alias on rename),
+  revalidation clearing resolved issues / surfacing newly-broken
+  invariants. Endpoint-level: 200 happy path, 400 on unknown field,
+  401/403 unauth, 404 cross-tenant. Static allowlist invariant pins
+  submission-lifecycle field omissions.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 

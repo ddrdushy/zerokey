@@ -3,14 +3,19 @@
 // Side-by-side invoice review screen.
 //
 // Layout: source document on the left, structured fields + validation
-// findings on the right. Stacks on mobile (< md). Per UX_PRINCIPLES the
-// primary "approve and submit" CTA lands here once submission is wired
-// (Phase 3 follow-up); this slice presents the data and flags problems
-// honestly so the user can review before that CTA exists.
+// findings on the right. Stacks on mobile (< lg). The right pane's
+// header and party + totals fields are EDITABLE — corrections submit
+// through the PATCH endpoint, which re-runs enrichment + validation
+// and returns the updated invoice with fresh issues.
 //
-// We poll while the job is still in flight, identical cadence to the
-// dashboard list, so a freshly-uploaded invoice transitions from
-// "received → ready_for_review" without a manual refresh.
+// The "Save corrections" action (UX_PRINCIPLES principle 2: one primary
+// action per screen) only appears when the local draft has at least
+// one pending change. The submit-and-sign primary action will replace
+// it once the signing service lands.
+//
+// Polling continues while the job is non-terminal so a freshly-uploaded
+// invoice transitions from "received -> ready_for_review" without a
+// manual refresh.
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -32,11 +37,37 @@ import { ValidationBanner } from "@/components/review/ValidationBanner";
 
 const TERMINAL = new Set(["validated", "rejected", "cancelled", "error", "ready_for_review"]);
 
+// Editable header field set — must match backend EDITABLE_HEADER_FIELDS.
+// We keep the type narrow so an accidental typo in the page's onChange
+// flow gets caught at compile time.
+type EditableField =
+  | "invoice_number"
+  | "issue_date"
+  | "due_date"
+  | "currency_code"
+  | "supplier_legal_name"
+  | "supplier_tin"
+  | "supplier_address"
+  | "supplier_msic_code"
+  | "buyer_legal_name"
+  | "buyer_tin"
+  | "buyer_address"
+  | "buyer_msic_code"
+  | "buyer_country_code"
+  | "subtotal"
+  | "total_tax"
+  | "grand_total";
+
+type Draft = Partial<Record<EditableField, string>>;
+
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [job, setJob] = useState<IngestionJob | null>(null);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
+  const [draft, setDraft] = useState<Draft>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -77,9 +108,37 @@ export default function JobDetailPage() {
     };
   }, [params.id, router]);
 
+  function onChangeField(name: string, value: string) {
+    setSaveError(null);
+    setDraft((prev) => ({ ...prev, [name as EditableField]: value }));
+  }
+
+  async function onSave() {
+    if (!invoice) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      // Empty strings clear the field; the backend coerces them per type.
+      const updated = await api.updateInvoice(invoice.id, draft);
+      setInvoice(updated);
+      setDraft({});
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function onDiscard() {
+    setDraft({});
+    setSaveError(null);
+  }
+
   if (loading) return <Pad>Loading…</Pad>;
   if (error) return <Pad>{error}</Pad>;
   if (!job) return <Pad>Not found.</Pad>;
+
+  const dirtyCount = Object.keys(draft).length;
 
   return (
     <AppShell>
@@ -97,7 +156,11 @@ export default function JobDetailPage() {
 
           <div className="flex flex-col gap-5">
             {invoice ? (
-              <ReviewPanel invoice={invoice} />
+              <ReviewPanel
+                invoice={invoice}
+                draft={draft}
+                onChangeField={onChangeField}
+              />
             ) : (
               <PendingPanel job={job} />
             )}
@@ -135,6 +198,16 @@ export default function JobDetailPage() {
             )}
           </div>
         </div>
+
+        {dirtyCount > 0 && (
+          <SaveBar
+            count={dirtyCount}
+            saving={saving}
+            error={saveError}
+            onSave={onSave}
+            onDiscard={onDiscard}
+          />
+        )}
       </div>
     </AppShell>
   );
@@ -179,17 +252,37 @@ function PendingPanel({ job }: { job: IngestionJob }) {
   );
 }
 
-function ReviewPanel({ invoice }: { invoice: Invoice }) {
+type ReviewPanelProps = {
+  invoice: Invoice;
+  draft: Draft;
+  onChangeField: (name: string, value: string) => void;
+};
+
+function ReviewPanel({ invoice, draft, onChangeField }: ReviewPanelProps) {
   const issuesByPath = useMemo(() => groupByPath(invoice.validation_issues), [
     invoice.validation_issues,
   ]);
   const conf = invoice.per_field_confidence ?? {};
 
+  // ``valueOf(name)`` returns the value the user is currently looking at:
+  // the draft override if there is one, otherwise the saved invoice
+  // value. Dates render as YYYY-MM-DD for the date input control.
+  const valueOf = (name: EditableField): string => {
+    if (name in draft) return draft[name] ?? "";
+    const raw = (invoice as Record<string, unknown>)[name];
+    if (raw === null || raw === undefined) return "";
+    return String(raw);
+  };
+  const isDirty = (name: EditableField): boolean => name in draft;
+
   // Top-level issues that aren't tied to a specific field render as a
-  // separate stack so they don't get lost.
+  // separate stack so they don't get lost. The ``line_items[N]`` paths
+  // are rendered inline by LineItemsTable; a bare ``line_items`` path
+  // (e.g. the ``required.line_items`` rule firing on zero items) has
+  // nowhere else to land — orphan-stack it.
   const orphanIssues = invoice.validation_issues.filter((i) => {
     if (!i.field_path) return true;
-    if (i.field_path.startsWith("line_items")) return false; // shown in the table
+    if (i.field_path.startsWith("line_items[")) return false;
     return !FIELD_PATHS.has(i.field_path);
   });
 
@@ -202,35 +295,41 @@ function ReviewPanel({ invoice }: { invoice: Invoice }) {
         <div className="grid gap-3 md:grid-cols-2">
           <FieldRow
             label="Invoice number"
-            value={invoice.invoice_number}
+            name="invoice_number"
+            value={valueOf("invoice_number")}
             confidence={conf.invoice_number}
             issues={issuesByPath["invoice_number"]}
+            dirty={isDirty("invoice_number")}
+            onChange={onChangeField}
           />
           <FieldRow
             label="Issue date"
-            value={
-              invoice.issue_date
-                ? new Date(invoice.issue_date).toLocaleDateString()
-                : null
-            }
+            name="issue_date"
+            kind="date"
+            value={valueOf("issue_date")}
             confidence={conf.issue_date}
             issues={issuesByPath["issue_date"]}
+            dirty={isDirty("issue_date")}
+            onChange={onChangeField}
           />
           <FieldRow
             label="Due date"
-            value={
-              invoice.due_date
-                ? new Date(invoice.due_date).toLocaleDateString()
-                : null
-            }
+            name="due_date"
+            kind="date"
+            value={valueOf("due_date")}
             confidence={conf.due_date}
             issues={issuesByPath["due_date"]}
+            dirty={isDirty("due_date")}
+            onChange={onChangeField}
           />
           <FieldRow
             label="Currency"
-            value={invoice.currency_code}
+            name="currency_code"
+            value={valueOf("currency_code")}
             confidence={conf.currency_code}
             issues={issuesByPath["currency_code"]}
+            dirty={isDirty("currency_code")}
+            onChange={onChangeField}
           />
         </div>
       </section>
@@ -240,21 +339,21 @@ function ReviewPanel({ invoice }: { invoice: Invoice }) {
         <div className="grid gap-3 md:grid-cols-2">
           <PartyBlock
             label="Supplier"
-            name={invoice.supplier_legal_name}
-            tin={invoice.supplier_tin}
-            address={invoice.supplier_address}
-            confidence={conf}
             prefix="supplier"
+            valueOf={valueOf}
+            isDirty={isDirty}
+            confidence={conf}
             issuesByPath={issuesByPath}
+            onChange={onChangeField}
           />
           <PartyBlock
             label="Buyer"
-            name={invoice.buyer_legal_name}
-            tin={invoice.buyer_tin}
-            address={invoice.buyer_address}
-            confidence={conf}
             prefix="buyer"
+            valueOf={valueOf}
+            isDirty={isDirty}
+            confidence={conf}
             issuesByPath={issuesByPath}
+            onChange={onChangeField}
           />
         </div>
       </section>
@@ -264,23 +363,35 @@ function ReviewPanel({ invoice }: { invoice: Invoice }) {
         <div className="grid gap-3 md:grid-cols-3">
           <FieldRow
             label="Subtotal"
-            value={fmtMoney(invoice.subtotal, invoice.currency_code)}
+            name="subtotal"
+            kind="decimal"
+            value={valueOf("subtotal")}
             confidence={conf.subtotal}
             issues={issuesByPath["totals.subtotal"]}
+            dirty={isDirty("subtotal")}
+            onChange={onChangeField}
             mono
           />
           <FieldRow
             label="Total tax"
-            value={fmtMoney(invoice.total_tax, invoice.currency_code)}
+            name="total_tax"
+            kind="decimal"
+            value={valueOf("total_tax")}
             confidence={conf.total_tax}
             issues={issuesByPath["totals.total_tax"]}
+            dirty={isDirty("total_tax")}
+            onChange={onChangeField}
             mono
           />
           <FieldRow
             label="Grand total"
-            value={fmtMoney(invoice.grand_total, invoice.currency_code)}
+            name="grand_total"
+            kind="decimal"
+            value={valueOf("grand_total")}
             confidence={conf.grand_total}
             issues={issuesByPath["totals.grand_total"]}
+            dirty={isDirty("grand_total")}
+            onChange={onChangeField}
             mono
           />
         </div>
@@ -309,44 +420,97 @@ function ReviewPanel({ invoice }: { invoice: Invoice }) {
   );
 }
 
+type PartyBlockProps = {
+  label: string;
+  prefix: "supplier" | "buyer";
+  valueOf: (name: EditableField) => string;
+  isDirty: (name: EditableField) => boolean;
+  confidence: Record<string, number>;
+  issuesByPath: Record<string, ValidationIssue[]>;
+  onChange: (name: string, value: string) => void;
+};
+
 function PartyBlock({
   label,
-  name,
-  tin,
-  address,
-  confidence,
   prefix,
+  valueOf,
+  isDirty,
+  confidence,
   issuesByPath,
-}: {
-  label: string;
-  name: string;
-  tin: string;
-  address: string;
-  confidence: Record<string, number>;
-  prefix: "supplier" | "buyer";
-  issuesByPath: Record<string, ValidationIssue[]>;
-}) {
+  onChange,
+}: PartyBlockProps) {
+  const nameField = `${prefix}_legal_name` as EditableField;
+  const tinField = `${prefix}_tin` as EditableField;
+  const addressField = `${prefix}_address` as EditableField;
   return (
     <div className="flex flex-col gap-3">
       <FieldRow
         label={`${label} name`}
-        value={name}
-        confidence={confidence[`${prefix}_legal_name`]}
-        issues={issuesByPath[`${prefix}_legal_name`]}
+        name={nameField}
+        value={valueOf(nameField)}
+        confidence={confidence[nameField]}
+        issues={issuesByPath[nameField]}
+        dirty={isDirty(nameField)}
+        onChange={onChange}
       />
       <FieldRow
         label={`${label} TIN`}
-        value={tin}
-        confidence={confidence[`${prefix}_tin`]}
-        issues={issuesByPath[`${prefix}_tin`]}
+        name={tinField}
+        value={valueOf(tinField)}
+        confidence={confidence[tinField]}
+        issues={issuesByPath[tinField]}
+        dirty={isDirty(tinField)}
+        onChange={onChange}
         mono
       />
       <FieldRow
         label={`${label} address`}
-        value={address}
-        confidence={confidence[`${prefix}_address`]}
-        issues={issuesByPath[`${prefix}_address`]}
+        name={addressField}
+        value={valueOf(addressField)}
+        confidence={confidence[addressField]}
+        issues={issuesByPath[addressField]}
+        dirty={isDirty(addressField)}
+        onChange={onChange}
       />
+    </div>
+  );
+}
+
+type SaveBarProps = {
+  count: number;
+  saving: boolean;
+  error: string | null;
+  onSave: () => void;
+  onDiscard: () => void;
+};
+
+function SaveBar({ count, saving, error, onSave, onDiscard }: SaveBarProps) {
+  return (
+    <div
+      role="region"
+      aria-label="Unsaved corrections"
+      className="sticky bottom-0 left-0 right-0 z-10 -mx-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white/95 px-6 py-3 backdrop-blur"
+    >
+      <div className="text-2xs">
+        <span className="font-medium text-ink">
+          {count} unsaved correction{count === 1 ? "" : "s"}
+        </span>
+        {error ? (
+          <span className="ml-3 text-error">{error}</span>
+        ) : (
+          <span className="ml-3 text-slate-500">
+            Save to re-validate against LHDN rules. Your masters learn from this.
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={onDiscard} disabled={saving}>
+          Discard
+        </Button>
+        <Button size="sm" onClick={onSave} disabled={saving}>
+          {saving ? "Saving…" : "Save corrections"}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -373,11 +537,6 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
-function fmtMoney(value: string | null, currency: string): string | null {
-  if (value === null || value === "") return null;
-  return `${currency} ${value}`;
-}
-
 function groupByPath(issues: ValidationIssue[]): Record<string, ValidationIssue[]> {
   const out: Record<string, ValidationIssue[]> = {};
   for (const issue of issues) {
@@ -388,9 +547,6 @@ function groupByPath(issues: ValidationIssue[]): Record<string, ValidationIssue[
   return out;
 }
 
-// Field paths the UI explicitly renders. Anything in validation_issues that
-// doesn't match one of these (and isn't a line_items[N] path) shows up in
-// the orphan-issues stack so nothing gets lost.
 const FIELD_PATHS = new Set([
   "invoice_number",
   "issue_date",

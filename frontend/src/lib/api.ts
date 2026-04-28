@@ -219,5 +219,10 @@ export const api = {
   getInvoiceForJob: (jobId: string) => request<Invoice>(`/invoices/by-job/${jobId}/`),
   auditStats: () => request<AuditStats>("/audit/stats/"),
   throughput: (days = 7) => request<Throughput>(`/ingestion/throughput/?days=${days}`),
+  updateInvoice: (id: string, updates: Record<string, string | null>) =>
+    request<Invoice>(`/invoices/${id}/`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    }),
   uploadFile,
 };

@@ -363,6 +363,260 @@ def finalize_invoice_without_structuring(
     return StructuringResult(invoice=invoice, line_count=0, overall_confidence=0.0, engine="")
 
 
+# --- User corrections / update ----------------------------------------------------
+
+
+# Header fields the user can correct from the review UI. Anything not in this
+# set is ignored by ``update_invoice`` so an attacker can't flip the
+# submission lifecycle (lhdn_uuid, status, etc.) via the PATCH endpoint.
+EDITABLE_HEADER_FIELDS: frozenset[str] = frozenset(
+    {
+        "invoice_number",
+        "issue_date",
+        "due_date",
+        "currency_code",
+        "payment_terms_code",
+        "payment_reference",
+        "supplier_legal_name",
+        "supplier_tin",
+        "supplier_registration_number",
+        "supplier_msic_code",
+        "supplier_address",
+        "supplier_phone",
+        "supplier_sst_number",
+        "buyer_legal_name",
+        "buyer_tin",
+        "buyer_registration_number",
+        "buyer_msic_code",
+        "buyer_address",
+        "buyer_phone",
+        "buyer_sst_number",
+        "buyer_country_code",
+        "subtotal",
+        "total_tax",
+        "grand_total",
+        "discount_amount",
+        "discount_reason_code",
+    }
+)
+
+# Buyer fields whose corrections propagate to the matched CustomerMaster.
+# Map: invoice attribute -> master attribute. A user correction here is
+# stronger evidence than the LLM's previous extraction OR the master's
+# previous value, so the master learns from it. Same field set as
+# enrichment._BUYER_FIELD_MAP but lives here to keep cross-context
+# coupling to services-only.
+_BUYER_TO_MASTER: tuple[tuple[str, str], ...] = (
+    ("buyer_legal_name", "legal_name"),
+    ("buyer_tin", "tin"),
+    ("buyer_registration_number", "registration_number"),
+    ("buyer_msic_code", "msic_code"),
+    ("buyer_address", "address"),
+    ("buyer_phone", "phone"),
+    ("buyer_sst_number", "sst_number"),
+    ("buyer_country_code", "country_code"),
+)
+
+
+class InvoiceUpdateError(Exception):
+    """Raised when an update can't be applied (unknown field, parse error)."""
+
+
+@dataclass(frozen=True)
+class InvoiceUpdateResult:
+    invoice: Invoice
+    changed_fields: list[str]
+
+
+@transaction.atomic
+def update_invoice(
+    *,
+    organization_id: UUID,
+    invoice_id: UUID,
+    updates: dict[str, Any],
+    actor_user_id: UUID | str,
+) -> InvoiceUpdateResult:
+    """Apply user corrections to an Invoice, re-enrich + re-validate.
+
+    Tenant-scoped: the invoice must belong to ``organization_id`` or this
+    raises ``Invoice.DoesNotExist``. Unknown / non-editable keys in
+    ``updates`` raise ``InvoiceUpdateError`` rather than being silently
+    ignored — surface the contract violation so the front-end fixes the
+    request.
+
+    Side effects (in order):
+      1. Apply edits to the invoice.
+      2. ``per_field_confidence`` for each changed field flips to 1.0 —
+         the user has confirmed the value, the highest signal we have.
+      3. ``invoice.updated`` audit event records WHICH fields changed
+         (no values: those can be PII).
+      4. Master propagation: changed buyer_* fields update the matched
+         CustomerMaster's corresponding columns, with the previous
+         master canonical name added to ``aliases`` if the legal name
+         changed. The master learns from corrections, fulfilling the
+         "every correction makes the system smarter" promise.
+      5. Re-run ``enrich_invoice`` and ``validate_invoice`` so the
+         response carries fresh issues that reflect the new field set.
+    """
+    unknown = set(updates.keys()) - EDITABLE_HEADER_FIELDS
+    if unknown:
+        raise InvoiceUpdateError(
+            f"Cannot edit non-editable fields: {sorted(unknown)}. "
+            f"Editable: {sorted(EDITABLE_HEADER_FIELDS)}"
+        )
+
+    invoice = Invoice.objects.get(organization_id=organization_id, id=invoice_id)
+
+    changed: list[str] = []
+    for field_name, raw_value in updates.items():
+        coerced = _coerce_field(invoice, field_name, raw_value)
+        previous = getattr(invoice, field_name)
+        if previous == coerced:
+            continue
+        setattr(invoice, field_name, coerced)
+        changed.append(field_name)
+
+    if not changed:
+        return InvoiceUpdateResult(invoice=invoice, changed_fields=[])
+
+    # User-confirmed values get the highest confidence band. Same convention
+    # the master-autofill path uses, so the review UI's confidence dot is
+    # consistent across "from your master" and "from your correction".
+    confidence = dict(invoice.per_field_confidence or {})
+    for field_name in changed:
+        confidence[field_name] = 1.0
+    invoice.per_field_confidence = confidence
+    invoice.save()
+
+    record_event(
+        action_type="invoice.updated",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=str(invoice.organization_id),
+        affected_entity_type="Invoice",
+        affected_entity_id=str(invoice.id),
+        payload={
+            # Field names only — values can be PII (TIN, names, addresses).
+            "changed_fields": sorted(changed),
+        },
+    )
+
+    _propagate_corrections_to_master(invoice, changed)
+
+    # Re-enrich (master-fill any newly blanked fields, learn aliases),
+    # then re-validate so the issue set reflects the corrected invoice.
+    from apps.enrichment.services import enrich_invoice
+    from apps.validation.services import validate_invoice
+
+    enrich_invoice(invoice.id)
+    validate_invoice(invoice.id)
+
+    invoice.refresh_from_db()
+    return InvoiceUpdateResult(invoice=invoice, changed_fields=sorted(changed))
+
+
+def _coerce_field(invoice: Invoice, field_name: str, raw_value: Any) -> Any:
+    """Convert the JSON-shaped input to the model field's Python type."""
+    # Decimals.
+    if field_name in {"subtotal", "total_tax", "grand_total", "discount_amount"}:
+        if raw_value in (None, ""):
+            return None
+        parsed = _parse_decimal(str(raw_value))
+        if parsed is None:
+            raise InvoiceUpdateError(
+                f"{field_name!r} must be a decimal value (got {raw_value!r})."
+            )
+        return parsed
+    # Dates.
+    if field_name in {"issue_date", "due_date"}:
+        if raw_value in (None, ""):
+            return None
+        parsed = _parse_date(str(raw_value))
+        if parsed is None:
+            raise InvoiceUpdateError(
+                f"{field_name!r} must be ISO 8601 (YYYY-MM-DD) or DD/MM/YYYY (got {raw_value!r})."
+            )
+        return parsed
+    # Strings — clip to the column's max_length per the model so a
+    # too-long input fails in the API rather than silently truncating.
+    if raw_value is None:
+        return ""
+    value = str(raw_value)
+    field = invoice._meta.get_field(field_name)
+    max_length = getattr(field, "max_length", None)
+    if max_length is not None and len(value) > max_length:
+        raise InvoiceUpdateError(
+            f"{field_name!r} exceeds max length of {max_length} characters."
+        )
+    return value
+
+
+def _propagate_corrections_to_master(invoice: Invoice, changed: list[str]) -> None:
+    """Push user corrections of buyer fields into the matched CustomerMaster.
+
+    The master learns from corrections — that's the point of the master.
+    We don't create a master here; if this invoice has no matched master
+    yet, ``enrich_invoice`` (called next) creates one and will pick up
+    the corrected values. This function only runs if a master already
+    exists for the buyer.
+
+    Key handling: if the user corrected ``buyer_tin``, the new TIN may
+    point to a different master. We do NOT migrate the old master's
+    fields — that's a different operation. The next ``enrich_invoice``
+    pass will pick the right master and create one if needed.
+    """
+    # Lazy import — cross-context service-only.
+    from apps.enrichment.models import CustomerMaster
+
+    buyer_changes = {
+        invoice_field: master_field
+        for invoice_field, master_field in _BUYER_TO_MASTER
+        if invoice_field in changed
+    }
+    if not buyer_changes:
+        return
+
+    # Find the master by the (post-correction) TIN first; failing that, by
+    # the (post-correction) legal name. Both handle the case where the user
+    # just corrected one of those.
+    master = None
+    if invoice.buyer_tin:
+        master = (
+            CustomerMaster.objects.filter(
+                organization_id=invoice.organization_id, tin=invoice.buyer_tin
+            )
+            .first()
+        )
+    if master is None and invoice.buyer_legal_name:
+        master = (
+            CustomerMaster.objects.filter(
+                organization_id=invoice.organization_id,
+                legal_name__iexact=invoice.buyer_legal_name,
+            )
+            .first()
+        )
+    if master is None:
+        return  # The next enrich pass creates one.
+
+    # If the user just renamed the buyer, file the old master name as an alias
+    # before overwriting. That preserves history without polluting the
+    # canonical name.
+    if (
+        "buyer_legal_name" in buyer_changes
+        and invoice.buyer_legal_name != master.legal_name
+        and master.legal_name not in master.aliases
+    ):
+        master.aliases = [*master.aliases, master.legal_name]
+
+    for invoice_field, master_field in buyer_changes.items():
+        new_value = getattr(invoice, invoice_field) or ""
+        # User corrections OVERWRITE master values. This is the point of
+        # the correction feedback loop: the LLM can be wrong, the LLM-fed
+        # master can be wrong, the user is the source of truth.
+        setattr(master, master_field, new_value)
+    master.save()
+
+
 def get_invoice_for_job(*, organization_id: UUID, ingestion_job_id: UUID) -> Invoice | None:
     return Invoice.objects.filter(
         organization_id=organization_id, ingestion_job_id=ingestion_job_id
