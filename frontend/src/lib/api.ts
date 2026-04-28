@@ -182,6 +182,13 @@ export type AuditEventListResponse = {
   total: number;
 };
 
+export type AdminMe = {
+  id: string;
+  email: string;
+  is_staff: boolean;
+  is_superuser: boolean;
+};
+
 export type LatestVerification = {
   status: "ok" | "tampered" | "error";
   ok: boolean;
@@ -427,6 +434,8 @@ export const api = {
     request<{ latest: LatestVerification | null }>("/audit/verify/last/").then(
       (r) => r.latest,
     ),
+  adminMe: () =>
+    request<AdminMe>("/admin/me/"),
   getOrganization: () =>
     request<OrganizationDetail>("/identity/organization/"),
   updateOrganization: (updates: Partial<Record<keyof OrganizationDetail, string>>) =>

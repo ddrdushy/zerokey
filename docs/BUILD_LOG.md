@@ -3150,6 +3150,120 @@ What's deferred:
 
 ---
 
+### Slice 33 — Super-admin auth + route protection
+
+The foundation slice for the platform-operator surface: a
+distinct namespace (`/admin` on the frontend, `/api/v1/admin/`
+on the backend) gated by `User.is_staff`. No new tables, no
+cross-tenant queries yet — that's Slice 34. This slice just
+wires up the auth gate so subsequent admin pages have a clean
+shell to mount under.
+
+Backend:
+
+- **`apps.administration.permissions.IsPlatformStaff`** — DRF
+  permission class that returns 403 (not 404) when the
+  authenticated user has `is_staff=False`. The 403/404
+  distinction matters for the frontend: 403 means "you're
+  signed in but not staff", which we want to surface as a
+  redirect to the customer dashboard, not as a generic
+  "endpoint missing".
+- **`apps.administration.views.admin_me`** — `GET /api/v1/admin/me/`.
+  Returns `{id, email, is_staff, is_superuser}`. The frontend's
+  /admin route hits this on mount; the 200/403/401 outcome
+  drives the auth flow.
+- **`apps.administration.urls`** — mounted at `/api/v1/admin/`
+  in `zerokey/urls.py`. Distinct from Django's built-in admin
+  at `/admin/` (Django's auto-model-admin is at the project
+  root, this is the customer-facing platform-admin API).
+- **Reuse `User.is_staff`**, not a new role tier. Django
+  already has the field; the model manager keeps it in
+  lockstep with `is_superuser`. We treat `is_staff` as the
+  single source of truth for "platform operator".
+
+Frontend:
+
+- **`/admin/page.tsx`** — overview landing. Welcome card
+  ("you're signed in as platform staff") + "Coming next"
+  inventory of the upcoming admin pages.
+- **`AdminShell`** in `frontend/src/components/admin/`. Distinct
+  from `AppShell`: dark sidebar with a small "ADMIN" badge,
+  topbar reads "Platform admin", no organization switcher
+  (admin runs across all tenants). Sidebar nav has Overview
+  active and Platform Audit / Tenants / Engines as `soon`
+  placeholders for the upcoming slices.
+- **Auth flow** in the shell:
+  - On mount, fetch `/api/v1/admin/me/`.
+  - 401 → redirect to `/sign-in?next=/admin`.
+  - 403 → redirect to `/dashboard` (you're authenticated, just
+    not staff).
+  - 200 → render the children.
+  - Other errors → render an "admin unreachable" stub with a
+    sign-in button, rather than dead-ending.
+- **`api.adminMe()`** + `AdminMe` type added to the API client.
+- **Topbar avatar menu** has a "Switch to customer view" link
+  back to `/dashboard`. Staff users typically belong to an
+  organization too (they're testing the customer surface),
+  so the round-trip is one click.
+
+Tests: 4 new (341 passing total, was 337). Unauthenticated →
+401/403 from the API. Customer user (is_staff=False) → 403
+with the IsPlatformStaff message. Staff user → 200 with the
+identity dict. Staff user without an active-org session →
+still works (admin namespace doesn't need an org context).
+
+Verified live with Playwright on three flows:
+
+  - Unauthenticated `/admin` → redirect to `/sign-in`. ✓
+  - Staff user (`admin@symprio.com`, `is_staff=True`) →
+    sees the admin overview at `/admin`, with the dark
+    sidebar + green "ADMIN" badge + the three coming-next
+    cards. ✓
+  - Customer user (fresh signup) → `/admin` redirects them
+    to `/dashboard` (the 403 path). ✓
+
+Durable design decisions:
+
+- **`is_staff` as the staff flag, not a new field.** A custom
+  `is_platform_admin` field on User would let the two diverge
+  from Django's built-in `is_staff`. Using the existing field
+  keeps the audit story simple (one boolean) and lets
+  Django's createsuperuser command work out of the box.
+- **`/admin` lives at the app root, not under `/dashboard`.**
+  An admin landing under `/dashboard/admin` would inherit the
+  customer shell and produce confusing navigation. A separate
+  top-level route lets the admin shell be entirely distinct
+  (different colors, different topbar, no org switcher).
+- **403, not 404, for non-staff.** A non-staff user should
+  see "this isn't your route" (and get redirected), not
+  "this doesn't exist" (which is misleading). The frontend
+  uses 403 as the staff-only-redirect signal everywhere
+  consistently.
+- **Frontend redirect on 403, not "you're not staff" message.**
+  A non-staff customer hitting `/admin` is almost always a
+  typo or a stale bookmark — bouncing them to their actual
+  dashboard is friendlier than a hostile error page.
+- **Admin shell does the auth check once, page-level code
+  doesn't repeat it.** The shell is the choke point; pages
+  that wrap themselves in `<AdminShell>` get the 401/403
+  redirects for free. No per-page boilerplate.
+
+What's deferred:
+
+- **Promotion / demotion via UI.** Today, promoting a user
+  to staff is a manual `is_staff = True` on the User row
+  (Django admin or shell). A super-admin-promotes-another
+  flow lands once we have multiple platform operators.
+- **Audit log of admin sign-ins.** Customer sign-ins are
+  audited via `auth.login_success`; the admin shell uses the
+  same login flow, so the event already records. A separate
+  `admin.session_started` event would be cleaner but is
+  cosmetic.
+- **Two-factor auth on admin accounts.** Production-only.
+  Phase 5 hardening alongside SAML/SSO for staff.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -3231,7 +3345,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 337 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 341 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
