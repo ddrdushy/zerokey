@@ -2560,6 +2560,112 @@ What's deferred:
 
 ---
 
+### Slice 28 — Notification bell + ambient summary popover
+
+The topbar has had a bell icon since Slice 7 that did literally
+nothing — clicking it was a no-op. This slice makes it work by
+turning it into a single ambient surface for "is there anything
+I should look at right now". No new backend; reuses the inbox
+list endpoint (Slice 25) and the latest-verification endpoint
+(Slice 27).
+
+Frontend:
+
+- **`NotificationBell`** component (in
+  `frontend/src/components/shell/NotificationBell.tsx`) replaces
+  the dumb `<Bell>` button in `AppShell`. Owns: the badge state,
+  the popover state, click-outside + Escape close, and the data
+  fetch.
+- **Popover content** has two sections, both deep links:
+  - **Chain integrity** — single row with the
+    success/error/neutral icon and a one-line message
+    (`Chain verified 11m ago.` / `Tampering detected.
+    Operations notified.` / `No verification yet — first run
+    within six hours.`). Whole row links to `/dashboard/audit`.
+  - **Open inbox items** — count + first 5 items (reason
+    label + invoice number + buyer + relative time). Each row
+    deep-links to `/dashboard/jobs/<id>` for that invoice. A
+    "View all in inbox →" footer links to `/dashboard/inbox`.
+    Empty state shows "Inbox zero — nothing waiting on you."
+- **Badge** on the bell — count of open inbox items (signal
+  green; "9+" when over). A separate small red dot appears in
+  the corner when the latest chain verification is not ok, so
+  a chain alert never gets buried under a high inbox count.
+- **Refresh discipline**: fetch on mount, fetch every 60s, and
+  fetch on popover open. The on-open refresh closes the
+  obvious gap where a user uploads a PDF and immediately opens
+  the bell — without it, they'd see stale data until the next
+  poll fired.
+- **No new types or API calls** — the existing `api.listInbox`,
+  `api.latestAuditVerification`, `InboxItem`, and
+  `LatestVerification` cover everything.
+
+Tests: none new. The two endpoints this consumes are already
+covered by Slice 25 (inbox list) and Slice 27 (latest
+verification). Component testing isn't part of the codebase
+yet; verified live with Playwright.
+
+Verified live with Playwright: signed up fresh. Empty popover
+showed "Chain verified 13m ago." (background task already
+ran on dev DB) and "Inbox zero — nothing waiting on you.".
+Dropped a synthetic empty PDF; both `structuring_skipped`
+and `validation_failure` inbox items got created via the
+existing pipeline. Reopened the bell — popover updated to
+"2 open items" with both rows visible and the green "2"
+badge appeared on the bell. Clicked the first item; the
+page navigated to `/dashboard/jobs/<that-invoice's-job>`,
+exactly the right deep link.
+
+Durable design decisions:
+
+- **Bell aggregates only what already has a real surface.**
+  Chain integrity → audit log page. Inbox items → inbox page
+  + per-job review page. The bell isn't a *channel*, it's a
+  *summary* — it never invents a piece of state that doesn't
+  also exist on a dedicated page. This keeps the contract
+  simple: the bell's job is "make me look up", not "tell me
+  the news in full".
+- **Polling, not real-time.** A WebSocket subscription would
+  let the badge update the moment an inbox row appears or the
+  beat task finishes. It would also more than double the
+  delivery surface (browser reconnect, server-side fanout,
+  back-pressure) and earn its complexity only when customers
+  actually ask to be paged within seconds. Two cheap GETs
+  every minute beats premature realtime. The on-open refresh
+  closes the immediate-action gap that would otherwise feel
+  laggy.
+- **Open-item count is the badge; chain alerts are a dot.**
+  A combined "total things to look at" badge is misleading
+  when the components have different urgencies — a tampered
+  chain is much more serious than five open structuring
+  skips. Splitting them lets the eye triage at a glance.
+- **No "mark as read" / dismissal model.** Inbox items have
+  their own resolve action; chain alerts auto-clear when the
+  next verification comes back ok. The bell reflects current
+  state, not an event log — there's nothing to "read".
+
+What's deferred:
+
+- **Refresh-on-action.** If the user uploads a PDF, the badge
+  doesn't update until the next 60s poll or until they open
+  the bell. A global event bus could fire on
+  ingestion/validation completion. Deferred — the on-open
+  refresh covers the user's actual gesture; the badge being
+  one minute stale on the dashboard isn't user-facing
+  surprising.
+- **Per-event types beyond inbox + chain.** Notifications
+  about invoice state transitions ("submitted to LHDN",
+  "rejected") will land naturally when the submission
+  service ships — they'll fold into the same popover by
+  adding sections, not by replacing the architecture.
+- **Email / push channel.** The bell is the in-app
+  surface; email/push wires through whatever notification
+  service handles outbound channels later. The DATA_MODEL.md
+  `Notification` model exists but isn't yet populated
+  outside this in-app aggregation.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They

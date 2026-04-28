@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  Bell,
   ChevronDown,
   FileText,
   Inbox,
@@ -19,6 +18,7 @@ import {
 
 import { api, type Me } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { NotificationBell } from "./NotificationBell";
 
 // Persistent shell that wraps every authenticated page. The sidebar groups
 // follow the bounded-context map from ARCHITECTURE.md; pages that aren't
@@ -201,13 +201,7 @@ function TopBar({
             aria-label="Search"
           />
         </div>
-        <button
-          type="button"
-          aria-label="Notifications"
-          className="rounded-md p-2 text-slate-400 hover:bg-slate-50 hover:text-ink"
-        >
-          <Bell className="h-4 w-4" />
-        </button>
+        <NotificationBell />
         <div className="relative">
           <button
             type="button"
