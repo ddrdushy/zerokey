@@ -110,6 +110,31 @@ export type Invoice = {
   updated_at: string;
 };
 
+export type AuditStats = {
+  total: number;
+  last_24h: number;
+  last_7d: number;
+  sparkline: Array<{ date: string; count: number }>;
+};
+
+export type ThroughputPoint = {
+  date: string;
+  day: string;
+  validated: number;
+  review: number;
+};
+
+export type Throughput = {
+  series: ThroughputPoint[];
+  totals: {
+    validated: number;
+    review: number;
+    in_flight: number;
+    failed: number;
+    uploads: number;
+  };
+};
+
 export type IngestionJob = {
   id: string;
   source_channel: string;
@@ -175,5 +200,7 @@ export const api = {
     request<{ results: IngestionJob[] }>("/ingestion/jobs/").then((r) => r.results),
   getJob: (id: string) => request<IngestionJob>(`/ingestion/jobs/${id}/`),
   getInvoiceForJob: (jobId: string) => request<Invoice>(`/invoices/by-job/${jobId}/`),
+  auditStats: () => request<AuditStats>("/audit/stats/"),
+  throughput: (days = 7) => request<Throughput>(`/ingestion/throughput/?days=${days}`),
   uploadFile,
 };

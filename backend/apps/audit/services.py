@@ -20,10 +20,12 @@ concurrency but is acceptable for unit tests, which run single-threaded.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
+from uuid import UUID
 
-from django.db import connection, transaction
+from django.db import connection, models, transaction
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from .chain import GENESIS_PREV_HASH, ChainIntegrityError, compute_hashes, verify_link
@@ -149,6 +151,67 @@ def _canonical_body(
         "sequence": sequence,
         "timestamp": timestamp.isoformat(timespec="milliseconds"),
     }
+
+
+def stats_for_organization(
+    *, organization_id: UUID | str, sparkline_days: int = 7
+) -> dict[str, Any]:
+    """Aggregate counts of this org's audit events for the dashboard KPI tile.
+
+    Returns:
+        ``total``        — all-time count of events for the org.
+        ``last_24h``     — events in the last 24 hours.
+        ``last_7d``      — events in the last 7 days.
+        ``sparkline``    — list of ``{date, count}`` for the last
+                           ``sparkline_days`` days, oldest first, gap-filled
+                           with zero-count days so the front-end renders a
+                           full rolling window.
+
+    System events (``organization_id IS NULL``) are excluded — the tile shows
+    the customer's own activity, not platform housekeeping. RLS filters
+    cross-tenant rows at the DB layer; the explicit filter is belt-and-suspenders.
+    """
+    base = AuditEvent.objects.filter(organization_id=organization_id)
+    now = timezone.now()
+
+    total = base.count()
+    last_24h = base.filter(timestamp__gte=now - timedelta(hours=24)).count()
+    last_7d = base.filter(timestamp__gte=now - timedelta(days=7)).count()
+
+    sparkline = _daily_sparkline(base, now=now, days=sparkline_days)
+
+    return {
+        "total": total,
+        "last_24h": last_24h,
+        "last_7d": last_7d,
+        "sparkline": sparkline,
+    }
+
+
+def _daily_sparkline(
+    queryset, *, now: datetime, days: int
+) -> list[dict[str, Any]]:
+    """Bucket a queryset by the date of ``timestamp`` for the last ``days``.
+
+    Gap-fills missing days with zero so the front-end always gets a series of
+    length ``days`` ending today (in the request's timezone).
+    """
+    today = timezone.localdate(now)
+    start = today - timedelta(days=days - 1)
+
+    rows = (
+        queryset.filter(timestamp__date__gte=start)
+        .annotate(day=TruncDate("timestamp"))
+        .values("day")
+        .annotate(count=models.Count("id"))
+    )
+    by_day: dict[str, int] = {row["day"].isoformat(): int(row["count"]) for row in rows}
+
+    series: list[dict[str, Any]] = []
+    for offset in range(days):
+        day = start + timedelta(days=offset)
+        series.append({"date": day.isoformat(), "count": by_day.get(day.isoformat(), 0)})
+    return series
 
 
 def verify_chain() -> int:

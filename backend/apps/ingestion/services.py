@@ -13,11 +13,13 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import IO
+from datetime import timedelta
+from typing import IO, Any
 from uuid import UUID
 
 from django.conf import settings
-from django.db import transaction
+from django.db import models, transaction
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from apps.audit.models import AuditEvent
@@ -142,6 +144,97 @@ def list_jobs_for_organization(*, organization_id: UUID, limit: int = 50) -> lis
 
 def get_job(*, organization_id: UUID, job_id: UUID) -> IngestionJob | None:
     return IngestionJob.objects.filter(organization_id=organization_id, id=job_id).first()
+
+
+# Status buckets for the dashboard throughput chart. The chart has two
+# series ("validated" and "needs review"); everything else is excluded
+# from the chart but surfaced in the totals so the user understands the
+# full picture.
+_VALIDATED_STATUSES = frozenset({IngestionJob.Status.VALIDATED})
+_REVIEW_STATUSES = frozenset(
+    {
+        IngestionJob.Status.READY_FOR_REVIEW,
+        IngestionJob.Status.AWAITING_APPROVAL,
+    }
+)
+_FAILED_STATUSES = frozenset(
+    {IngestionJob.Status.ERROR, IngestionJob.Status.REJECTED, IngestionJob.Status.CANCELLED}
+)
+
+
+def throughput_for_organization(
+    *, organization_id: UUID | str, days: int = 7
+) -> dict[str, Any]:
+    """Daily ingestion throughput for the dashboard chart.
+
+    Buckets jobs by ``upload_timestamp`` date over the trailing ``days`` window
+    (gap-filled with zeroes), splitting each bucket into ``validated`` (jobs
+    that reached LHDN-validated) and ``review`` (jobs sitting in human-review
+    states). Jobs in transient pipeline states are counted under ``in_flight``
+    in the summary block but not plotted; failed jobs roll into ``failed``.
+
+    Returns:
+        ``series``  — list of ``{date, day, validated, review}`` for the
+                      window, oldest first, length ``days``.
+        ``totals``  — totals across the window:
+                      ``validated``, ``review``, ``in_flight``, ``failed``,
+                      ``uploads``.
+    """
+    base = IngestionJob.objects.filter(organization_id=organization_id)
+    today = timezone.localdate()
+    start = today - timedelta(days=days - 1)
+
+    # Window-restricted slice for the daily series; totals over the same window
+    # so the summary line reconciles with the chart.
+    windowed = base.filter(upload_timestamp__date__gte=start)
+
+    daily_rows = (
+        windowed.annotate(day=TruncDate("upload_timestamp"))
+        .values("day", "status")
+        .annotate(count=models.Count("id"))
+    )
+
+    # day_iso → {validated, review}
+    by_day: dict[str, dict[str, int]] = {}
+    totals = {
+        "validated": 0,
+        "review": 0,
+        "in_flight": 0,
+        "failed": 0,
+        "uploads": 0,
+    }
+    for row in daily_rows:
+        day_iso = row["day"].isoformat()
+        bucket = by_day.setdefault(day_iso, {"validated": 0, "review": 0})
+        count = int(row["count"])
+        totals["uploads"] += count
+        status_value = row["status"]
+        if status_value in _VALIDATED_STATUSES:
+            bucket["validated"] += count
+            totals["validated"] += count
+        elif status_value in _REVIEW_STATUSES:
+            bucket["review"] += count
+            totals["review"] += count
+        elif status_value in _FAILED_STATUSES:
+            totals["failed"] += count
+        else:
+            totals["in_flight"] += count
+
+    series: list[dict[str, Any]] = []
+    for offset in range(days):
+        day = start + timedelta(days=offset)
+        day_iso = day.isoformat()
+        bucket = by_day.get(day_iso, {"validated": 0, "review": 0})
+        series.append(
+            {
+                "date": day_iso,
+                "day": day.strftime("%a"),
+                "validated": bucket["validated"],
+                "review": bucket["review"],
+            }
+        )
+
+    return {"series": series, "totals": totals}
 
 
 def presigned_download(*, job: IngestionJob, ttl: int = storage.DEFAULT_PRESIGNED_URL_TTL) -> str:

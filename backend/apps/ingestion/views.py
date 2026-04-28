@@ -74,6 +74,25 @@ def list_jobs(request: Request) -> Response:
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def throughput(request: Request) -> Response:
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization. Switch organization first."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        days = int(request.query_params.get("days", "7"))
+    except ValueError:
+        return Response({"detail": "days must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
+    days = max(1, min(days, 90))
+    return Response(
+        services.throughput_for_organization(organization_id=organization_id, days=days)
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def job_detail(request: Request, job_id: str) -> Response:
     organization_id = _active_org(request)
     if not organization_id:

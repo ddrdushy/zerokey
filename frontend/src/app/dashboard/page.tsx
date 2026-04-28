@@ -4,7 +4,14 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Activity, CircleCheck, Inbox, ScrollText } from "lucide-react";
 
-import { api, type IngestionJob, type Me, ApiError } from "@/lib/api";
+import {
+  api,
+  type AuditStats,
+  type IngestionJob,
+  type Me,
+  type Throughput,
+  ApiError,
+} from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { DropZone } from "@/components/DropZone";
 import { HeroCard } from "@/components/dashboard/HeroCard";
@@ -16,15 +23,27 @@ export default function DashboardPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [jobs, setJobs] = useState<IngestionJob[]>([]);
+  const [auditStats, setAuditStats] = useState<AuditStats | null>(null);
+  const [throughput, setThroughput] = useState<Throughput | null>(null);
   const [loading, setLoading] = useState(true);
+
+  async function refreshDashboardData() {
+    const [list, stats, tput] = await Promise.all([
+      api.listJobs().catch(() => []),
+      api.auditStats().catch(() => null),
+      api.throughput().catch(() => null),
+    ]);
+    setJobs(list);
+    if (stats) setAuditStats(stats);
+    if (tput) setThroughput(tput);
+  }
 
   useEffect(() => {
     api
       .me()
       .then(async (data) => {
         setMe(data);
-        const list = await api.listJobs().catch(() => []);
-        setJobs(list);
+        await refreshDashboardData();
       })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 403) {
@@ -39,15 +58,17 @@ export default function DashboardPage() {
     const TERMINAL = new Set(["validated", "rejected", "cancelled", "error", "ready_for_review"]);
     const inFlight = jobs.some((j) => !TERMINAL.has(j.status));
     if (!inFlight) return;
-    const handle = setInterval(async () => {
-      const list = await api.listJobs().catch(() => null);
-      if (list) setJobs(list);
+    const handle = setInterval(() => {
+      refreshDashboardData();
     }, 2000);
     return () => clearInterval(handle);
   }, [jobs]);
 
   function onUploaded(job: IngestionJob) {
     setJobs((prev) => [job, ...prev]);
+    // The new upload writes audit events and pushes the throughput series; pull
+    // fresh data so tiles and chart reflect it on the next paint.
+    refreshDashboardData();
   }
 
   if (loading || !me) {
@@ -72,12 +93,16 @@ export default function DashboardPage() {
   const errored = jobs.filter((j) => j.status === "error" || j.status === "rejected").length;
   const needsReview = jobs.filter((j) => j.status === "ready_for_review").length;
 
+  const auditSpark = auditStats?.sparkline.map((p) => p.count) ?? undefined;
+  const uploadsSpark = throughput?.series.map((p) => p.validated + p.review) ?? undefined;
+
   const stats: Stat[] = [
     {
       label: "Total uploads",
       value: String(jobs.length),
       icon: Inbox,
       tone: "neutral",
+      spark: uploadsSpark,
     },
     {
       label: "In flight",
@@ -93,11 +118,10 @@ export default function DashboardPage() {
     },
     {
       label: "Audit events",
-      // Proxy: each job emits roughly four chain events. Replaced by the
-      // real audit-log count once that endpoint lands.
-      value: String(jobs.length * 4 + 5),
+      value: auditStats ? String(auditStats.total) : "—",
       icon: ScrollText,
       tone: "neutral",
+      spark: auditSpark,
     },
   ];
 
@@ -113,7 +137,7 @@ export default function DashboardPage() {
         <StatsStrip stats={stats} />
 
         <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-          <ThroughputChart />
+          <ThroughputChart data={throughput?.series} />
           <CompliancePosture
             validated={validated}
             needsReview={needsReview}

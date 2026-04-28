@@ -309,6 +309,53 @@ structure adapted to ZeroKey's calmer brand:
 
 `recharts` added (~75 KB gzipped) for the chart widgets.
 
+### Slice 8 — Real dashboard data (audit stats + throughput)
+
+Replaces the two remaining placeholders on the post-Slice-7 dashboard with
+real aggregations sourced from the authoritative tables:
+
+- **`GET /api/v1/audit/stats/`** — `apps.audit.services.stats_for_organization`
+  rolls up the active org's `AuditEvent` rows into `total`, `last_24h`,
+  `last_7d`, and a 7-day gap-filled `sparkline`. System events
+  (`organization_id IS NULL`) are excluded so the customer's tile shows
+  their own activity, not platform housekeeping. RLS already filters
+  `audit_event` by tenant; the explicit `organization_id` filter is
+  belt-and-suspenders per convention.
+- **`GET /api/v1/ingestion/throughput/?days=7`** —
+  `apps.ingestion.services.throughput_for_organization` buckets
+  `IngestionJob` rows by `upload_timestamp` date over a configurable
+  window (clamped 1–90, default 7), splitting each bucket into
+  `validated` and `review` (`ready_for_review` + `awaiting_approval`)
+  for the chart's two series. The window also produces totals for
+  `validated`, `review`, `in_flight`, `failed`, and `uploads` so the
+  chart and any future summary line reconcile.
+- **Frontend** — `api.auditStats()` and `api.throughput()` clients added.
+  Dashboard now fetches both alongside `listJobs` on mount and on each
+  poll tick, replaces the `jobs.length * 4 + 5` proxy on the Audit
+  events tile with the real total + a sparkline driven by the API
+  series, replaces the `PLACEHOLDER` data on `ThroughputChart` with
+  the real 7-day series, and pipes a per-day uploads sparkline into
+  the Total uploads tile as a side benefit.
+- The post-upload `onUploaded` callback now triggers a full
+  `refreshDashboardData` so a fresh upload visibly bumps both the KPI
+  tile and the chart on the next paint, not just the recent-uploads
+  list.
+
+The day-bucketing uses `TruncDate("upload_timestamp")` /
+`TruncDate("timestamp")` and gap-fills server-side. Cross-DB compatible
+(SQLite for tests, Postgres for dev/prod) — no `date_trunc` raw SQL
+needed.
+
+Tests: 14 new (5 service + 4 endpoint per side) covering happy-path
+counts, cross-tenant isolation, window filtering, gap-fill behavior,
+the `days` query-param clamp, and that totals reconcile with the
+per-day series. Suite is now 74 passing / 4 skipped.
+
+Verified live against the running stack: registered a fresh org and
+confirmed both endpoints return the expected shape; the audit stats
+report 4 events for the registration flow on today's bucket and the
+throughput series renders an empty 7-day window correctly.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -392,7 +439,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 60 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 74 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -413,6 +460,10 @@ Coverage:
 - Invoice structuring — idempotent creation, header + line-item population,
   EngineUnavailable graceful degrade, decimal parsing strips currency
   symbols, garbled JSON tolerated.
+- Audit stats — totals, 24h/7d windows, gap-filled sparkline, cross-tenant
+  isolation, system-event exclusion, endpoint auth + active-org guard.
+- Ingestion throughput — status bucketing, window filtering, per-day series
+  reconciles with totals, `days` query-param clamp.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -422,37 +473,34 @@ Coverage:
 
 Ordered roughly by Phase 2/3 priority:
 
-1. **Real audit-event count and throughput data** — the dashboard KPI
-   "Audit events" tile and the throughput chart are placeholders. Wire to
-   `AuditEvent` + `EngineCall` aggregations.
-2. **Validation engine** — pre-flight checks against LHDN's 55-field rules.
+1. **Validation engine** — pre-flight checks against LHDN's 55-field rules.
    The `Invoice.status = "validating"` state exists; the actual validators
    don't.
-3. **Side-by-side invoice review UI** — current detail page is functional
+2. **Side-by-side invoice review UI** — current detail page is functional
    but the polished review screen with PDF viewer + field-level confidence
    highlighting hasn't landed.
-4. **Vision escalation on low pdfplumber confidence** — router primitive
+3. **Vision escalation on low pdfplumber confidence** — router primitive
    exists; the escalation logic that re-routes a low-confidence text
    extract through `vision_extract` doesn't.
-5. **Customer master / item master** — `apps.enrichment` is empty. Per
+4. **Customer master / item master** — `apps.enrichment` is empty. Per
    DATA_MODEL.md these accumulate buyer/item patterns and drive auto-fill
    on subsequent invoices.
-6. **Signing service** — placeholder Celery task on the dedicated `signing`
+5. **Signing service** — placeholder Celery task on the dedicated `signing`
    queue exists. KMS-backed envelope encryption + Ed25519 signature over
    `chain_hash` lands when KMS is provisioned.
-7. **MyInvois submission** — placeholder Celery task exists. Real LHDN API
+6. **MyInvois submission** — placeholder Celery task exists. Real LHDN API
    client + UUID/QR retrieval + cancellation within 72-hour window.
-8. **Email / WhatsApp / API ingestion channels** — only `web_upload` is
+7. **Email / WhatsApp / API ingestion channels** — only `web_upload` is
    wired. Web-upload is the most visible path; the others share the
    `IngestionJob` model and just need their adapters.
-9. **Billing + Stripe + FPX** — `apps.billing` is empty; the plan/tier
+8. **Billing + Stripe + FPX** — `apps.billing` is empty; the plan/tier
    catalog from BUSINESS_MODEL.md isn't seeded.
-10. **PII field-level encryption** — `Organization.contact_email`,
-    `contact_phone`, `registered_address` are plain text in dev. The
-    encrypted column type swaps in when KMS lands.
-11. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
+9. **PII field-level encryption** — `Organization.contact_email`,
+   `contact_phone`, `registered_address` are plain text in dev. The
+   encrypted column type swaps in when KMS lands.
+10. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
     Invoices, Customers, Audit log, Engine activity, Settings.
-12. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
+11. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
     can wrap the existing `make test` + frontend lint/build.
 
 ---
