@@ -52,6 +52,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 // --- Identity --------------------------------------------------------------
 
+export type APIKeyRow = {
+  id: string;
+  label: string;
+  key_prefix: string;
+  is_active: boolean;
+  created_at: string | null;
+  created_by_user_id?: string | null;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+};
+
 export type OrganizationMemberRow = {
   id: string;
   user_id: string;
@@ -739,6 +750,20 @@ export const api = {
     request<OrganizationMemberRow>(
       `/identity/organization/members/${membershipId}/`,
       { method: "PATCH", body: JSON.stringify(body) },
+    ),
+  listApiKeys: () =>
+    request<{ results: APIKeyRow[] }>(
+      "/identity/organization/api-keys/",
+    ).then((r) => r.results),
+  createApiKey: (label: string) =>
+    request<APIKeyRow & { plaintext: string }>(
+      "/identity/organization/api-keys/",
+      { method: "POST", body: JSON.stringify({ label }) },
+    ),
+  revokeApiKey: (apiKeyId: string) =>
+    request<APIKeyRow>(
+      `/identity/organization/api-keys/${apiKeyId}/`,
+      { method: "DELETE" },
     ),
   updateOrganization: (updates: Partial<Record<keyof OrganizationDetail, string>>) =>
     request<OrganizationDetail>("/identity/organization/", {

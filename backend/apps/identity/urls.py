@@ -34,4 +34,14 @@ urlpatterns = [
         views.patch_organization_member,
         name="organization-member-patch",
     ),
+    path(
+        "organization/api-keys/",
+        views.organization_api_keys,
+        name="organization-api-keys",
+    ),
+    path(
+        "organization/api-keys/<uuid:api_key_id>/",
+        views.revoke_organization_api_key,
+        name="organization-api-key-revoke",
+    ),
 ]

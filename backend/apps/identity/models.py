@@ -227,3 +227,59 @@ class OrganizationMembership(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"{self.user.email} @ {self.organization.legal_name} ({self.role.name})"
+
+
+class APIKey(TenantScopedModel):
+    """A long-lived bearer credential scoped to one organization.
+
+    Per SECURITY.md "API key authentication" + DATA_MODEL.md the
+    platform exposes an HTTP API for programmatic access. Customers
+    create keys from Settings → API keys; the plaintext is shown
+    ONCE at creation and never persisted.
+
+    Storage: only ``key_hash`` (SHA-256 of the plaintext) is stored.
+    Auth lookups go by ``key_prefix`` (first 8 chars of the
+    plaintext) then verify the hash. The prefix is what the UI shows
+    so the customer can identify which key is which without ever
+    seeing the plaintext again.
+
+    Revocation: deactivation flips ``is_active=False`` rather than
+    deleting, so audit-log queries by ``actor_id`` (the APIKey id)
+    continue to resolve. ``revoked_at`` records when.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # Customer-chosen short label so the UI lists "ci-pipeline" +
+    # "zapier" rather than two opaque UUIDs. Not unique.
+    label = models.CharField(max_length=64)
+
+    # First 12 chars of the plaintext, e.g. "zk_live_AbCd". Indexed
+    # because auth lookup is by prefix → hash compare. Not a
+    # credential on its own; the full plaintext is required for auth.
+    key_prefix = models.CharField(max_length=16, db_index=True)
+
+    # SHA-256 hex of the full plaintext. 64 chars. Plaintext never
+    # leaves this row in serialised form.
+    key_hash = models.CharField(max_length=128)
+
+    # Audit + customer UI "created by" column. Soft FK by uuid — a
+    # deactivated user's keys aren't cascade-deleted; revoke them.
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+
+    is_active = models.BooleanField(default=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by_user_id = models.UUIDField(null=True, blank=True)
+
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "identity_api_key"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["organization", "is_active"]),
+            models.Index(fields=["key_prefix"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.label} ({self.key_prefix}…)"

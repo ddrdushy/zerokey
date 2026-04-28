@@ -22,6 +22,7 @@ type Tab = {
 const TABS: Tab[] = [
   { href: "/dashboard/settings", label: "Organization", match: "exact" },
   { href: "/dashboard/settings/members", label: "Members" },
+  { href: "/dashboard/settings/api-keys", label: "API keys" },
 ];
 
 export function SettingsTabs() {

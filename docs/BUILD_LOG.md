@@ -4551,6 +4551,135 @@ What's deferred:
 
 ---
 
+### Slice 46 — APIKey model + Settings → API keys tab
+
+Closes the SECURITY.md gap: customers can now mint per-org
+API keys for programmatic access (CI pipelines, Zapier,
+direct API integrations) and revoke them on demand. The
+plaintext is shown ONCE at creation; only a SHA-256 hash is
+stored.
+
+Backend:
+
+- **`apps.identity.models.APIKey`** — TenantScopedModel with
+  ``label`` (customer-facing identifier), ``key_prefix``
+  (first 12 chars of plaintext, indexed for auth lookup),
+  ``key_hash`` (SHA-256 hex, the verification value),
+  ``created_by_user_id`` (soft FK), ``is_active`` /
+  ``revoked_at`` / ``revoked_by_user_id`` (soft revoke),
+  ``last_used_at``. RLS migration follows the per-tenant
+  pattern.
+- **`apps.identity.api_keys`** — service module:
+  - ``create_api_key`` mints a fresh ``zk_live_<random>``
+    plaintext via ``secrets.token_urlsafe`` (~200 bits
+    entropy), stores prefix + hash, returns
+    ``(row, plaintext)`` so the caller can render the
+    plaintext exactly once.
+  - ``list_api_keys`` returns label + prefix + status + last-
+    used timestamps. Plaintext is NEVER in the response;
+    ``key_hash`` isn't exposed either.
+  - ``revoke_api_key`` flips ``is_active=False`` +
+    ``revoked_at`` + ``revoked_by_user_id``. Idempotent on
+    already-revoked rows (no audit noise).
+  - All three audited:
+    ``identity.api_key.created`` (label + prefix in payload)
+    and ``identity.api_key.revoked``. Plaintext never in
+    audit payloads — same PII-clean pattern.
+- **Endpoints**:
+  - ``GET /api/v1/identity/organization/api-keys/`` →
+    list (no plaintext).
+  - ``POST /api/v1/identity/organization/api-keys/`` →
+    body ``{"label": "ci-pipeline"}``. Response includes
+    ``plaintext`` ONCE.
+  - ``DELETE /api/v1/identity/organization/api-keys/<id>/``
+    → soft revoke.
+
+Frontend:
+
+- **`/dashboard/settings/api-keys`** new tab. List shows
+  label + prefix chip + status + last-used + created-at.
+  Active rows have a trash icon for one-click revoke.
+  Revoked rows show a "Revoked" badge and dim out.
+- **"New key" inline form** captures label + creates;
+  on success, shows a warning-tinted **"Save this key now —
+  you won't see it again"** banner with the plaintext +
+  Copy button + "I've saved it" dismiss. Banner blocks the
+  "New key" button so the operator can't accidentally
+  trigger another create before saving the current one.
+- **Clipboard write** via ``navigator.clipboard.writeText``;
+  falls back silently when blocked (the operator can still
+  select + copy manually).
+- **Tabs strip extended** to include "API keys" alongside
+  Organization + Members.
+- **`api.listApiKeys`/`createApiKey`/`revokeApiKey`** + the
+  `APIKeyRow` type added.
+
+Tests: 11 new (452 passing total, was 441). Auth gate.
+Create returns plaintext with the right prefix; row stores
+hash, not plaintext; audit event records label + prefix
+only. List does NOT return plaintext (asserted by
+serialising the body and grepping). Revoke flips
+``is_active``, emits audit, idempotent on already-revoked
+(no extra audit). Revoking unknown id → 404. Cross-org
+revoke → 404 (RLS isolation). Service contract: hash is
+deterministic SHA-256; two creates produce different
+plaintexts.
+
+Verified live: signed up fresh, navigated to
+`/dashboard/settings/api-keys` (3rd tab visible). Clicked
+New key, typed "ci-pipeline", Created. Warning banner
+showed the plaintext (`zk_live_Kme1U_…`), Copy button
+worked, "I've saved it" dismissed. List then showed the
+key with prefix chip + "Never used" + Created date + trash
+icon for revoke.
+
+Durable design decisions:
+
+- **Plaintext write-only end-to-end.** API never returns
+  it after creation; UI shows it ONCE in a dismissible
+  banner; tests assert it doesn't reappear in list
+  responses. A customer who lost the key revokes + creates
+  a new one. Same contract the engine credentials surface
+  uses (Slice 36).
+- **Soft revoke, not delete.** Audit-log queries by
+  ``actor_id=<api_key_id>`` need to keep resolving forever
+  (a future "what did this key do?" investigation is
+  meaningful even after revocation). Soft revoke + indexed
+  ``is_active`` keeps the hot path fast.
+- **Prefix length = 12, not 8.** Customers visually
+  distinguish keys by prefix in the list (when they have
+  multiple). 8 chars (``zk_live_``) is just the env tag;
+  12 chars adds 4 random characters — enough variation
+  for the list to read clearly without revealing the body.
+- **No reason field on revoke.** Customer-side action;
+  the audit chain still records the actor + key. A reason
+  field would add friction for a panic-revoke scenario
+  ("I think this key leaked, just kill it now"). Admin-
+  side actions need reasons; customer self-service does
+  not.
+- **`last_used_at` populated by the future auth path.**
+  Today the column exists but stays null because no API-
+  key auth middleware reads it yet. The middleware lands
+  in a follow-up; until then the field is a placeholder
+  the UI already renders ("Never used").
+
+What's deferred:
+
+- **API-key auth middleware.** Today the keys exist + can
+  be revoked, but no view actually accepts them as auth.
+  Adding a middleware that resolves
+  ``Authorization: Bearer zk_live_…`` to a User-equivalent
+  identity is the natural next slice — paired with a
+  documented public API surface.
+- **Scopes / permissions.** Today every key is a fully-
+  privileged proxy for its org. Future scopes (e.g.
+  "upload only", "read invoices only") need a
+  ``scopes: list[str]`` column + a permission-check layer.
+- **Key rotation reminder.** Banner the customer when a
+  key is older than N days. Phase 5 polish.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -4632,7 +4761,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 441 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 452 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

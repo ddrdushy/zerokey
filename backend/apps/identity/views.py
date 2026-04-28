@@ -195,6 +195,91 @@ def organization_members(request: Request) -> Response:
     )
 
 
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def organization_api_keys(request: Request) -> Response:
+    """Settings → API keys list + create.
+
+    GET  → list of {id, label, key_prefix, is_active, ...} rows. NEVER
+           returns plaintext — the customer sees only the prefix.
+    POST → create a key. Body: {"label": "ci-pipeline"}. Response
+           includes ``plaintext`` exactly ONCE; subsequent reads will
+           never return it.
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    from . import api_keys as api_keys_service
+
+    if request.method == "POST":
+        body = request.data or {}
+        try:
+            row, plaintext = api_keys_service.create_api_key(
+                organization_id=organization_id,
+                label=str(body.get("label") or ""),
+                actor_user=request.user,
+            )
+        except api_keys_service.APIKeyError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        # Plaintext is in the response body ONCE. Tests assert this is
+        # the only place it appears.
+        return Response(
+            {
+                "id": str(row.id),
+                "label": row.label,
+                "key_prefix": row.key_prefix,
+                "is_active": True,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "plaintext": plaintext,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    return Response(
+        {"results": api_keys_service.list_api_keys(organization_id=organization_id)}
+    )
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def revoke_organization_api_key(request: Request, api_key_id: str) -> Response:
+    """Soft-revoke an API key. Idempotent on already-revoked rows."""
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    from . import api_keys as api_keys_service
+
+    try:
+        result = api_keys_service.revoke_api_key(
+            organization_id=organization_id,
+            api_key_id=api_key_id,
+            actor_user=request.user,
+        )
+    except api_keys_service.APIKeyError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            return Response({"detail": msg}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
 def patch_organization_member(request: Request, membership_id: str) -> Response:
