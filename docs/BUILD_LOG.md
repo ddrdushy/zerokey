@@ -3888,6 +3888,160 @@ What's deferred:
 
 ---
 
+### Slices 39+40+41 — Privileged admin actions: members, tenants, system settings
+
+Three slices shipped together because they share the same
+"reason-required + redacted-credential" pattern and they
+collectively turn the admin surface from read-only into
+operationally functional.
+
+**Slice 39 — Tenant member management.** Platform staff can
+deactivate / reactivate a membership row and change its role
+without going through the customer-side owner path. Used for
+compromised accounts, departed employees, or fast-track
+support tickets. `apps.administration.services.admin_update_membership`
+takes membership id + optional `is_active` + optional
+`role_name` + REQUIRED reason; raises `MembershipUpdateError`
+with the allowlisted-roles message if the role name is
+unknown. `PATCH /api/v1/admin/memberships/<uuid>/`. Audited
+as `admin.membership_updated` with the membership id on
+`affected_entity_id`. Tests: 9 covering the auth gate,
+deactivate, role change, reason-required, at-least-one-field-
+required, unknown role 400, unknown id 404, no-op skip.
+
+**Slice 40 — Edit tenant.** Display + contact + state metadata
+editable from the tenant detail page. `_EDITABLE_TENANT_FIELDS`
+allowlist gates legal_name, contact_email, contact_phone,
+registered_address, language_preference, timezone,
+billing_currency, subscription_state, trial_state. Wiring fields
+(id, tin) and customer-managed fields (sst_number, certificate_*)
+are immutable from the admin side — those have stronger
+constraints and a typo via the operator surface would corrupt
+state. `PATCH /api/v1/admin/tenants/<uuid>/edit/`. Audited as
+`admin.tenant_updated` — payload carries the field NAMES
+changed and the reason; never the values (those can be PII —
+contact_email, registered_address). Tests: 8 covering the auth
+gate, update, reason-required, non-editable-field rejection,
+unknown tenant 404, no-op skip, subscription state change.
+
+**Slice 41 — System settings UI.** The biggest of the three.
+Every platform-wide configuration namespace (LHDN MyInvois,
+Stripe billing, Email/SMTP, branding, engine routing defaults)
+editable from one screen with a unified credential-rotation
+contract. `apps.administration.services.SYSTEM_SETTING_SCHEMAS`
+declares the canonical namespaces + their field schemas
+(key, label, kind: `string` or `credential`, placeholder).
+Adding a new namespace = appending to that list; the UI
+renders it automatically. Endpoints:
+
+  - `GET /api/v1/admin/system-settings/` lists every namespace
+    with redacted credential metadata (`{key: bool}` map of
+    "is this set?" — never the value).
+  - `PATCH /api/v1/admin/system-settings/<namespace>/` updates
+    a namespace's values dict atomically with the same
+    write-only credential contract the engines page uses. An
+    empty-string value clears a key.
+
+Frontend: **`/admin/settings/page.tsx`** — left rail of
+namespace tabs (each shows credential-set count e.g.
+"2/3 credentials set" in success-green, signal-amber, or
+slate), right pane renders the active namespace as a
+2-column field grid with credential password inputs that show
+"•••• (set — type to rotate)" or "(unset)" placeholders. Per-
+credential "Clear value" link sends an empty string with the
+reason. Bottom bar has the required reason input + Save
+button. Audited as `admin.system_settings_listed` /
+`admin.system_setting_updated`. Sidebar nav now shows
+"System settings" as a dedicated entry alongside Engines.
+
+Tests across all three: 28 new (406 passing total, was 378).
+Membership 9 + tenant edit 8 + system settings 11. Each test
+class asserts the auth gate (401/403/customer-403), the
+audit-payload-doesn't-leak-values invariant, and the no-op
+skip behaviour.
+
+Verified live (`admin@symprio.com`):
+
+  - **Tenant detail "Edit tenant" button** opens an inline
+    form with 8 editable fields (legal name, email, phone,
+    timezone, currency, subscription state, trial state,
+    registered address textarea) + reason input. Cancel
+    closes the form; Save patches and refreshes.
+  - **Member row "more" menu** opens a privileged action
+    panel — role select + Save Role + Deactivate (or
+    Reactivate when inactive) + Cancel + a required reason
+    input. Reason validation fires before the API call.
+  - **System settings page** renders 5 namespace tabs with
+    credential-set counts. Email / SMTP shows 7 fields
+    (smtp_host, smtp_port, smtp_user, smtp_password —
+    password type, from_address, from_name, use_tls).
+    Privileged-action explainer + reason-required input
+    visible at the bottom.
+
+Durable design decisions (across all three):
+
+- **Reason is a required field on every privileged write.**
+  Member deactivation, role change, tenant edit, system-
+  setting rotation — all require the operator to type a
+  reason. The reason lands in the audit payload (truncated
+  to 255 chars). This is the audit story's load-bearing
+  property: an operator can be asked "why did you change X
+  on Y?" and the answer is in the chain, not someone's
+  Slack DM.
+- **Field NAMES in audit payloads, never values.** The same
+  PII-clean convention every customer-side audit event
+  follows. A tenant rename → audit records
+  `fields_changed: ["legal_name"]` + `reason`, not the
+  before/after legal_name strings. A credential rotation →
+  records `credential_keys_changed: ["secret_key"]`, never
+  the new key. Tests assert sensitive strings don't appear
+  in the audit payload.
+- **Allowlist of editable fields, not deny-list.** Every
+  privileged write declares an explicit allowlist. New
+  operator-editable fields require a code change to land in
+  the allowlist, which is the right amount of friction.
+- **Schema-driven settings UI.** The frontend doesn't have
+  per-namespace logic — `SYSTEM_SETTING_SCHEMAS` is the
+  source of truth and the page renders whatever's in the
+  schema. Adding a sixth namespace is a 10-line change in
+  one Python file; no React touch needed.
+- **Credentials are write-only end-to-end.** API never
+  returns plaintext; UI uses password-type inputs; clearing
+  is an explicit gesture (empty-string POST or "Clear value"
+  link). Same contract whether the credential lives in
+  `Engine.credentials` or `SystemSetting.values`.
+- **No-op detection skips the audit row.** Saving an
+  unchanged form is a common UX gesture; if we audited it
+  the chain would fill with non-events. Detection is by
+  value-comparison, not form-state.
+
+What's deferred:
+
+- **Test the SMTP wiring.** A "send a test email" button on
+  the email namespace would close the obvious next gap —
+  today the operator saves credentials and crosses fingers.
+  Ships when the actual email-sending path lands (currently
+  the platform doesn't send any emails).
+- **Stripe webhook subscription wizard.** Stripe webhooks
+  need a public URL + a signing secret on Stripe's side.
+  The settings page captures the secret; an "in-product
+  wizard" that creates the Stripe webhook on the operator's
+  behalf is Phase 5 polish.
+- **Per-tenant SystemSetting overrides.** Today every
+  namespace is platform-wide. A future "this customer uses
+  their own LHDN credentials, not ours" pattern would need
+  a `tenant_id` column on SystemSetting — explicitly out of
+  scope for now.
+- **Bulk member actions.** Deactivate-all, transfer
+  ownership in one gesture — Phase 5 polish; the per-row
+  actions cover the common case.
+- **Field-level diff in audit payload.** Today we record
+  field NAMES that changed; recording the BEFORE values
+  (sanitised) would help reconstruct a state mid-stream.
+  Adds chain volume; deferred until needed.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -3969,7 +4123,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 378 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 406 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

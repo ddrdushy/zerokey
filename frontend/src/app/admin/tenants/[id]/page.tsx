@@ -17,6 +17,8 @@ import {
   FileText,
   Inbox,
   Mail,
+  MoreHorizontal,
+  Pencil,
   Phone,
   ScrollText,
   ShieldCheck,
@@ -25,7 +27,10 @@ import {
 
 import { api, ApiError, type TenantDetail } from "@/lib/api";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+const ROLE_OPTIONS = ["owner", "admin", "approver", "submitter", "viewer"];
 
 const REASON_LABEL: Record<string, string> = {
   validation_failure: "Validation failure",
@@ -43,29 +48,28 @@ export default function TenantDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  async function refresh() {
     if (!tenantId) return;
+    try {
+      const response = await api.adminTenantDetail(tenantId);
+      setDetail(response);
+      setError(null);
+      setNotFound(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        setNotFound(true);
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to load tenant.");
+    }
+  }
+
+  useEffect(() => {
     setDetail(null);
     setError(null);
     setNotFound(false);
-    api
-      .adminTenantDetail(tenantId)
-      .then((response) => {
-        if (cancelled) return;
-        setDetail(response);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.status === 404) {
-          setNotFound(true);
-          return;
-        }
-        setError(err instanceof Error ? err.message : "Failed to load tenant.");
-      });
-    return () => {
-      cancelled = true;
-    };
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
   if (notFound) {
@@ -115,10 +119,18 @@ export default function TenantDetailPage() {
           <Loading />
         ) : detail === null ? null : (
           <>
-            <Header detail={detail} />
+            <Header
+              detail={detail}
+              onChanged={refresh}
+              onError={setError}
+            />
             <KPIGrid detail={detail} />
             <div className="grid gap-6 md:grid-cols-2">
-              <MembersSection detail={detail} />
+              <MembersSection
+                detail={detail}
+                onChanged={refresh}
+                onError={setError}
+              />
               <InboxSection detail={detail} />
             </div>
             <RecentJobsSection detail={detail} />
@@ -130,23 +142,42 @@ export default function TenantDetailPage() {
   );
 }
 
-function Header({ detail }: { detail: TenantDetail }) {
+function Header({
+  detail,
+  onChanged,
+  onError,
+}: {
+  detail: TenantDetail;
+  onChanged: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
   return (
     <header className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-baseline gap-3">
-        <h1 className="font-display text-2xl font-bold tracking-tight">
-          {detail.legal_name}
-        </h1>
-        <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">
-          TIN {detail.tin}
-        </code>
-        <StateBadge state={detail.subscription_state} />
-        {detail.certificate_uploaded && (
-          <span className="inline-flex items-center gap-1 rounded-sm bg-success/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-success">
-            <ShieldCheck className="h-3 w-3" />
-            Cert uploaded
-          </span>
-        )}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <h1 className="font-display text-2xl font-bold tracking-tight">
+            {detail.legal_name}
+          </h1>
+          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">
+            TIN {detail.tin}
+          </code>
+          <StateBadge state={detail.subscription_state} />
+          {detail.certificate_uploaded && (
+            <span className="inline-flex items-center gap-1 rounded-sm bg-success/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-success">
+              <ShieldCheck className="h-3 w-3" />
+              Cert uploaded
+            </span>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setEditing(!editing)}
+        >
+          <Pencil className="mr-1.5 h-3.5 w-3.5" />
+          {editing ? "Cancel" : "Edit tenant"}
+        </Button>
       </div>
       <div className="flex flex-wrap items-center gap-4 text-2xs text-slate-500">
         {detail.contact_email && (
@@ -169,7 +200,220 @@ function Header({ detail }: { detail: TenantDetail }) {
             : "—"}
         </span>
       </div>
+      {editing && (
+        <TenantEditForm
+          detail={detail}
+          onClose={() => setEditing(false)}
+          onChanged={() => {
+            setEditing(false);
+            onChanged();
+          }}
+          onError={onError}
+        />
+      )}
     </header>
+  );
+}
+
+const SUBSCRIPTION_STATES = ["trial", "active", "past_due", "cancelled"];
+const TRIAL_STATES = ["active", "expired", "converted"];
+
+function TenantEditForm({
+  detail,
+  onClose,
+  onChanged,
+  onError,
+}: {
+  detail: TenantDetail;
+  onClose: () => void;
+  onChanged: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  const [form, setForm] = useState({
+    legal_name: detail.legal_name,
+    contact_email: detail.contact_email,
+    contact_phone: detail.contact_phone,
+    registered_address: detail.registered_address,
+    timezone: detail.timezone,
+    billing_currency: detail.billing_currency,
+    subscription_state: detail.subscription_state,
+    trial_state: detail.trial_state,
+  });
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function update<K extends keyof typeof form>(key: K, value: string) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function onSave() {
+    if (!reason.trim()) {
+      onError("A reason is required for tenant edits.");
+      return;
+    }
+    setSaving(true);
+    onError(null);
+    try {
+      // Send only fields that actually changed.
+      const changes: Record<string, string> = {};
+      for (const key of Object.keys(form) as Array<keyof typeof form>) {
+        if (form[key] !== detail[key as keyof TenantDetail]) {
+          changes[key] = form[key];
+        }
+      }
+      if (Object.keys(changes).length === 0) {
+        onClose();
+        return;
+      }
+      await api.adminUpdateTenant(detail.id, {
+        fields: changes,
+        reason: reason.trim(),
+      });
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4">
+      <p className="mb-3 text-[11px] text-slate-500">
+        Privileged edit — every change is audited under your staff identity
+        with the reason below. Field values are stored, but the audit
+        payload only records which fields changed (no PII leak into the
+        chain).
+      </p>
+      <div className="grid gap-3 md:grid-cols-2">
+        <EditField
+          label="Legal name"
+          value={form.legal_name}
+          onChange={(v) => update("legal_name", v)}
+        />
+        <EditField
+          label="Contact email"
+          value={form.contact_email}
+          onChange={(v) => update("contact_email", v)}
+        />
+        <EditField
+          label="Contact phone"
+          value={form.contact_phone}
+          onChange={(v) => update("contact_phone", v)}
+        />
+        <EditField
+          label="Timezone"
+          value={form.timezone}
+          onChange={(v) => update("timezone", v)}
+        />
+        <EditField
+          label="Currency"
+          value={form.billing_currency}
+          onChange={(v) => update("billing_currency", v)}
+        />
+        <EditSelect
+          label="Subscription state"
+          value={form.subscription_state}
+          options={SUBSCRIPTION_STATES}
+          onChange={(v) => update("subscription_state", v)}
+        />
+        <EditSelect
+          label="Trial state"
+          value={form.trial_state}
+          options={TRIAL_STATES}
+          onChange={(v) => update("trial_state", v)}
+        />
+        <EditField
+          label="Registered address"
+          value={form.registered_address}
+          onChange={(v) => update("registered_address", v)}
+          textarea
+        />
+      </div>
+      <div className="mt-3">
+        <input
+          type="text"
+          placeholder="Reason (required, e.g. support ticket #4421)"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          className="w-full rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+        />
+      </div>
+      <div className="mt-3 flex items-center justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={onClose} disabled={saving}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={onSave} disabled={saving}>
+          {saving ? "Saving…" : "Save changes"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function EditField({
+  label,
+  value,
+  onChange,
+  textarea = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  textarea?: boolean;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-2xs">
+      <span className="font-medium uppercase tracking-wider text-slate-400">
+        {label}
+      </span>
+      {textarea ? (
+        <textarea
+          value={value}
+          rows={2}
+          onChange={(e) => onChange(e.target.value)}
+          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+        />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+        />
+      )}
+    </label>
+  );
+}
+
+function EditSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-2xs">
+      <span className="font-medium uppercase tracking-wider text-slate-400">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+      >
+        {options.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -275,7 +519,16 @@ function StateBadge({ state }: { state: string }) {
   );
 }
 
-function MembersSection({ detail }: { detail: TenantDetail }) {
+function MembersSection({
+  detail,
+  onChanged,
+  onError,
+}: {
+  detail: TenantDetail;
+  onChanged: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
   return (
     <section className="rounded-xl border border-slate-100 bg-white">
       <header className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
@@ -292,24 +545,155 @@ function MembersSection({ detail }: { detail: TenantDetail }) {
           {detail.members.map((m) => (
             <li
               key={m.id}
-              className="flex items-center justify-between gap-3 px-4 py-2 text-2xs"
+              className={cn(
+                "flex flex-col gap-2 px-4 py-2 text-2xs",
+                !m.is_active && "opacity-60",
+              )}
             >
-              <div className="flex-1 truncate">
-                <span className="font-medium text-ink">{m.email}</span>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1 truncate">
+                  <span className="font-medium text-ink">{m.email}</span>
+                  {!m.is_active && (
+                    <span className="ml-2 rounded-sm bg-slate-200 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-slate-500">
+                      Inactive
+                    </span>
+                  )}
+                </div>
+                <span className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-500">
+                  {m.role}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  {m.joined_date
+                    ? new Date(m.joined_date).toLocaleDateString()
+                    : ""}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Member actions"
+                  onClick={() =>
+                    setEditing(editing === m.id ? null : m.id)
+                  }
+                  className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-ink"
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </button>
               </div>
-              <span className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-500">
-                {m.role}
-              </span>
-              <span className="text-[10px] text-slate-400">
-                {m.joined_date
-                  ? new Date(m.joined_date).toLocaleDateString()
-                  : ""}
-              </span>
+              {editing === m.id && (
+                <MemberActions
+                  member={m}
+                  onClose={() => setEditing(null)}
+                  onChanged={() => {
+                    setEditing(null);
+                    onChanged();
+                  }}
+                  onError={onError}
+                />
+              )}
             </li>
           ))}
         </ul>
       )}
     </section>
+  );
+}
+
+function MemberActions({
+  member,
+  onClose,
+  onChanged,
+  onError,
+}: {
+  member: TenantDetail["members"][number];
+  onClose: () => void;
+  onChanged: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  const [role, setRole] = useState(member.role);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function applyChange(changes: {
+    is_active?: boolean;
+    role_name?: string;
+  }) {
+    if (!reason.trim()) {
+      onError("A reason is required for membership changes.");
+      return;
+    }
+    setSaving(true);
+    onError(null);
+    try {
+      await api.adminUpdateMembership(member.id, {
+        ...changes,
+        reason: reason.trim(),
+      });
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Update failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+      <p className="mb-2 text-[11px] text-slate-500">
+        Privileged action — every change is audited under your staff
+        identity. A reason is required.
+      </p>
+      <input
+        type="text"
+        placeholder="Reason (e.g. departed employee, ticket #123)"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        className="mb-2 w-full rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={role}
+          onChange={(e) => setRole(e.target.value)}
+          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+        >
+          {ROLE_OPTIONS.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={saving || role === member.role}
+          onClick={() => applyChange({ role_name: role })}
+        >
+          Save role
+        </Button>
+        {member.is_active ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={saving}
+            onClick={() => applyChange({ is_active: false })}
+            className="text-error hover:bg-error/5"
+          >
+            Deactivate
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={saving}
+            onClick={() => applyChange({ is_active: true })}
+            className="text-success hover:bg-success/5"
+          >
+            Reactivate
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" onClick={onClose} disabled={saving}>
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }
 

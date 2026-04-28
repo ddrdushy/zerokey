@@ -117,6 +117,99 @@ def platform_action_types(request: Request) -> Response:
 
 @api_view(["GET"])
 @permission_classes([IsPlatformStaff])
+def admin_list_system_settings(request: Request) -> Response:
+    """List every known SystemSetting namespace with redacted credentials."""
+    return Response(
+        {
+            "results": services.list_system_settings_for_admin(
+                actor_user_id=request.user.id,
+            ),
+        }
+    )
+
+
+@api_view(["PATCH"])
+@permission_classes([IsPlatformStaff])
+def admin_update_system_setting(request: Request, namespace: str) -> Response:
+    """Patch one namespace. Body: { "fields": {...}, "reason": "..." }"""
+    body = request.data or {}
+    field_updates = body.get("fields") or {}
+    if not isinstance(field_updates, dict):
+        return Response(
+            {"detail": "fields must be an object."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        result = services.admin_update_system_setting(
+            actor_user_id=request.user.id,
+            namespace=namespace,
+            field_updates=field_updates,
+            reason=str(body.get("reason") or ""),
+        )
+    except services.SystemSettingUpdateError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["PATCH"])
+@permission_classes([IsPlatformStaff])
+def admin_update_tenant(request: Request, organization_id: str) -> Response:
+    """PATCH editable tenant fields. Body shape:
+    { "fields": {...}, "reason": "..." }
+    """
+    body = request.data or {}
+    field_updates = body.get("fields") or {}
+    if not isinstance(field_updates, dict):
+        return Response(
+            {"detail": "fields must be an object."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        result = services.admin_update_tenant(
+            actor_user_id=request.user.id,
+            organization_id=organization_id,
+            field_updates=field_updates,
+            reason=str(body.get("reason") or ""),
+        )
+    except services.TenantUpdateError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            return Response({"detail": msg}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["PATCH"])
+@permission_classes([IsPlatformStaff])
+def admin_update_membership(request: Request, membership_id: str) -> Response:
+    """Toggle is_active and/or change role on one membership.
+
+    Body shape:
+        {
+          "is_active": true|false,    (optional)
+          "role_name": "owner|admin|approver|submitter|viewer",  (optional)
+          "reason": "departed employee — IT ticket #4421"        (REQUIRED)
+        }
+    """
+    body = request.data or {}
+    try:
+        result = services.admin_update_membership(
+            actor_user_id=request.user.id,
+            membership_id=membership_id,
+            is_active=body.get("is_active"),
+            role_name=body.get("role_name"),
+            reason=str(body.get("reason") or ""),
+        )
+    except services.MembershipUpdateError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            return Response({"detail": msg}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
 def platform_tenant_detail(request: Request, organization_id: str) -> Response:
     """Per-tenant snapshot for the admin tenant-detail page."""
     from apps.identity.models import Organization

@@ -212,6 +212,25 @@ export type PlatformOverview = {
   };
 };
 
+export type SystemSettingFieldKind = "string" | "credential";
+
+export type SystemSettingFieldSchema = {
+  key: string;
+  label: string;
+  kind: SystemSettingFieldKind;
+  placeholder?: string;
+};
+
+export type SystemSettingNamespace = {
+  namespace: string;
+  label: string;
+  description: string;
+  fields: SystemSettingFieldSchema[];
+  values: Record<string, string>;
+  credential_keys: Record<string, boolean>;
+  updated_at: string | null;
+};
+
 export type AdminEngine = {
   id: string;
   name: string;
@@ -586,6 +605,18 @@ export const api = {
     request<{ results: AdminEngine[] }>("/admin/engines/").then(
       (r) => r.results,
     ),
+  adminListSystemSettings: () =>
+    request<{ results: SystemSettingNamespace[] }>(
+      "/admin/system-settings/",
+    ).then((r) => r.results),
+  adminUpdateSystemSetting: (
+    namespace: string,
+    body: { fields: Record<string, string>; reason: string },
+  ) =>
+    request<SystemSettingNamespace>(`/admin/system-settings/${namespace}/`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   adminUpdateEngine: (
     engineId: string,
     body: {
@@ -604,6 +635,41 @@ export const api = {
     }),
   adminTenantDetail: (organizationId: string) =>
     request<TenantDetail>(`/admin/tenants/${organizationId}/`),
+  adminUpdateTenant: (
+    organizationId: string,
+    body: {
+      fields: Partial<{
+        legal_name: string;
+        contact_email: string;
+        contact_phone: string;
+        registered_address: string;
+        language_preference: string;
+        timezone: string;
+        billing_currency: string;
+        subscription_state: string;
+        trial_state: string;
+      }>;
+      reason: string;
+    },
+  ) =>
+    request<TenantDetail>(`/admin/tenants/${organizationId}/edit/`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  adminUpdateMembership: (
+    membershipId: string,
+    body: { is_active?: boolean; role_name?: string; reason: string },
+  ) =>
+    request<{
+      id: string;
+      user_id: string;
+      organization_id: string;
+      role: string;
+      is_active: boolean;
+    }>(`/admin/memberships/${membershipId}/`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   adminListTenants: (params?: { search?: string; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.search) qs.set("search", params.search);

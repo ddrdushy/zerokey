@@ -16,6 +16,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   ChevronDown,
+  Cog,
   LogOut,
   ScrollText,
   Settings,
@@ -37,7 +38,8 @@ const NAV: NavItem[] = [
   { href: "/admin", label: "Overview", icon: ShieldCheck },
   { href: "/admin/audit", label: "Platform audit", icon: ScrollText },
   { href: "/admin/tenants", label: "Tenants", icon: Users },
-  { href: "/admin/engines", label: "Engines", icon: Settings },
+  { href: "/admin/engines", label: "Engines", icon: Cog },
+  { href: "/admin/settings", label: "System settings", icon: Settings },
 ];
 
 export function AdminShell({ children }: { children: React.ReactNode }) {

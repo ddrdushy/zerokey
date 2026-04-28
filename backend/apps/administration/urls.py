@@ -30,6 +30,26 @@ urlpatterns = [
         views.platform_tenant_detail,
         name="platform-tenant-detail",
     ),
+    path(
+        "tenants/<uuid:organization_id>/edit/",
+        views.admin_update_tenant,
+        name="admin-update-tenant",
+    ),
+    path(
+        "memberships/<uuid:membership_id>/",
+        views.admin_update_membership,
+        name="admin-update-membership",
+    ),
+    path(
+        "system-settings/",
+        views.admin_list_system_settings,
+        name="admin-list-system-settings",
+    ),
+    path(
+        "system-settings/<slug:namespace>/",
+        views.admin_update_system_setting,
+        name="admin-update-system-setting",
+    ),
     path("engines/", views.admin_list_engines, name="admin-list-engines"),
     path(
         "engines/<uuid:engine_id>/",

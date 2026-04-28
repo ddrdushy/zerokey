@@ -761,6 +761,595 @@ def tenant_detail(
     return detail
 
 
+# --- System-settings admin surface (Slice 41) ------------------------------------
+#
+# Every platform-wide configuration namespace is editable from the admin
+# console. The schema below documents what keys belong to each namespace
+# and which keys are credentials (redacted on read; rotated by writing a
+# new value; cleared by writing empty string). Reading the value back is
+# never possible — the API only ever returns ``{key: bool}`` for the
+# credential keys.
+#
+# Adding a new namespace: add it to ``SYSTEM_SETTING_SCHEMAS`` and the
+# admin UI renders it automatically. The runtime resolver
+# ``apps.administration.services.system_setting`` reads the same DB row
+# regardless of whether the namespace is in this schema or not, so the
+# schema is purely a documentation + UI hint, not an enforcement gate.
+
+
+SYSTEM_SETTING_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "namespace": "lhdn",
+        "label": "LHDN MyInvois",
+        "description": (
+            "Integration with the LHDN MyInvois e-invoice portal. The "
+            "preprod URL ships as the default; production deployments "
+            "swap in the live endpoint when ready."
+        ),
+        "fields": [
+            {
+                "key": "base_url",
+                "label": "Base URL",
+                "kind": "string",
+                "placeholder": "https://preprod-api.myinvois.hasil.gov.my",
+            },
+            {
+                "key": "client_id",
+                "label": "Client ID",
+                "kind": "credential",
+            },
+            {
+                "key": "client_secret",
+                "label": "Client secret",
+                "kind": "credential",
+            },
+        ],
+    },
+    {
+        "namespace": "stripe",
+        "label": "Stripe billing",
+        "description": (
+            "Payments + subscriptions for ZeroKey's plan catalog. FPX "
+            "support is enabled on the Stripe side; no separate "
+            "namespace required."
+        ),
+        "fields": [
+            {
+                "key": "publishable_key",
+                "label": "Publishable key",
+                "kind": "string",
+                "placeholder": "pk_live_…",
+            },
+            {
+                "key": "secret_key",
+                "label": "Secret key",
+                "kind": "credential",
+            },
+            {
+                "key": "webhook_secret",
+                "label": "Webhook signing secret",
+                "kind": "credential",
+            },
+            {
+                "key": "default_currency",
+                "label": "Default currency",
+                "kind": "string",
+                "placeholder": "MYR",
+            },
+        ],
+    },
+    {
+        "namespace": "email",
+        "label": "Email / SMTP",
+        "description": (
+            "Outbound email for password resets, invitations, "
+            "notifications. Use a transactional provider (SES, "
+            "Postmark, Mailgun) — not a personal Gmail."
+        ),
+        "fields": [
+            {
+                "key": "smtp_host",
+                "label": "SMTP host",
+                "kind": "string",
+                "placeholder": "smtp.eu-west-1.amazonaws.com",
+            },
+            {
+                "key": "smtp_port",
+                "label": "SMTP port",
+                "kind": "string",
+                "placeholder": "587",
+            },
+            {
+                "key": "smtp_user",
+                "label": "SMTP username",
+                "kind": "string",
+            },
+            {
+                "key": "smtp_password",
+                "label": "SMTP password",
+                "kind": "credential",
+            },
+            {
+                "key": "from_address",
+                "label": "From address",
+                "kind": "string",
+                "placeholder": "no-reply@symprio.com",
+            },
+            {
+                "key": "from_name",
+                "label": "From name",
+                "kind": "string",
+                "placeholder": "ZeroKey",
+            },
+            {
+                "key": "use_tls",
+                "label": "Use TLS",
+                "kind": "string",
+                "placeholder": "true",
+            },
+        ],
+    },
+    {
+        "namespace": "branding",
+        "label": "Branding & support",
+        "description": (
+            "Public-facing branding and support contact information. "
+            "Used by the marketing site, transactional emails, and "
+            "invoice PDFs."
+        ),
+        "fields": [
+            {
+                "key": "product_name",
+                "label": "Product name",
+                "kind": "string",
+                "placeholder": "ZeroKey",
+            },
+            {
+                "key": "support_email",
+                "label": "Support email",
+                "kind": "string",
+                "placeholder": "support@symprio.com",
+            },
+            {
+                "key": "terms_url",
+                "label": "Terms of service URL",
+                "kind": "string",
+                "placeholder": "https://zerokey.symprio.com/terms",
+            },
+            {
+                "key": "privacy_url",
+                "label": "Privacy policy URL",
+                "kind": "string",
+                "placeholder": "https://zerokey.symprio.com/privacy",
+            },
+        ],
+    },
+    {
+        "namespace": "engine_defaults",
+        "label": "Engine routing defaults",
+        "description": (
+            "Confidence thresholds the extraction pipeline uses when "
+            "deciding to escalate from pdfplumber → EasyOCR → vision. "
+            "Override per-engine via the engine credentials page."
+        ),
+        "fields": [
+            {
+                "key": "ocr_threshold",
+                "label": "OCR escalation threshold",
+                "kind": "string",
+                "placeholder": "0.5",
+            },
+            {
+                "key": "vision_threshold",
+                "label": "Vision escalation threshold",
+                "kind": "string",
+                "placeholder": "0.5",
+            },
+        ],
+    },
+]
+
+
+def list_system_settings_for_admin(
+    *, actor_user_id: UUID | str
+) -> list[dict[str, Any]]:
+    """Return one entry per known namespace with redacted credential metadata.
+
+    Output shape per namespace:
+        {
+          namespace, label, description, fields: [{key, label, kind, placeholder}],
+          values: {key: string},                   (non-credential values only)
+          credential_keys: {key: bool},            (which credentials are set)
+          updated_at: iso-string | null,
+        }
+
+    Credentials are NEVER returned in cleartext — the same
+    write-only contract the engine credentials surface uses.
+
+    Audited as ``admin.system_settings_listed``.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    by_namespace = {
+        s.namespace: s for s in SystemSetting.objects.all()
+    }
+    out: list[dict[str, Any]] = []
+    for schema in SYSTEM_SETTING_SCHEMAS:
+        ns = schema["namespace"]
+        row = by_namespace.get(ns)
+        stored = (row.values if row else {}) or {}
+        cred_keys = {
+            f["key"] for f in schema["fields"] if f["kind"] == "credential"
+        }
+        non_cred_values = {
+            k: str(v)
+            for k, v in stored.items()
+            if k not in cred_keys and isinstance(k, str)
+        }
+        credential_keys = {k: bool(stored.get(k)) for k in cred_keys}
+        out.append(
+            {
+                "namespace": ns,
+                "label": schema["label"],
+                "description": schema["description"],
+                "fields": schema["fields"],
+                "values": non_cred_values,
+                "credential_keys": credential_keys,
+                "updated_at": (
+                    row.updated_at.isoformat()
+                    if row and row.updated_at
+                    else None
+                ),
+            }
+        )
+
+    record_event(
+        action_type="admin.system_settings_listed",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=None,
+        affected_entity_type="SystemSetting",
+        affected_entity_id="",
+        payload={"namespaces": [s["namespace"] for s in SYSTEM_SETTING_SCHEMAS]},
+    )
+    return out
+
+
+class SystemSettingUpdateError(Exception):
+    """Raised when a system-setting update payload is invalid."""
+
+
+def admin_update_system_setting(
+    *,
+    actor_user_id: UUID | str,
+    namespace: str,
+    field_updates: dict[str, str],
+    reason: str = "",
+) -> dict[str, Any]:
+    """Patch one namespace's values dict atomically.
+
+    Non-credential keys: any non-None value sets, empty-string clears.
+    Credential keys: any non-empty value sets/rotates, empty-string clears.
+    Reading credentials back is impossible.
+
+    Audited as ``admin.system_setting_updated`` with the field NAMES
+    changed and the reason — never values. The existing
+    ``upsert_system_setting`` helper would also work but emits a less
+    structured event; this wrapper uses the dedicated admin event so
+    the audit log can distinguish operator-driven changes from
+    migration-driven ones.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    if not reason or not reason.strip():
+        raise SystemSettingUpdateError(
+            "A reason is required for system-setting changes."
+        )
+
+    schema = next(
+        (s for s in SYSTEM_SETTING_SCHEMAS if s["namespace"] == namespace),
+        None,
+    )
+    if schema is None:
+        raise SystemSettingUpdateError(
+            f"Unknown namespace {namespace!r}. "
+            f"Allowed: {[s['namespace'] for s in SYSTEM_SETTING_SCHEMAS]}"
+        )
+
+    allowed_keys = {f["key"] for f in schema["fields"]}
+    invalid = set(field_updates) - allowed_keys
+    if invalid:
+        raise SystemSettingUpdateError(
+            f"Keys not in {namespace} schema: {sorted(invalid)}. "
+            f"Allowed: {sorted(allowed_keys)}"
+        )
+
+    with transaction.atomic():
+        setting, _ = SystemSetting.objects.select_for_update().get_or_create(
+            namespace=namespace,
+            defaults={
+                "values": {},
+                "description": schema["description"],
+                "updated_by_id": actor_user_id,
+            },
+        )
+        current = dict(setting.values or {})
+        changed_keys: list[str] = []
+        for key, value in field_updates.items():
+            value_str = "" if value is None else str(value)
+            if value_str == "":
+                if key in current:
+                    del current[key]
+                    changed_keys.append(key)
+            else:
+                if current.get(key) != value_str:
+                    current[key] = value_str
+                    changed_keys.append(key)
+
+        if not changed_keys:
+            return _system_setting_admin_dict(setting, schema)
+
+        setting.values = current
+        setting.updated_by_id = actor_user_id
+        setting.save(update_fields=["values", "updated_by_id", "updated_at"])
+
+        record_event(
+            action_type="admin.system_setting_updated",
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(actor_user_id),
+            organization_id=None,
+            affected_entity_type="SystemSetting",
+            affected_entity_id=str(setting.id),
+            payload={
+                "namespace": namespace,
+                "fields_changed": sorted(changed_keys),
+                "reason": reason.strip()[:255],
+            },
+        )
+
+    return _system_setting_admin_dict(setting, schema)
+
+
+def _system_setting_admin_dict(
+    setting: SystemSetting, schema: dict[str, Any]
+) -> dict[str, Any]:
+    stored = setting.values or {}
+    cred_keys = {f["key"] for f in schema["fields"] if f["kind"] == "credential"}
+    non_cred_values = {
+        k: str(v) for k, v in stored.items() if k not in cred_keys
+    }
+    credential_keys = {k: bool(stored.get(k)) for k in cred_keys}
+    return {
+        "namespace": setting.namespace,
+        "label": schema["label"],
+        "description": schema["description"],
+        "fields": schema["fields"],
+        "values": non_cred_values,
+        "credential_keys": credential_keys,
+        "updated_at": setting.updated_at.isoformat()
+        if setting.updated_at
+        else None,
+    }
+
+
+# --- Tenant edit from admin (Slice 40) -----------------------------------------
+#
+# Platform staff can update a tenant's display + contact metadata and
+# subscription state via the admin surface. Wiring fields (id, tin) and
+# financial state are NOT editable here — those have stronger constraints
+# and lifecycle invariants we don't want bypassed by a typo.
+
+
+_EDITABLE_TENANT_FIELDS = {
+    "legal_name",
+    "contact_email",
+    "contact_phone",
+    "registered_address",
+    "language_preference",
+    "timezone",
+    "billing_currency",
+    "subscription_state",
+    "trial_state",
+}
+
+
+class TenantUpdateError(Exception):
+    """Raised when an admin tenant update payload is invalid."""
+
+
+def admin_update_tenant(
+    *,
+    actor_user_id: UUID | str,
+    organization_id: UUID | str,
+    field_updates: dict[str, Any],
+    reason: str = "",
+) -> dict[str, Any]:
+    """Atomically update editable tenant fields under super-admin elevation.
+
+    ``field_updates`` keys are restricted to ``_EDITABLE_TENANT_FIELDS``;
+    everything else (id, tin, certificate_*, sst_number) is wiring or
+    customer-managed. ``reason`` is REQUIRED — staff edits to customer
+    metadata always need a why on the audit row.
+
+    Audited as ``admin.tenant_updated`` with the field NAMES changed and
+    the reason in the payload. Field VALUES are never put into the audit
+    payload (they could be PII like contact_email or registered_address).
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    if not reason or not reason.strip():
+        raise TenantUpdateError("A reason is required for tenant updates.")
+
+    invalid = set(field_updates) - _EDITABLE_TENANT_FIELDS
+    if invalid:
+        raise TenantUpdateError(
+            f"Fields not editable from admin: {sorted(invalid)}. "
+            f"Allowed: {sorted(_EDITABLE_TENANT_FIELDS)}"
+        )
+
+    with super_admin_context(reason="admin.tenant_update"):
+        with transaction.atomic():
+            try:
+                org = Organization.objects.select_for_update().get(
+                    id=organization_id
+                )
+            except Organization.DoesNotExist as exc:
+                raise TenantUpdateError(
+                    f"Tenant {organization_id} not found."
+                ) from exc
+
+            changed: list[str] = []
+            for key, value in field_updates.items():
+                if value is None:
+                    # Treat null as no-op rather than clearing — clearing
+                    # contact_email to "" is a destructive change that
+                    # should be explicit.
+                    continue
+                if getattr(org, key) != value:
+                    setattr(org, key, value)
+                    changed.append(key)
+
+            if not changed:
+                return _tenant_admin_dict(org)
+
+            org.save(update_fields=[*changed, "updated_at"])
+
+            record_event(
+                action_type="admin.tenant_updated",
+                actor_type=AuditEvent.ActorType.USER,
+                actor_id=str(actor_user_id),
+                organization_id=str(org.id),
+                affected_entity_type="Organization",
+                affected_entity_id=str(org.id),
+                payload={
+                    "fields_changed": sorted(changed),
+                    "reason": reason.strip()[:255],
+                },
+            )
+
+    return _tenant_admin_dict(org)
+
+
+def _tenant_admin_dict(org: Any) -> dict[str, Any]:
+    """Single-tenant admin shape after an update."""
+    return {
+        "id": str(org.id),
+        "legal_name": org.legal_name,
+        "tin": org.tin,
+        "contact_email": org.contact_email,
+        "contact_phone": org.contact_phone,
+        "registered_address": org.registered_address,
+        "language_preference": org.language_preference,
+        "timezone": org.timezone,
+        "billing_currency": org.billing_currency,
+        "subscription_state": org.subscription_state,
+        "trial_state": org.trial_state,
+    }
+
+
+# --- Tenant member management (Slice 39) -----------------------------------------
+#
+# Platform staff can deactivate / reactivate a tenant's membership rows and
+# change their role. Used when a customer reports a compromised account, a
+# departed employee, or wants to elevate someone via a support ticket
+# faster than the customer-side owner path. Every action is audited under
+# the staff actor with the membership id on `affected_entity_id`.
+
+
+class MembershipUpdateError(Exception):
+    """Raised when a membership update payload is invalid."""
+
+
+def admin_update_membership(
+    *,
+    actor_user_id: UUID | str,
+    membership_id: UUID | str,
+    is_active: bool | None = None,
+    role_name: str | None = None,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Atomically toggle membership.is_active and/or change membership.role.
+
+    Both fields are optional; at least one must be supplied. ``reason`` is
+    required (staff-side privileged actions need a why) and lands in the
+    audit payload.
+
+    Audited as ``admin.membership_updated`` with the membership id on
+    ``affected_entity_id`` so chain queries for "who changed memberships
+    on this tenant" find the rows by index.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.models import OrganizationMembership, Role
+    from apps.identity.tenancy import super_admin_context
+
+    if is_active is None and role_name is None:
+        raise MembershipUpdateError(
+            "At least one of is_active or role_name must be supplied."
+        )
+    if not reason or not reason.strip():
+        raise MembershipUpdateError("A reason is required for membership updates.")
+
+    with super_admin_context(reason="admin.membership_update"):
+        with transaction.atomic():
+            try:
+                membership = (
+                    OrganizationMembership.objects.select_for_update().get(
+                        id=membership_id
+                    )
+                )
+            except OrganizationMembership.DoesNotExist as exc:
+                raise MembershipUpdateError(
+                    f"Membership {membership_id} not found."
+                ) from exc
+
+            changes: dict[str, Any] = {}
+            if is_active is not None and bool(is_active) != bool(membership.is_active):
+                membership.is_active = bool(is_active)
+                changes["is_active"] = bool(is_active)
+            if role_name is not None:
+                try:
+                    role = Role.objects.get(name=role_name)
+                except Role.DoesNotExist as exc:
+                    raise MembershipUpdateError(
+                        f"Unknown role {role_name!r}."
+                    ) from exc
+                if role.id != membership.role_id:
+                    membership.role = role
+                    changes["role"] = role_name
+
+            if not changes:
+                # No-op; don't pollute the chain. Return current shape.
+                pass
+            else:
+                membership.save()
+                record_event(
+                    action_type="admin.membership_updated",
+                    actor_type=AuditEvent.ActorType.USER,
+                    actor_id=str(actor_user_id),
+                    organization_id=str(membership.organization_id),
+                    affected_entity_type="OrganizationMembership",
+                    affected_entity_id=str(membership.id),
+                    payload={
+                        "fields_changed": sorted(changes.keys()),
+                        "reason": reason.strip()[:255],
+                    },
+                )
+
+    return {
+        "id": str(membership.id),
+        "user_id": str(membership.user_id),
+        "organization_id": str(membership.organization_id),
+        "role": membership.role.name,
+        "is_active": bool(membership.is_active),
+    }
+
+
 # --- Engine credentials management (Slice 36) ----------------------------------
 #
 # The super-admin can rotate per-engine credentials (API keys, hosts, model
