@@ -58,3 +58,6 @@ docker-compose.override.yml
 
 # Local volumes
 infra/volumes/
+
+# Local sample invoices (test fixtures, not part of the repo)
+docs/sample invoices/
