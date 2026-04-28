@@ -4141,6 +4141,161 @@ What's deferred:
 
 ---
 
+### Slice 43 — Tenant impersonation with reason gate + time-limited session
+
+The closing slice in the admin enhancement arc. Platform staff can
+briefly act on behalf of a tenant for support purposes — investigating
+a customer-reported bug, walking a finance team through a flow on a
+call. Sessions are time-limited (30-min hard TTL, no extend gesture),
+audited at start AND end, and surface a banner across every customer
+page so the operator can never accidentally take an action thinking
+they're a regular customer.
+
+Backend:
+
+- **`apps.administration.models.ImpersonationSession`** — id,
+  staff_user_id, organization_id, started_at, expires_at, ended_at,
+  ended_by_user_id, end_reason, reason. Indexed on
+  `(staff_user_id, ended_at)` so "active impersonation by this
+  staff?" is a fast point lookup; on `(organization_id,
+  started_at)` for the future "show me every impersonation of
+  this tenant" surface.
+- **`start_impersonation(actor, organization_id, reason)`**.
+  Reason required (truncated to 255 chars). Looks up the
+  Organization under super-admin elevation; if found, ends any
+  earlier active session for the same staff user (one
+  impersonation at a time, no chaining), creates the row with
+  `expires_at = now + 30min`, audits as
+  `admin.tenant_impersonation_started` with the tenant's legal
+  name + reason in the payload.
+- **`end_impersonation(session_id, actor, end_reason)`**.
+  Idempotent — ending an already-ended row is a no-op. Records
+  duration in seconds on the audit event. End reasons:
+  `user_ended` (operator clicked End), `expired` (auto-closed
+  past TTL), `superseded_by_new_session` (operator started a
+  new impersonation without ending the old one).
+- **`get_active_impersonation_for_session(session_id)`** — used
+  by the identity `/me/` endpoint to expose the impersonation
+  context to the customer shell. Auto-closes expired rows on
+  read so there's no separate cleanup job needed.
+- **Endpoints**: `POST /api/v1/admin/tenants/<uuid>/impersonate/`
+  (start, sets Django session keys), `POST /api/v1/admin/impersonation/end/`
+  (end + clear session keys). Both staff-only.
+- **Identity `UserSerializer` extended** with an `impersonation`
+  field that returns the active context (`session_id`,
+  `organization_id`, `tenant_legal_name`, `started_at`,
+  `expires_at`, `reason`) or null. `is_staff` also exposed so
+  the customer-side AppShell can know whether the user is
+  legitimately staff vs spoofing.
+- **No middleware enforcement of TTL** — the auto-close happens
+  inside `get_active_impersonation_for_session`. Every customer
+  endpoint already calls `/me/` indirectly through the React
+  shell, so the next page load past expiry kills the session.
+
+Frontend:
+
+- **`ImpersonationBanner`** in `components/admin/`. Renders
+  across the top of the customer AppShell whenever
+  `me.impersonation` is non-null. Shows tenant legal name +
+  reason + live MM:SS countdown to expiry + "End impersonation"
+  button. Tone goes from warning amber to error red when the
+  countdown hits zero. AppShell layout updated to flex-column
+  so the banner stretches full-width above the sidebar.
+- **Tenant detail page "Impersonate" button** — opens an inline
+  warning-tinted card that explains the session terms ("read-
+  write proxy for 30 minutes, every action audited, hard-
+  expires"). Reason input is required; Start button stays
+  disabled until reason is non-empty. On click, POSTs to the
+  start endpoint and routes the operator to `/dashboard` —
+  they're now seeing the customer dashboard scoped to that
+  tenant's data.
+- **End flow** — banner button POSTs to end endpoint, clears
+  Django session keys, routes to `/admin`.
+- `api.adminStartImpersonation()` + `api.adminEndImpersonation()`
+  + `Me.impersonation: ImpersonationContext | null` type added.
+
+Tests: 11 new (418 passing total, was 407). Auth gate
+(401/403/customer-403). Reason required. Unknown tenant 404.
+Start sets the Django session keys (`organization_id`,
+`impersonation_session_id`) + creates an active row + emits
+the `admin.tenant_impersonation_started` event with the
+tenant's legal name + reason in payload + 30-min TTL.
+Starting a second impersonation supersedes the first
+(`end_reason="superseded_by_new_session"`). End clears Django
+session + audits `admin.tenant_impersonation_ended` with
+duration_seconds. End-when-no-active is a no-op (200, not
+404 — idempotent). `/me/` includes the impersonation block
+when active, returns null after end. Past-expires_at session
+auto-ends on next `/me/` read with `end_reason="expired"`.
+
+Verified live (`admin@symprio.com`): clicked Impersonate on
+the "Fresh" tenant. Confirm card showed the 30-minute
+warning + reason input. Typed a reason ("support ticket
+#4421 — investigating extraction issue") and started. Routed
+to `/dashboard` with the customer view scoped to Fresh's
+data (7 ingestion jobs, sample.pdf entries visible). The
+warning-tinted impersonation banner rendered across the top
+showing "IMPERSONATING Fresh · support ticket #4421 …" + a
+live countdown + End button. Clicked End → routed back to
+`/admin`.
+
+Durable design decisions:
+
+- **No `extend` gesture.** A long support window needs a
+  fresh start with a fresh reason, not a one-click
+  extension. Prevents the "I'll just bump it 30 more
+  minutes" pattern that erodes the audit story over hours.
+- **Same User row throughout.** `request.user` stays the
+  staff user during impersonation; only the session's
+  `organization_id` changes. This means every customer-side
+  audit event during the window records the staff user as
+  the actor — the chain shows who actually did the thing,
+  not who they were impersonating.
+- **One impersonation at a time per staff user.** Starting
+  a second supersedes the first with a clear end reason
+  rather than running parallel sessions. Two simultaneous
+  impersonations would make audit reconstruction painful
+  ("which tenant was the staff user editing when this
+  happened?").
+- **Banner uses warning amber, not error red.** Until the
+  session expires. Red is for "something is wrong"; amber
+  is for "you are in an unusual mode". A staff member
+  legitimately working a ticket shouldn't feel like they're
+  triggering an error every page load. Red appears only
+  when the countdown hits zero.
+- **Auto-expire on read, not on a Celery beat.** The TTL
+  enforcement is "the next /me/ refuses to honour the
+  flag", which means a forgotten session in a closed
+  browser tab is silently expired the next time anyone
+  refreshes. No separate cleanup task; the chain stays
+  consistent because the auto-close still emits the
+  `admin.tenant_impersonation_ended` event.
+- **Reason in audit payload, not field-level redacted.**
+  Unlike most privileged actions where we record only
+  field NAMES, impersonation reasons are the load-bearing
+  audit signal — "why was this staff acting on Acme's
+  behalf at 14:00?" The reason is short text (no PII
+  shape) and capped at 255 chars; it's safe to include
+  directly.
+
+What's deferred:
+
+- **Read-only impersonation mode.** A "view only" toggle
+  would let staff inspect a tenant's data without write
+  power. Today every impersonation is read-write. Phase
+  5 polish; the audit trail makes a malicious staff write
+  visible.
+- **Impersonation history per tenant.** A dedicated table
+  on the tenant detail page showing past impersonations.
+  The data exists in `ImpersonationSession`; the UI is a
+  follow-up.
+- **Per-staff impersonation rate limiting.** "If a staff
+  user starts more than 5 impersonations in an hour,
+  flag it." Anti-abuse pattern; not needed for solo or
+  small-team operations.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -4222,7 +4377,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 407 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 418 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

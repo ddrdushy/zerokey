@@ -228,6 +228,75 @@ def platform_tenant_detail(request: Request, organization_id: str) -> Response:
         )
 
 
+@api_view(["POST"])
+@permission_classes([IsPlatformStaff])
+def admin_start_impersonation(
+    request: Request, organization_id: str
+) -> Response:
+    """Begin a 30-minute impersonation of one tenant.
+
+    Body: { "reason": "support ticket #4421" }   (REQUIRED)
+
+    On success, sets the Django session's ``organization_id`` to the
+    impersonated tenant so customer-side endpoints serve the tenant's
+    data, and stores ``impersonation_session_id`` for the banner
+    + end-flow lookup. Returns the session details + a redirect_to
+    pointing at the customer dashboard.
+    """
+    body = request.data or {}
+    reason = str(body.get("reason") or "")
+    try:
+        session = services.start_impersonation(
+            actor_user_id=request.user.id,
+            organization_id=organization_id,
+            reason=reason,
+        )
+    except services.ImpersonationError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            return Response({"detail": msg}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+
+    request.session["organization_id"] = str(session.organization_id)
+    request.session["impersonation_session_id"] = str(session.id)
+    return Response(
+        {
+            "session_id": str(session.id),
+            "organization_id": str(session.organization_id),
+            "started_at": session.started_at.isoformat(),
+            "expires_at": session.expires_at.isoformat(),
+            "redirect_to": "/dashboard",
+        }
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformStaff])
+def admin_end_impersonation(request: Request) -> Response:
+    """End the current impersonation session for this Django session.
+
+    Idempotent — calling with no active impersonation is a no-op
+    that returns 204. Removes ``impersonation_session_id`` and clears
+    ``organization_id`` so the staff user's session is back to its
+    no-active-org default (admin namespace doesn't need one).
+    """
+    session_id = request.session.get("impersonation_session_id")
+    if session_id:
+        try:
+            services.end_impersonation(
+                actor_user_id=request.user.id,
+                session_id=session_id,
+                end_reason="user_ended",
+            )
+        except services.ImpersonationError:
+            # Race: someone else already ended the row. Continue
+            # cleaning up the Django session anyway.
+            pass
+    request.session.pop("impersonation_session_id", None)
+    request.session.pop("organization_id", None)
+    return Response({"redirect_to": "/admin"})
+
+
 @api_view(["GET"])
 @permission_classes([IsPlatformStaff])
 def admin_list_engines(request: Request) -> Response:

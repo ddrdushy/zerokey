@@ -167,6 +167,73 @@ class TaxTypeCode(_ReferenceMeta):
         return f"{self.code} {self.description_en}"
 
 
+class ImpersonationSession(models.Model):
+    """A platform-staff impersonation of a tenant.
+
+    Staff can briefly act on behalf of a tenant for support purposes
+    (chasing an incident, walking through a flow with a customer on a
+    call). The session is time-limited (default 30 min) and every
+    customer-side action taken during the window is recorded under
+    the staff user's identity (``request.user`` doesn't change) but
+    against the impersonated tenant's organization (RLS sees the
+    tenant's data).
+
+    Hard TTL is the load-bearing safety property: if the staff user
+    forgets to end the session, the next page load past ``expires_at``
+    refuses to honour the impersonation flag and bounces the user back
+    to ``/admin``. There is no "extend session" gesture by design —
+    longer support windows require a fresh impersonation start with
+    a fresh reason.
+
+    Not tenant-scoped (no inherited TenantScopedModel) because the
+    audit chain reads it cross-tenant under super-admin elevation.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # The User row of the staff member doing the impersonation.
+    staff_user_id = models.UUIDField(db_index=True)
+
+    # The Organization being impersonated. Soft FK — same convention as
+    # ``EngineCall.organization_id`` and the audit log.
+    organization_id = models.UUIDField(db_index=True)
+
+    started_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+
+    # ended_at is null while the session is live; populated when the
+    # operator ends it explicitly OR when the next request after
+    # ``expires_at`` notices the timeout.
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_by_user_id = models.UUIDField(null=True, blank=True)
+    end_reason = models.CharField(max_length=64, blank=True)
+
+    # Required at start time. Lands in the audit payload (truncated to
+    # 255 chars). The audit chain is the authoritative record; this
+    # column is for fast read on the impersonation banner.
+    reason = models.CharField(max_length=255)
+
+    class Meta:
+        db_table = "impersonation_session"
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["staff_user_id", "ended_at"]),
+            models.Index(fields=["organization_id", "started_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.staff_user_id} → {self.organization_id} "
+            f"(started {self.started_at.isoformat()})"
+        )
+
+    @property
+    def is_active(self) -> bool:
+        if self.ended_at is not None:
+            return False
+        return timezone.now() < self.expires_at
+
+
 class CountryCode(_ReferenceMeta):
     """ISO 3166-1 alpha-2 country code.
 

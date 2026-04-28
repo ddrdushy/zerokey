@@ -18,6 +18,7 @@ import {
 
 import { api, type Me } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 import { NotificationBell } from "./NotificationBell";
 
 // Persistent shell that wraps every authenticated page. The sidebar groups
@@ -82,23 +83,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen bg-paper">
-      <Sidebar />
-      <div className="flex flex-1 flex-col">
-        <TopBar
-          me={me}
-          menuOpen={menuOpen}
-          setMenuOpen={setMenuOpen}
-          onLogout={onLogout}
-        />
-        <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
-          {error && (
-            <div className="mb-4 rounded-md border border-error bg-error/5 px-4 py-2 text-xs text-error">
-              {error}
-            </div>
-          )}
-          {children}
-        </main>
+    <div className="flex min-h-screen flex-col bg-paper">
+      {me?.impersonation && <ImpersonationBanner ctx={me.impersonation} />}
+      <div className="flex min-h-0 flex-1">
+        <Sidebar />
+        <div className="flex flex-1 flex-col">
+          <TopBar
+            me={me}
+            menuOpen={menuOpen}
+            setMenuOpen={setMenuOpen}
+            onLogout={onLogout}
+          />
+          <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
+            {error && (
+              <div className="mb-4 rounded-md border border-error bg-error/5 px-4 py-2 text-xs text-error">
+                {error}
+              </div>
+            )}
+            {children}
+          </main>
+        </div>
       </div>
     </div>
   );

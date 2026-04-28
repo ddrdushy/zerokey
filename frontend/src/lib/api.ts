@@ -59,6 +59,15 @@ export type Membership = {
   joined_date: string;
 };
 
+export type ImpersonationContext = {
+  session_id: string;
+  organization_id: string;
+  tenant_legal_name: string;
+  started_at: string;
+  expires_at: string;
+  reason: string;
+};
+
 export type Me = {
   id: string;
   email: string;
@@ -68,6 +77,7 @@ export type Me = {
   is_staff: boolean;
   memberships: Membership[];
   active_organization_id: string | null;
+  impersonation: ImpersonationContext | null;
 };
 
 export type LineItem = {
@@ -668,6 +678,21 @@ export const api = {
     request<TenantDetail>(`/admin/tenants/${organizationId}/edit/`, {
       method: "PATCH",
       body: JSON.stringify(body),
+    }),
+  adminStartImpersonation: (organizationId: string, reason: string) =>
+    request<{
+      session_id: string;
+      organization_id: string;
+      started_at: string;
+      expires_at: string;
+      redirect_to: string;
+    }>(`/admin/tenants/${organizationId}/impersonate/`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  adminEndImpersonation: () =>
+    request<{ redirect_to: string }>("/admin/impersonation/end/", {
+      method: "POST",
     }),
   adminUpdateMembership: (
     membershipId: string,

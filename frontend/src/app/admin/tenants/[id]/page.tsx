@@ -16,6 +16,7 @@ import {
   CircleCheck,
   FileText,
   Inbox,
+  LogIn,
   Mail,
   MoreHorizontal,
   Pencil,
@@ -152,7 +153,34 @@ function Header({
   onChanged: () => void;
   onError: (msg: string | null) => void;
 }) {
+  const router = useRouter();
   const [editing, setEditing] = useState(false);
+  const [impersonating, setImpersonating] = useState(false);
+  const [impersonationReason, setImpersonationReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function onStartImpersonation() {
+    if (!impersonationReason.trim()) {
+      onError("A reason is required to start impersonation.");
+      return;
+    }
+    setSubmitting(true);
+    onError(null);
+    try {
+      const result = await api.adminStartImpersonation(
+        detail.id,
+        impersonationReason.trim(),
+      );
+      router.push(result.redirect_to || "/dashboard");
+    } catch (err) {
+      onError(
+        err instanceof Error ? err.message : "Failed to start impersonation.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <header className="flex flex-col gap-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -171,14 +199,30 @@ function Header({
             </span>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setEditing(!editing)}
-        >
-          <Pencil className="mr-1.5 h-3.5 w-3.5" />
-          {editing ? "Cancel" : "Edit tenant"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setImpersonating(!impersonating);
+              setEditing(false);
+            }}
+          >
+            <LogIn className="mr-1.5 h-3.5 w-3.5" />
+            {impersonating ? "Cancel" : "Impersonate"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setEditing(!editing);
+              setImpersonating(false);
+            }}
+          >
+            <Pencil className="mr-1.5 h-3.5 w-3.5" />
+            {editing ? "Cancel" : "Edit tenant"}
+          </Button>
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-4 text-2xs text-slate-500">
         {detail.contact_email && (
@@ -211,6 +255,50 @@ function Header({
           }}
           onError={onError}
         />
+      )}
+      {impersonating && (
+        <div className="mt-4 rounded-md border border-warning/40 bg-warning/5 p-4">
+          <div className="flex items-start gap-2">
+            <ShieldCheck className="mt-0.5 h-4 w-4 flex-shrink-0 text-warning" />
+            <div className="flex-1 text-2xs text-slate-600">
+              <p className="font-medium text-ink">
+                Start impersonation session for {detail.legal_name}?
+              </p>
+              <p className="mt-1">
+                You&apos;ll be signed into the customer dashboard as a
+                read-write proxy for this tenant&apos;s data for{" "}
+                <span className="font-medium">30 minutes</span>. Every action
+                you take is recorded under your staff identity. The session
+                hard-expires after the timeout — there&apos;s no extend
+                gesture.
+              </p>
+            </div>
+          </div>
+          <input
+            type="text"
+            placeholder="Reason (required, e.g. support ticket #4421)"
+            value={impersonationReason}
+            onChange={(e) => setImpersonationReason(e.target.value)}
+            className="mt-3 w-full rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+          />
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setImpersonating(false)}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={onStartImpersonation}
+              disabled={submitting || !impersonationReason.trim()}
+            >
+              {submitting ? "Starting…" : "Start impersonation"}
+            </Button>
+          </div>
+        </div>
       )}
     </header>
   );

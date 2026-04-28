@@ -41,6 +41,16 @@ urlpatterns = [
         name="admin-update-membership",
     ),
     path(
+        "tenants/<uuid:organization_id>/impersonate/",
+        views.admin_start_impersonation,
+        name="admin-start-impersonation",
+    ),
+    path(
+        "impersonation/end/",
+        views.admin_end_impersonation,
+        name="admin-end-impersonation",
+    ),
+    path(
         "system-settings/",
         views.admin_list_system_settings,
         name="admin-list-system-settings",

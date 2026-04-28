@@ -29,6 +29,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.audit.models import AuditEvent
 from apps.audit.services import record_event
@@ -36,6 +37,7 @@ from apps.audit.services import record_event
 from .models import (
     ClassificationCode,
     CountryCode,
+    ImpersonationSession,
     MsicCode,
     SystemSetting,
     TaxTypeCode,
@@ -1329,6 +1331,189 @@ def _tenant_admin_dict(org: Any) -> dict[str, Any]:
         "billing_currency": org.billing_currency,
         "subscription_state": org.subscription_state,
         "trial_state": org.trial_state,
+    }
+
+
+# --- Tenant impersonation (Slice 43) ---------------------------------------------
+#
+# Platform staff can briefly act on behalf of a tenant for support
+# purposes. Session is time-limited (30 min default), audited at start
+# and end, and the customer-side endpoints continue to receive
+# ``request.user == staff_user`` (the User row never changes) — only
+# the session's ``organization_id`` shifts to the impersonated tenant
+# so RLS reads its data.
+
+IMPERSONATION_TTL_MINUTES = 30
+_MAX_REASON_LENGTH = 255
+
+
+class ImpersonationError(Exception):
+    """Raised when an impersonation request is invalid."""
+
+
+def start_impersonation(
+    *,
+    actor_user_id: UUID | str,
+    organization_id: UUID | str,
+    reason: str,
+) -> ImpersonationSession:
+    """Begin a time-limited impersonation session.
+
+    Closes any earlier active session for the same staff user (one
+    impersonation at a time, no chaining), creates a fresh row with a
+    30-minute TTL, audits as ``admin.tenant_impersonation_started``.
+    """
+    from datetime import timedelta
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    if not reason or not reason.strip():
+        raise ImpersonationError(
+            "A reason is required to start impersonation."
+        )
+    reason_clean = reason.strip()[:_MAX_REASON_LENGTH]
+
+    with super_admin_context(reason="admin.start_impersonation:lookup"):
+        try:
+            org = Organization.objects.get(id=organization_id)
+        except Organization.DoesNotExist as exc:
+            raise ImpersonationError(
+                f"Tenant {organization_id} not found."
+            ) from exc
+
+        # Close any previous active session by the same staff so the
+        # audit chain has a clean start/end pair instead of orphaned
+        # rows. Same staff impersonating two tenants simultaneously
+        # is explicitly forbidden — they end one before starting another.
+        ImpersonationSession.objects.filter(
+            staff_user_id=actor_user_id, ended_at__isnull=True
+        ).update(
+            ended_at=timezone.now(),
+            ended_by_user_id=actor_user_id,
+            end_reason="superseded_by_new_session",
+        )
+
+        with transaction.atomic():
+            now = timezone.now()
+            session = ImpersonationSession.objects.create(
+                staff_user_id=actor_user_id,
+                organization_id=org.id,
+                started_at=now,
+                expires_at=now + timedelta(minutes=IMPERSONATION_TTL_MINUTES),
+                reason=reason_clean,
+            )
+            record_event(
+                action_type="admin.tenant_impersonation_started",
+                actor_type=AuditEvent.ActorType.USER,
+                actor_id=str(actor_user_id),
+                organization_id=str(org.id),
+                affected_entity_type="ImpersonationSession",
+                affected_entity_id=str(session.id),
+                payload={
+                    "ttl_minutes": IMPERSONATION_TTL_MINUTES,
+                    "reason": reason_clean,
+                    "tenant_legal_name": org.legal_name,
+                },
+            )
+    return session
+
+
+def end_impersonation(
+    *,
+    actor_user_id: UUID | str,
+    session_id: UUID | str,
+    end_reason: str = "user_ended",
+) -> ImpersonationSession:
+    """End an active impersonation session.
+
+    Idempotent: ending an already-ended session is a no-op (returns the
+    existing row without re-auditing). Auto-expiry is handled by the
+    caller checking ``is_active`` on each request.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    try:
+        session = ImpersonationSession.objects.get(id=session_id)
+    except ImpersonationSession.DoesNotExist as exc:
+        raise ImpersonationError(
+            f"Impersonation session {session_id} not found."
+        ) from exc
+
+    if session.ended_at is not None:
+        return session
+
+    session.ended_at = timezone.now()
+    session.ended_by_user_id = actor_user_id
+    session.end_reason = end_reason[:64]
+    session.save(update_fields=["ended_at", "ended_by_user_id", "end_reason"])
+
+    record_event(
+        action_type="admin.tenant_impersonation_ended",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=str(session.organization_id),
+        affected_entity_type="ImpersonationSession",
+        affected_entity_id=str(session.id),
+        payload={
+            "end_reason": end_reason[:64],
+            "duration_seconds": int(
+                (session.ended_at - session.started_at).total_seconds()
+            ),
+        },
+    )
+    return session
+
+
+def get_active_impersonation_for_session(
+    *, session_id: UUID | str | None
+) -> dict[str, Any] | None:
+    """Return the active impersonation context for a Django session.
+
+    Called from the identity ``/me/`` endpoint so the frontend can render
+    the impersonation banner. Returns None when no session id, when
+    the session id is unknown, when the session is ended, or when the
+    session is past its expiry. Past-expiry sessions are auto-ended
+    here so the next call sees the closed row.
+    """
+    if not session_id:
+        return None
+    try:
+        session = ImpersonationSession.objects.get(id=session_id)
+    except ImpersonationSession.DoesNotExist:
+        return None
+
+    if session.ended_at is not None:
+        return None
+    if not session.is_active:
+        # Past expires_at — close it now so the chain has the end event.
+        end_impersonation(
+            actor_user_id=session.staff_user_id,
+            session_id=session.id,
+            end_reason="expired",
+        )
+        return None
+
+    # Resolve tenant legal name for the banner.
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    legal_name = ""
+    with super_admin_context(reason="admin.impersonation:banner"):
+        org = Organization.objects.filter(id=session.organization_id).first()
+        if org is not None:
+            legal_name = org.legal_name
+
+    return {
+        "session_id": str(session.id),
+        "organization_id": str(session.organization_id),
+        "tenant_legal_name": legal_name,
+        "started_at": session.started_at.isoformat(),
+        "expires_at": session.expires_at.isoformat(),
+        "reason": session.reason,
     }
 
 

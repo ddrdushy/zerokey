@@ -75,6 +75,7 @@ class MembershipSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     memberships = serializers.SerializerMethodField()
     active_organization_id = serializers.SerializerMethodField()
+    impersonation = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -87,6 +88,7 @@ class UserSerializer(serializers.ModelSerializer):
             "is_staff",
             "memberships",
             "active_organization_id",
+            "impersonation",
         ]
 
     def get_memberships(self, obj: User) -> list[dict]:
@@ -100,6 +102,34 @@ class UserSerializer(serializers.ModelSerializer):
             return None
         session = getattr(request, "session", None)
         return session.get("organization_id") if session is not None else None
+
+    def get_impersonation(self, obj: User) -> dict | None:
+        """If this session is in an active impersonation, return its details.
+
+        The customer dashboard renders an impersonation banner when this
+        is non-null. Auto-expires past TTL — the service auto-closes
+        the row and returns None on the next request.
+        """
+        request = self.context.get("request")
+        if request is None:
+            return None
+        session = getattr(request, "session", None)
+        if session is None:
+            return None
+        sid = session.get("impersonation_session_id")
+        if not sid:
+            return None
+        # Lazy import to avoid circular: administration imports identity.
+        from apps.administration.services import (
+            get_active_impersonation_for_session,
+        )
+
+        result = get_active_impersonation_for_session(session_id=sid)
+        if result is None:
+            # Auto-expired — clear the session keys so the next /me/ is fast.
+            session.pop("impersonation_session_id", None)
+            session.pop("organization_id", None)
+        return result
 
 
 class SwitchOrganizationSerializer(serializers.Serializer):
