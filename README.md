@@ -46,4 +46,9 @@ The Celery worker and signing-service worker share the backend image with differ
 
 ## Project status
 
-Phase 1 — skeleton & identity. See [`docs/ROADMAP.md`](./docs/ROADMAP.md).
+Phase 1 complete; Phase 2 in flight. End-to-end working: sign up, drop a PDF,
+watch it auto-extract and auto-structure into LHDN-shape fields with a
+hash-chained audit trail.
+
+- Forward-looking plan → [`docs/ROADMAP.md`](./docs/ROADMAP.md)
+- What's actually shipped → [`docs/BUILD_LOG.md`](./docs/BUILD_LOG.md)

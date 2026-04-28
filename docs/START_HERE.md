@@ -40,7 +40,7 @@ For security, compliance, or audit-related work, also read `SECURITY.md`, `COMPL
 
 For DevOps, deployment, reliability, or incident response work, also read `OPERATIONS.md` and `DISASTER_RECOVERY.md`.
 
-For roadmap or planning discussions, also read `ROADMAP.md`.
+For roadmap or planning discussions, also read `ROADMAP.md`. To know what has actually been shipped (not just planned), read `BUILD_LOG.md`.
 
 For working with Claude Code itself on this codebase, read `CLAUDE_CODE_GUIDE.md`.
 

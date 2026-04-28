@@ -69,6 +69,7 @@ Twenty-three documents organized into seven groups.
 | Document | Purpose |
 |---|---|
 | [`ROADMAP.md`](./ROADMAP.md) | Phased plan from foundation through GA and into year two. |
+| [`BUILD_LOG.md`](./BUILD_LOG.md) | What has actually shipped, slice-by-slice, with durable design decisions. |
 | [`CLAUDE_CODE_GUIDE.md`](./CLAUDE_CODE_GUIDE.md) | How to work effectively with Claude Code on this codebase. |
 | [`START_HERE.md`](./START_HERE.md) | The orientation document every session reads first. |
 
