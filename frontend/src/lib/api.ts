@@ -229,6 +229,60 @@ export type AdminEngine = {
   updated_at: string | null;
 };
 
+export type TenantDetail = {
+  id: string;
+  legal_name: string;
+  tin: string;
+  contact_email: string;
+  contact_phone: string;
+  registered_address: string;
+  subscription_state: string;
+  trial_state: string;
+  language_preference: string;
+  timezone: string;
+  billing_currency: string;
+  certificate_uploaded: boolean;
+  created_at: string | null;
+  stats: {
+    member_count: number;
+    ingestion_jobs_total: number;
+    ingestion_jobs_recent_7d: number;
+    invoices_total: number;
+    invoices_pending_review: number;
+    inbox_open: number;
+    audit_events: number;
+  };
+  inbox_open_by_reason: Record<string, number>;
+  members: Array<{
+    id: string;
+    user_id: string;
+    email: string;
+    role: string;
+    is_active: boolean;
+    joined_date: string | null;
+  }>;
+  recent_jobs: Array<{
+    id: string;
+    filename: string;
+    mime_type: string;
+    size_bytes: number;
+    status: string;
+    engine: string;
+    confidence: number | null;
+    source_channel: string;
+    created_at: string | null;
+  }>;
+  recent_invoices: Array<{
+    id: string;
+    invoice_number: string;
+    buyer_legal_name: string;
+    status: string;
+    currency_code: string;
+    grand_total: string | null;
+    created_at: string | null;
+  }>;
+};
+
 export type PlatformTenant = {
   id: string;
   legal_name: string;
@@ -548,6 +602,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  adminTenantDetail: (organizationId: string) =>
+    request<TenantDetail>(`/admin/tenants/${organizationId}/`),
   adminListTenants: (params?: { search?: string; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.search) qs.set("search", params.search);

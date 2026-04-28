@@ -117,6 +117,26 @@ def platform_action_types(request: Request) -> Response:
 
 @api_view(["GET"])
 @permission_classes([IsPlatformStaff])
+def platform_tenant_detail(request: Request, organization_id: str) -> Response:
+    """Per-tenant snapshot for the admin tenant-detail page."""
+    from apps.identity.models import Organization
+
+    try:
+        return Response(
+            services.tenant_detail(
+                actor_user_id=request.user.id,
+                organization_id=organization_id,
+            )
+        )
+    except Organization.DoesNotExist:
+        return Response(
+            {"detail": "Tenant not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
 def admin_list_engines(request: Request) -> Response:
     """List every engine with redacted credential metadata."""
     return Response(

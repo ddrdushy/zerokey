@@ -198,10 +198,10 @@ function TenantTable({ tenants }: { tenants: PlatformTenant[] }) {
               </td>
               <td className="px-3 py-3">
                 <Link
-                  href={`/admin/audit?org=${t.id}`}
+                  href={`/admin/tenants/${t.id}`}
                   className="text-2xs font-medium text-ink underline-offset-4 hover:underline"
                 >
-                  View →
+                  Open →
                 </Link>
               </td>
             </tr>

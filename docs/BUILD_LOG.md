@@ -3754,6 +3754,140 @@ What's deferred:
 
 ---
 
+### Slice 38 — Per-tenant detail page
+
+The tenant directory's "View" link used to drop the operator
+into a filtered audit log; this slice gives them a real
+per-tenant landing instead — identity, KPIs, member list,
+inbox-by-reason rollup, recent ingestion jobs, recent invoices.
+The audit drill-through stays as one click away.
+
+Backend:
+
+- **`apps.administration.services.tenant_detail`** — per-org
+  snapshot. One read of the Organization row plus six
+  scoped aggregates (members, jobs total / 7-day, invoices
+  total / pending, inbox open, audit count) plus three list
+  fetches (top 50 members, top 10 jobs, top 10 invoices),
+  plus an inbox-open-by-reason rollup. All inside one
+  `super_admin_context` block. Audited as
+  `admin.tenant_detail_viewed` with the tenant id on the
+  `affected_entity_id` field so the chain is
+  filterable-by-tenant later (e.g. "show me every staff
+  view on this org").
+- Audit payload carries the tenant's legal_name + the stats
+  snapshot but never PII (no contact email, phone, or
+  address). Test asserts the contact email doesn't appear
+  in the payload.
+- **`GET /api/v1/admin/tenants/<uuid>/`** — staff-only.
+  Returns 404 on unknown id; staff cannot brute-force
+  enumeration through this endpoint.
+
+Frontend:
+
+- **`/admin/tenants/[id]/page.tsx`** — full detail layout:
+  - **Header**: legal name, TIN code chip, subscription state
+    badge, "Cert uploaded" badge if applicable, contact
+    email + phone with mail/phone icons, timezone +
+    currency + join date.
+  - **KPI grid** (4 cards): Members, Ingestion jobs (with
+    7-day count), Invoices (with pending review count),
+    Open inbox (warning-tinted when > 0; success-tinted
+    when zero).
+  - **Audit deep-link button** spanning full width — "Open
+    the audit log filtered to this tenant (N events)"
+    routes to `/admin/audit?org=<uuid>`.
+  - **Members section** (left half): table of email + role
+    + join date.
+  - **Inbox-by-reason section** (right half): list of
+    `validation_failure: 3`, `structuring_skipped: 1`,
+    etc. — quick triage view.
+  - **Recent ingestion jobs table**: filename, status, engine,
+    confidence (rendered as `95%`), timestamp.
+  - **Recent invoices table**: invoice number, buyer, status,
+    grand total with currency, timestamp.
+- **404 state** — clean "Tenant not found" card with a "Back
+  to tenants" button instead of dead-ending.
+- **Tenant directory's "View" link upgraded to "Open"** and
+  deep-links to the new detail page rather than the audit
+  filter.
+- `api.adminTenantDetail()` + `TenantDetail` type added.
+
+Tests: 5 new (378 passing total, was 373). Auth gate
+(401/403/customer-403). Staff sees full detail with member
+emails + roles + ingestion job stats + invoice list. Unknown
+tenant id → 404. Detail view emits `admin.tenant_detail_viewed`
+with tenant id on `affected_entity_id` and PII (contact_email)
+NOT in payload.
+
+Verified live (`admin@symprio.com`): from `/admin/tenants`
+clicked "Open" on the "Fresh" tenant. Detail page rendered with
+TIN code, TRIALING badge, contact email + timezone + currency
++ joined date, 4 KPI cards (1 Member, 7 Ingestion jobs, 0
+Invoices, 0 Open inbox success-tinted "Inbox zero — nothing
+waiting"), the audit drill-through callout, the members list
+("fresh@example.com OWNER"), inbox-by-reason ("Nothing open"),
+7 ingestion jobs in the recent-jobs table with status +
+confidence + timestamps. The 404 path also confirmed by
+visiting an all-zeros UUID.
+
+Durable design decisions:
+
+- **Tenant id on `affected_entity_id`, not in the payload.**
+  The audit event for "staff viewed tenant X" makes the
+  tenant the *subject* of the event. Audit chain queries
+  for "who viewed this tenant" should be filterable
+  natively without parsing JSON; using the field that's
+  exactly for that (`affected_entity_id`) earns the index
+  for free.
+- **PII excluded from the audit payload.** Even though the
+  detail itself returns contact email/phone/address (the
+  operator needs them), the audit row of "I viewed this
+  tenant" doesn't need them — the tenant id + legal name
+  is enough to identify what was viewed. Including PII
+  there would amplify the audit chain's exposure surface
+  (a chain leak shouldn't cascade into PII leak).
+- **Stats inline in the response, not a separate
+  `/stats` endpoint.** The detail page renders all the
+  stats at once; round-tripping for them adds latency
+  without improving the architecture. We pay for ~9
+  queries on this page; that's fine for a low-traffic
+  operator surface.
+- **Inbox-by-reason rollup is a dict, not a list.** The
+  React side iterates `Object.entries()` which is stable
+  enough for a small set; using a dict keeps the wire
+  shape minimal and lets future filters key directly into
+  it.
+- **Members capped at 50, jobs/invoices at 10.** The
+  detail page is for triage, not browsing. A tenant with
+  500 members or 1000 invoices isn't browsed here — the
+  operator pivots to a search or the audit log instead.
+  The caps keep the response size bounded.
+- **Tenant directory's button reads "Open" not "View".**
+  Microcopy distinction: "View" implied a passive read
+  (like opening a row), "Open" implies entering a screen.
+  The detail page has actions (audit drill-through,
+  potential future impersonation), so "Open" matches.
+
+What's deferred:
+
+- **Impersonation.** Sign-in-as-this-tenant for 30
+  minutes is the standard SaaS-admin shortcut; the
+  underlying `super_admin_context` machinery exists but
+  the impersonation token + reason-required UI gate is a
+  separate slice.
+- **Pagination on jobs/invoices.** Today the page shows
+  the most recent 10. A full per-tenant invoice browser
+  with pagination is a follow-up when an operator
+  actually asks for it.
+- **Edit tenant.** Today this is a read-only surface —
+  legal name, contact email, etc. can't be edited from
+  here. Editing customer-facing org metadata from the
+  admin side is a privileged operation that deserves its
+  own slice with an explicit reason field.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -3835,7 +3969,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 373 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 378 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

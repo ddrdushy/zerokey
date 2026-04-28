@@ -25,6 +25,11 @@ urlpatterns = [
         name="platform-action-types",
     ),
     path("tenants/", views.platform_tenants, name="platform-tenants"),
+    path(
+        "tenants/<uuid:organization_id>/",
+        views.platform_tenant_detail,
+        name="platform-tenant-detail",
+    ),
     path("engines/", views.admin_list_engines, name="admin-list-engines"),
     path(
         "engines/<uuid:engine_id>/",

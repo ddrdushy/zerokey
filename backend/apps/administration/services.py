@@ -589,6 +589,178 @@ def list_platform_tenants(
     return out
 
 
+# --- Tenant detail (Slice 38) ----------------------------------------------------
+
+
+def tenant_detail(
+    *, actor_user_id: UUID | str, organization_id: UUID | str
+) -> dict[str, Any]:
+    """Cross-tenant per-org snapshot for the admin tenant detail page.
+
+    Returns the same row shape ``list_platform_tenants`` produces, plus:
+
+      - ``members``: list of {user_id, email, role, joined_date}
+      - ``recent_invoices``: last 10 invoices with status + buyer +
+        invoice number + grand_total + created_at
+      - ``recent_jobs``: last 10 ingestion jobs with status + filename +
+        engine + confidence + created_at
+
+    Audited as ``admin.tenant_detail_viewed`` with the org_id in the
+    payload so the chain records who looked at which tenant.
+
+    Raises ``Organization.DoesNotExist`` if the id is unknown — the
+    view layer maps that to a 404.
+    """
+    from datetime import timedelta
+
+    from django.db.models import Count
+    from django.utils import timezone
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.models import Organization, OrganizationMembership
+    from apps.identity.tenancy import super_admin_context
+    from apps.ingestion.models import IngestionJob
+    from apps.submission.models import ExceptionInboxItem, Invoice
+
+    seven_days_ago = timezone.now() - timedelta(days=7)
+
+    with super_admin_context(reason="admin.tenant_detail:read"):
+        # Raises DoesNotExist if the id is unknown.
+        org = Organization.objects.get(id=organization_id)
+
+        members = list(
+            OrganizationMembership.objects.filter(
+                organization_id=org.id, is_active=True
+            )
+            .select_related("user", "role")
+            .order_by("joined_date")[:50]
+        )
+
+        recent_jobs = list(
+            IngestionJob.objects.filter(organization_id=org.id)
+            .order_by("-created_at")[:10]
+        )
+        recent_invoices = list(
+            Invoice.objects.filter(organization_id=org.id)
+            .order_by("-created_at")[:10]
+        )
+
+        member_count = OrganizationMembership.objects.filter(
+            organization_id=org.id, is_active=True
+        ).count()
+        jobs_total = IngestionJob.objects.filter(organization_id=org.id).count()
+        jobs_recent_7d = IngestionJob.objects.filter(
+            organization_id=org.id, created_at__gte=seven_days_ago
+        ).count()
+        invoices_total = Invoice.objects.filter(
+            organization_id=org.id
+        ).count()
+        invoices_pending = Invoice.objects.filter(
+            organization_id=org.id, status=Invoice.Status.READY_FOR_REVIEW
+        ).count()
+        inbox_open = ExceptionInboxItem.objects.filter(
+            organization_id=org.id,
+            status=ExceptionInboxItem.Status.OPEN,
+        ).count()
+        # Audit count for the tenant — counts events scoped to this org,
+        # NOT system events (those would skew the per-tenant story).
+        audit_count = AuditEvent.objects.filter(organization_id=org.id).count()
+
+        # Inbox open by reason for a quick triage view.
+        inbox_by_reason = dict(
+            ExceptionInboxItem.objects.filter(
+                organization_id=org.id,
+                status=ExceptionInboxItem.Status.OPEN,
+            )
+            .values_list("reason")
+            .annotate(c=Count("id"))
+        )
+
+    detail = {
+        "id": str(org.id),
+        "legal_name": org.legal_name,
+        "tin": org.tin,
+        "contact_email": org.contact_email,
+        "contact_phone": org.contact_phone,
+        "registered_address": org.registered_address,
+        "subscription_state": org.subscription_state,
+        "trial_state": org.trial_state,
+        "language_preference": org.language_preference,
+        "timezone": org.timezone,
+        "billing_currency": org.billing_currency,
+        "certificate_uploaded": bool(org.certificate_uploaded),
+        "created_at": org.created_at.isoformat() if org.created_at else None,
+        "stats": {
+            "member_count": int(member_count),
+            "ingestion_jobs_total": int(jobs_total),
+            "ingestion_jobs_recent_7d": int(jobs_recent_7d),
+            "invoices_total": int(invoices_total),
+            "invoices_pending_review": int(invoices_pending),
+            "inbox_open": int(inbox_open),
+            "audit_events": int(audit_count),
+        },
+        "inbox_open_by_reason": {
+            str(reason): int(count) for reason, count in inbox_by_reason.items()
+        },
+        "members": [
+            {
+                "id": str(m.id),
+                "user_id": str(m.user_id),
+                "email": m.user.email,
+                "role": m.role.name,
+                "is_active": bool(m.is_active),
+                "joined_date": m.joined_date.isoformat()
+                if m.joined_date
+                else None,
+            }
+            for m in members
+        ],
+        "recent_jobs": [
+            {
+                "id": str(j.id),
+                "filename": j.original_filename,
+                "mime_type": j.file_mime_type,
+                "size_bytes": int(j.file_size or 0),
+                "status": j.status,
+                "engine": j.extraction_engine,
+                "confidence": float(j.extraction_confidence)
+                if j.extraction_confidence is not None
+                else None,
+                "source_channel": j.source_channel,
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+            }
+            for j in recent_jobs
+        ],
+        "recent_invoices": [
+            {
+                "id": str(inv.id),
+                "invoice_number": inv.invoice_number,
+                "buyer_legal_name": inv.buyer_legal_name,
+                "status": inv.status,
+                "currency_code": inv.currency_code,
+                "grand_total": str(inv.grand_total) if inv.grand_total is not None else None,
+                "created_at": inv.created_at.isoformat() if inv.created_at else None,
+            }
+            for inv in recent_invoices
+        ],
+    }
+
+    record_event(
+        action_type="admin.tenant_detail_viewed",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=None,
+        affected_entity_type="Organization",
+        affected_entity_id=str(org.id),
+        payload={
+            "tenant_legal_name": org.legal_name,
+            "stats_snapshot": detail["stats"],
+        },
+    )
+    return detail
+
+
 # --- Engine credentials management (Slice 36) ----------------------------------
 #
 # The super-admin can rotate per-engine credentials (API keys, hosts, model
