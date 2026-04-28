@@ -15,6 +15,7 @@ import { api, ApiError, type OrganizationDetail } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { FieldRow } from "@/components/review/FieldRow";
+import { SettingsTabs } from "@/components/settings/SettingsTabs";
 
 type EditableOrgField =
   | "legal_name"
@@ -103,12 +104,13 @@ export default function OrganizationSettingsPage() {
       <div className="flex flex-col gap-6">
         <header>
           <h1 className="font-display text-2xl font-bold tracking-tight">
-            Organization
+            Settings
           </h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
-            {`Your organization's contact + identity details`}
+            Organization, members, and platform integrations
           </p>
         </header>
+        <SettingsTabs />
 
         <Section title="Identity" icon={<Building2 className="h-4 w-4" />}>
           <div className="grid gap-3 md:grid-cols-2">

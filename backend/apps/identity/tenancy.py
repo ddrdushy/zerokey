@@ -71,16 +71,32 @@ def super_admin_context(reason: str) -> Iterator[None]:
     The ``reason`` is required and recorded in the audit log by the calling
     service. This function intentionally does no audit logging itself — that is
     the caller's responsibility, so the reason cannot be omitted.
+
+    Save+restore the prior tenant variable. Without this, exiting the
+    elevation block was clearing the connection's regular tenant_id (set
+    by ``TenantContextMiddleware``) and subsequent reads in the same
+    request returned zero rows under RLS. Bug surfaced when Slice 45
+    added a customer-side service that did access-check (which elevates
+    briefly) and then ran a tenant-scoped query right after.
     """
     if not reason:
         raise ValueError("super_admin_context requires a non-empty reason.")
+    prior_tenant: str | None = None
     if connection.vendor == "postgresql":
         with connection.cursor() as cursor:
+            cursor.execute(f"SHOW {TENANT_VAR};")
+            row = cursor.fetchone()
+            value = row[0] if row else ""
+            prior_tenant = value or None
             cursor.execute(f"SET {SUPER_ADMIN_VAR} = 'on';")
     try:
         yield
     finally:
-        clear_tenant()
+        if connection.vendor == "postgresql":
+            with connection.cursor() as cursor:
+                cursor.execute(f"RESET {SUPER_ADMIN_VAR};")
+            # Restore the regular tenant the middleware set, if any.
+            set_tenant(prior_tenant)
 
 
 class TenantContextMiddleware:

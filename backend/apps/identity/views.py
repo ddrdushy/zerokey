@@ -168,3 +168,67 @@ def organization_detail(request: Request) -> Response:
     if org is None:
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     return Response(OrganizationDetailSerializer(org).data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def organization_members(request: Request) -> Response:
+    """Settings → Members tab list.
+
+    Lists active + inactive memberships for the active org. Any
+    member can read; the customer-side write surface
+    (``patch_organization_member``) is owner/admin-only.
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return Response(
+        {"results": services.list_organization_members(organization_id=organization_id)}
+    )
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def patch_organization_member(request: Request, membership_id: str) -> Response:
+    """Owner / admin updates another member's role or active state.
+
+    Body: ``{"is_active": bool, "role_name": "owner|admin|..."}``
+    (at least one). Customer-side path; for staff cross-tenant
+    edits use ``/api/v1/admin/memberships/<id>/`` instead.
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    body = request.data or {}
+    try:
+        result = services.update_organization_member(
+            organization_id=organization_id,
+            membership_id=membership_id,
+            actor_user=request.user,
+            is_active=body.get("is_active"),
+            role_name=body.get("role_name"),
+        )
+    except services.MembershipManagementError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            return Response({"detail": msg}, status=status.HTTP_404_NOT_FOUND)
+        if "Only" in msg or "cannot change" in msg or "not a member" in msg:
+            return Response({"detail": msg}, status=status.HTTP_403_FORBIDDEN)
+        return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)

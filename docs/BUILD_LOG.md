@@ -4419,6 +4419,138 @@ What's deferred:
 
 ---
 
+### Slice 45 — Customer Settings → Members tab + tenancy fix
+
+The customer Settings page was a single-tab "Organization"
+form. PRD Domain 6 + USER_JOURNEYS.md expect Members, API
+keys, Notifications, Security tabs. This slice ships the
+foundation (a tab strip across all settings sub-pages) and
+the first new tab — Members. Includes a load-bearing fix to
+the tenancy plumbing surfaced by the new code.
+
+Backend:
+
+- **`apps.identity.services.list_organization_members`** —
+  active + inactive memberships for the active org with
+  email + role + join date. Customer-side; reads under the
+  user's regular tenant context (no super_admin elevation).
+  Sorted oldest first so founders lead.
+- **`update_organization_member`** — owner / admin updates
+  another member's role or active state. Authorisation
+  layered: owner / admin only; admins cannot change owners
+  or promote to owner; users cannot self-change (route to a
+  future profile flow). Audited as
+  `organization.membership.updated` (distinct from the
+  admin-side `admin.membership_updated` so analytics can
+  split self-service vs operator changes). Field NAMES in
+  payload only — same PII-clean pattern.
+- **Endpoints**: `GET /api/v1/identity/organization/members/`
+  + `PATCH /api/v1/identity/organization/members/<uuid>/`.
+- **Tenancy bug fix**: `super_admin_context` was clearing
+  BOTH the tenant variable and the super-admin variable on
+  exit, dropping the regular tenant set by
+  `TenantContextMiddleware`. Subsequent tenant-scoped reads
+  in the same request returned zero rows under RLS. Surfaced
+  the moment a customer-side service did
+  `can_user_act_for_organization` (which elevates briefly)
+  and then ran a tenant query right after — Members tab
+  rendered "Members (0)" despite the row existing. Fix:
+  capture `SHOW app.current_tenant_id` on enter; restore via
+  `set_tenant(prior)` on exit. Every customer-side service
+  that uses elevation followed by a regular query benefits
+  immediately.
+
+Frontend:
+
+- **`SettingsTabs` component** — shared tab strip rendered
+  at the top of every settings sub-page. Tabs are full
+  Next.js routes (`/dashboard/settings`,
+  `/dashboard/settings/members`); active state derived from
+  pathname so deep-linking highlights correctly. Adding a
+  third tab is one line in `TABS`.
+- **Existing Organization page** updated to render the tab
+  strip + a unified "Settings" header (vs. the old
+  "Organization" page-specific h1).
+- **New `/dashboard/settings/members` page**:
+  - Lists members with email + role chip + join date + "YOU"
+    badge on the caller's row + "Inactive" badge on
+    deactivated rows.
+  - Owner/admin sees a "more" button on every row except
+    their own + (for admins) every owner row. Click opens an
+    inline action panel with role select + Save Role +
+    Deactivate/Reactivate buttons.
+  - Role dropdown is restricted client-side: admins don't
+    see "owner" as a choice (server enforces too).
+  - Read-only banner shows on the section header for
+    viewer/approver/submitter roles, but only after `me`
+    has loaded so non-owners don't see a flash of "you
+    can manage" before the gate kicks in.
+- **`api.listOrganizationMembers()` + `patchOrganizationMember()`**
+  + `OrganizationMemberRow` type added.
+
+Tests: 15 new (441 passing total, was 426). Auth gate.
+No-active-org → 400. Member can list. Owner can change
+admin role. Owner can deactivate. Admin cannot change owner.
+Admin cannot promote to owner. Owner can promote to owner.
+Viewer cannot change anyone. Self-change rejected. Unknown
+membership → 404. Unknown role → 400. At-least-one-field
+required. No-op skips audit. Cross-org membership not
+visible (404).
+
+Verified live: signed up fresh, navigated to
+`/dashboard/settings`, tabs visible (Organization +
+Members), clicked Members, "Members (1)" with the user's own
+row showing OWNER badge + "YOU" pill + join date. The
+tenancy fix means the API actually returns the user's row
+where it returned `[]` before.
+
+Durable design decisions:
+
+- **Tabs as full routes, not client tab state.** Each tab
+  is a separate Next.js page, so deep-linking works
+  natively (`/dashboard/settings/members` is a real URL),
+  the back button does the right thing, and there's no
+  "lost form state when switching tabs" footgun. Cost is
+  one file per tab; benefit is the entire browser-history
+  story comes for free.
+- **Distinct audit action for customer vs admin
+  membership changes.** `admin.membership_updated` and
+  `organization.membership.updated` look identical
+  semantically but are distinct signals — analytics can
+  measure "how often does customer self-service vs.
+  needing operator help" without parsing payloads.
+- **Self-changes route through a future profile flow.**
+  An owner accidentally demoting themselves locks the org
+  out — there's no recovery path that doesn't involve
+  staff (even an admin can't promote themselves to owner
+  without an existing owner). Refusing self-changes here
+  is the right friction; a dedicated profile page can
+  later add the "promote a co-owner first, then leave"
+  flow safely.
+- **Tenancy fix preserves the prior tenant.** The
+  super_admin_context exit was a `clear_tenant()` which
+  drops both vars. The new exit reads the prior value with
+  `SHOW` and re-sets it — same DB round-trip count, no
+  observable behaviour change inside the elevated block,
+  fixed behaviour outside.
+
+What's deferred:
+
+- **Invitations.** Adding a member by email needs an
+  outbound email channel + an invitation token model.
+  Email config exists (Slice 41) but the actual
+  email-sending wiring doesn't. Members list shows
+  existing members; new members still register
+  themselves and get added by an existing owner manually
+  via the admin shell or DB.
+- **Self-edit profile page.** A `/dashboard/profile` route
+  for the user's own email, password, language, timezone.
+  Outside the Members tab; a separate slice.
+- **Per-tenant API keys + Notifications + Security tabs.**
+  Slices 46 and 47 next.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -4500,7 +4632,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 426 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 441 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

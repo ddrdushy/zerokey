@@ -236,3 +236,149 @@ def can_user_act_for_organization(user: User, organization_id: uuid.UUID | str) 
             organization_id=organization_id,
             is_active=True,
         ).exists()
+
+
+# --- Customer-side membership management (Slice 45) -------------------------------
+
+
+class MembershipManagementError(Exception):
+    """Raised when a customer-side membership update is invalid."""
+
+
+def list_organization_members(
+    *, organization_id: uuid.UUID | str
+) -> list[dict]:
+    """Return active + inactive memberships for one organization.
+
+    Customer-facing — caller's tenant context is the org being listed.
+    Includes inactive rows so a customer-side admin can re-activate a
+    deactivated employee. Sorted oldest first so founders lead.
+    """
+    qs = (
+        OrganizationMembership.objects.filter(organization_id=organization_id)
+        .select_related("user", "role")
+        .order_by("joined_date")
+    )
+    return [
+        {
+            "id": str(m.id),
+            "user_id": str(m.user_id),
+            "email": m.user.email,
+            "role": m.role.name,
+            "is_active": bool(m.is_active),
+            "joined_date": m.joined_date.isoformat() if m.joined_date else None,
+        }
+        for m in qs
+    ]
+
+
+def update_organization_member(
+    *,
+    organization_id: uuid.UUID | str,
+    membership_id: uuid.UUID | str,
+    actor_user: User,
+    is_active: bool | None = None,
+    role_name: str | None = None,
+) -> dict:
+    """Customer owner/admin updates a membership in their own org.
+
+    Authorisation: only OWNER or ADMIN roles may change other rows.
+    ADMIN cannot change an OWNER (preserves the "owners are top of
+    the food chain" invariant). A user cannot change their OWN role
+    or deactivate themselves through this endpoint — accidentally
+    demoting yourself can lock the org out, so self-changes go
+    through a dedicated profile flow (not in scope yet); cross-user
+    changes are. Owners can promote others to owner; admins cannot.
+
+    Customer-side audit: ``organization.membership.updated`` records
+    actor + field-names. Distinct from admin-side
+    ``admin.membership_updated`` so analytics can split self-service
+    vs. operator-driven changes.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    if is_active is None and role_name is None:
+        raise MembershipManagementError(
+            "At least one of is_active or role_name must be supplied."
+        )
+
+    actor_membership = (
+        OrganizationMembership.objects.filter(
+            user=actor_user,
+            organization_id=organization_id,
+            is_active=True,
+        )
+        .select_related("role")
+        .first()
+    )
+    if actor_membership is None:
+        raise MembershipManagementError(
+            "You are not a member of this organization."
+        )
+    actor_role = actor_membership.role.name
+    if actor_role not in {"owner", "admin"}:
+        raise MembershipManagementError(
+            "Only owners and admins can change member access."
+        )
+
+    try:
+        membership = OrganizationMembership.objects.select_related(
+            "role", "user"
+        ).get(id=membership_id, organization_id=organization_id)
+    except OrganizationMembership.DoesNotExist as exc:
+        raise MembershipManagementError(
+            f"Membership {membership_id} not found in this organization."
+        ) from exc
+
+    if membership.user_id == actor_user.id:
+        raise MembershipManagementError(
+            "You cannot change your own membership through this endpoint."
+        )
+    if membership.role.name == "owner" and actor_role != "owner":
+        raise MembershipManagementError(
+            "Only owners can change another owner's membership."
+        )
+
+    changes: dict = {}
+    if is_active is not None and bool(is_active) != bool(membership.is_active):
+        membership.is_active = bool(is_active)
+        changes["is_active"] = bool(is_active)
+
+    if role_name is not None:
+        try:
+            new_role = Role.objects.get(name=role_name)
+        except Role.DoesNotExist as exc:
+            raise MembershipManagementError(
+                f"Unknown role {role_name!r}."
+            ) from exc
+        if new_role.name == "owner" and actor_role != "owner":
+            raise MembershipManagementError(
+                "Only owners can promote another member to owner."
+            )
+        if new_role.id != membership.role_id:
+            membership.role = new_role
+            changes["role"] = role_name
+
+    if changes:
+        membership.save()
+        record_event(
+            action_type="organization.membership.updated",
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(actor_user.id),
+            organization_id=str(organization_id),
+            affected_entity_type="OrganizationMembership",
+            affected_entity_id=str(membership.id),
+            payload={"fields_changed": sorted(changes.keys())},
+        )
+
+    return {
+        "id": str(membership.id),
+        "user_id": str(membership.user_id),
+        "email": membership.user.email,
+        "role": membership.role.name,
+        "is_active": bool(membership.is_active),
+        "joined_date": membership.joined_date.isoformat()
+        if membership.joined_date
+        else None,
+    }

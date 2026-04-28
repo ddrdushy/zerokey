@@ -52,6 +52,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 // --- Identity --------------------------------------------------------------
 
+export type OrganizationMemberRow = {
+  id: string;
+  user_id: string;
+  email: string;
+  role: string;
+  is_active: boolean;
+  joined_date: string | null;
+};
+
 export type Membership = {
   id: string;
   organization: { id: string; legal_name: string; tin: string };
@@ -719,6 +728,18 @@ export const api = {
   },
   getOrganization: () =>
     request<OrganizationDetail>("/identity/organization/"),
+  listOrganizationMembers: () =>
+    request<{ results: OrganizationMemberRow[] }>(
+      "/identity/organization/members/",
+    ).then((r) => r.results),
+  patchOrganizationMember: (
+    membershipId: string,
+    body: { is_active?: boolean; role_name?: string },
+  ) =>
+    request<OrganizationMemberRow>(
+      `/identity/organization/members/${membershipId}/`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
   updateOrganization: (updates: Partial<Record<keyof OrganizationDetail, string>>) =>
     request<OrganizationDetail>("/identity/organization/", {
       method: "PATCH",

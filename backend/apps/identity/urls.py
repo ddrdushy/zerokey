@@ -24,4 +24,14 @@ urlpatterns = [
     path("me/", views.me, name="me"),
     path("switch-organization/", views.switch_organization, name="switch-organization"),
     path("organization/", views.organization_detail, name="organization-detail"),
+    path(
+        "organization/members/",
+        views.organization_members,
+        name="organization-members",
+    ),
+    path(
+        "organization/members/<uuid:membership_id>/",
+        views.patch_organization_member,
+        name="organization-member-patch",
+    ),
 ]
