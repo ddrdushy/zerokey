@@ -189,6 +189,19 @@ export type AdminMe = {
   is_superuser: boolean;
 };
 
+export type PlatformTenant = {
+  id: string;
+  legal_name: string;
+  tin: string;
+  contact_email: string;
+  subscription_state: string;
+  created_at: string | null;
+  member_count: number;
+  ingestion_jobs_total: number;
+  ingestion_jobs_recent_7d: number;
+  last_activity_at: string | null;
+};
+
 export type PlatformAuditEvent = {
   id: string;
   sequence: number;
@@ -473,6 +486,15 @@ export const api = {
     request<{ results: string[] }>("/admin/audit/action-types/").then(
       (r) => r.results,
     ),
+  adminListTenants: (params?: { search?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+    const search = qs.toString();
+    return request<{ results: PlatformTenant[] }>(
+      `/admin/tenants/${search ? `?${search}` : ""}`,
+    ).then((r) => r.results);
+  },
   getOrganization: () =>
     request<OrganizationDetail>("/identity/organization/"),
   updateOrganization: (updates: Partial<Record<keyof OrganizationDetail, string>>) =>

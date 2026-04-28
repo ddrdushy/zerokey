@@ -104,3 +104,32 @@ def platform_action_types(request: Request) -> Response:
             ),
         }
     )
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
+def platform_tenants(request: Request) -> Response:
+    """Tenant directory with member + activity counts.
+
+    Query params:
+        ?search=acme    (case-insensitive substring against legal_name + tin)
+        ?limit=100      (1-500, default 100)
+    """
+    search = (request.query_params.get("search") or "").strip() or None
+    try:
+        limit = int(request.query_params.get("limit", "100"))
+    except ValueError:
+        return Response(
+            {"detail": "limit must be an integer."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    limit = max(1, min(limit, 500))
+    return Response(
+        {
+            "results": services.list_platform_tenants(
+                actor_user_id=request.user.id,
+                search=search,
+                limit=limit,
+            ),
+        }
+    )

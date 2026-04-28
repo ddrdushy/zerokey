@@ -16,7 +16,8 @@
 // own queries, which is the intended self-monitoring loop.
 
 import { ChevronDown, ChevronRight, ScrollText } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 
 import {
   api,
@@ -29,10 +30,29 @@ import { cn } from "@/lib/utils";
 const PAGE_SIZE = 50;
 
 export default function PlatformAuditPage() {
+  // useSearchParams must run inside Suspense in Next 14 app dir.
+  return (
+    <Suspense
+      fallback={
+        <AdminShell>
+          <div className="grid place-items-center py-24 text-2xs uppercase tracking-wider text-slate-400">
+            Loading…
+          </div>
+        </AdminShell>
+      }
+    >
+      <PlatformAuditPageInner />
+    </Suspense>
+  );
+}
+
+function PlatformAuditPageInner() {
+  const searchParams = useSearchParams();
+  const initialOrgId = searchParams?.get("org") ?? "";
   const [events, setEvents] = useState<PlatformAuditEvent[] | null>(null);
   const [actionTypes, setActionTypes] = useState<string[]>([]);
   const [filterAction, setFilterAction] = useState("");
-  const [filterOrgId, setFilterOrgId] = useState("");
+  const [filterOrgId, setFilterOrgId] = useState(initialOrgId);
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -23,4 +23,5 @@ urlpatterns = [
         views.platform_action_types,
         name="platform-action-types",
     ),
+    path("tenants/", views.platform_tenants, name="platform-tenants"),
 ]

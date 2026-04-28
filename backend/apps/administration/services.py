@@ -324,6 +324,126 @@ def count_platform_events(*, actor_user_id: UUID | str) -> int:
         return AuditEvent.objects.count()
 
 
+# --- Tenant directory (Slice 35) -------------------------------------------------
+
+
+def list_platform_tenants(
+    *, actor_user_id: UUID | str, search: str | None = None, limit: int = 100
+) -> list[dict[str, Any]]:
+    """Cross-tenant directory of every Organization on the platform.
+
+    Returns a denormalised dict per tenant with counts that the operator
+    needs at-a-glance: member_count, ingestion_jobs_total, recent_jobs
+    (last 7 days), and a last_activity_at timestamp. Heavy aggregation
+    runs in one query (per metric); the list page uses these to highlight
+    tenants that look idle or newly active.
+
+    Audited as ``admin.platform_tenants_listed`` so the cross-tenant
+    read appears on the chain.
+    """
+    from datetime import timedelta
+
+    from django.db.models import Count, Max
+    from django.utils import timezone
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.models import Organization, OrganizationMembership
+    from apps.identity.tenancy import super_admin_context
+    from apps.ingestion.models import IngestionJob
+
+    seven_days_ago = timezone.now() - timedelta(days=7)
+
+    with super_admin_context(reason="admin.platform_tenants:list"):
+        qs = Organization.objects.all()
+        if search:
+            # Case-insensitive contains across the two display fields the
+            # operator might paste in. Plain SQL ILIKE under the hood.
+            qs = qs.filter(legal_name__icontains=search) | qs.filter(
+                tin__icontains=search
+            )
+        orgs = list(
+            qs.order_by("legal_name").values(
+                "id",
+                "legal_name",
+                "tin",
+                "contact_email",
+                "subscription_state",
+                "created_at",
+            )[:limit]
+        )
+
+        org_ids = [o["id"] for o in orgs]
+        members_by_org = dict(
+            OrganizationMembership.objects.filter(organization_id__in=org_ids)
+            .values_list("organization_id")
+            .annotate(c=Count("id"))
+        )
+        # Total invoices per org (via IngestionJob — the universally-
+        # populated count is "uploads attempted").
+        jobs_total_by_org = dict(
+            IngestionJob.objects.filter(organization_id__in=org_ids)
+            .values_list("organization_id")
+            .annotate(c=Count("id"))
+        )
+        jobs_recent_by_org = dict(
+            IngestionJob.objects.filter(
+                organization_id__in=org_ids, created_at__gte=seven_days_ago
+            )
+            .values_list("organization_id")
+            .annotate(c=Count("id"))
+        )
+        # Last activity = max(IngestionJob.created_at, Organization.created_at).
+        # An org that's never uploaded still has a "last activity" of its
+        # creation timestamp so the column never reads "never".
+        last_job_by_org = dict(
+            IngestionJob.objects.filter(organization_id__in=org_ids)
+            .values_list("organization_id")
+            .annotate(at=Max("created_at"))
+        )
+
+    out: list[dict[str, Any]] = []
+    for org in orgs:
+        last_job = last_job_by_org.get(org["id"])
+        out.append(
+            {
+                "id": str(org["id"]),
+                "legal_name": org["legal_name"],
+                "tin": org["tin"],
+                "contact_email": org["contact_email"],
+                "subscription_state": org["subscription_state"],
+                "created_at": (
+                    org["created_at"].isoformat() if org["created_at"] else None
+                ),
+                "member_count": int(members_by_org.get(org["id"], 0)),
+                "ingestion_jobs_total": int(jobs_total_by_org.get(org["id"], 0)),
+                "ingestion_jobs_recent_7d": int(
+                    jobs_recent_by_org.get(org["id"], 0)
+                ),
+                "last_activity_at": (
+                    last_job.isoformat()
+                    if last_job
+                    else (org["created_at"].isoformat() if org["created_at"] else None)
+                ),
+            }
+        )
+
+    record_event(
+        action_type="admin.platform_tenants_listed",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=None,
+        affected_entity_type="Organization",
+        affected_entity_id="",
+        payload={
+            "search": (search or "")[:64],
+            "result_count": len(out),
+            "limit": int(limit),
+        },
+    )
+    return out
+
+
 def refresh_reference_catalogs() -> dict[str, int]:
     """Stamp ``last_refreshed_at`` on every active reference row.
 

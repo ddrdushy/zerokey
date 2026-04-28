@@ -3382,6 +3382,111 @@ What's deferred:
 
 ---
 
+### Slice 35 — Super-admin tenant directory
+
+The triage surface for "show me everyone, narrow by name or
+TIN, see who's idle vs active." The companion to Slice 34's
+audit log: that's the per-event view, this is the per-tenant
+view, and they deep-link to each other.
+
+Backend:
+
+- **`apps.administration.services.list_platform_tenants`** —
+  cross-tenant directory builder. One query for the org rows,
+  three aggregation queries for member count, lifetime
+  ingestion count, and last-7-days ingestion count, plus a
+  `Max(created_at)` for last-activity. Total cost is five
+  small queries regardless of tenant count, which scales
+  cleanly. Search is a case-insensitive substring against
+  `legal_name` OR `tin`.
+- Audited as `admin.platform_tenants_listed` with the search
+  string and result count. Same self-monitoring pattern as
+  Slice 34.
+- **`GET /api/v1/admin/tenants/?search=&limit=`** — staff-only
+  endpoint. Returns the denormalised dict per tenant with the
+  shape the UI needs (no client-side counting).
+
+Frontend:
+
+- **`/admin/tenants/page.tsx`** — table of every tenant with
+  legal name + email, TIN, subscription state badge,
+  member count, total uploads, last-7-days uploads, last
+  activity timestamp (relative), and a "View →" link that
+  deep-links to `/admin/audit?org=<uuid>`.
+- **Active tenants surfaced first** — the sort puts orgs
+  with non-zero last-7-days uploads above idle ones; ties
+  break alphabetically.
+- **Search bar** with 250 ms debounce so typing doesn't
+  hammer the API. Case-insensitive against legal name or
+  TIN.
+- **Subscription state badge** uses the colour palette from
+  the design system: success-green for `active`,
+  signal-amber for `trial`, slate for everything else.
+- **Audit page now reads `?org=`** — the tenant-list "View"
+  link populates the audit page's tenant filter, completing
+  the drill-through. Implemented via Next 14's
+  `useSearchParams` wrapped in a `Suspense` boundary (app-
+  dir requirement).
+- The shell's "Tenants" nav item drops its `soon` badge.
+
+Tests: 8 new (358 passing total, was 350). Auth gate (401/403/
+customer-403). Staff lists every tenant. Member + ingestion
+counts populate correctly. Search by legal-name substring
+narrows results. Search by TIN substring narrows results.
+Invalid `limit` → 400. Listing fires
+`admin.platform_tenants_listed` with the search term in the
+payload.
+
+Verified live with Playwright (`admin@symprio.com`): visited
+`/admin/tenants`, 25 tenants visible, sorted by recent
+activity. Searched "slice" → 18 matches. Cleared search,
+clicked View on first row → routed to
+`/admin/audit?org=b144bd47-...` with the Tenant filter
+pre-populated and "No events for these filters" rendered
+because that fresh tenant has no audit events yet.
+
+Durable design decisions:
+
+- **Aggregations on the backend, not via N+1 from the UI.**
+  A naive frontend would render the table then issue one
+  count query per tenant (member_count, jobs, recent jobs).
+  At 100 tenants that's 300+ queries on a single page load.
+  The backend computes them in five `.annotate(Count())`
+  passes, regardless of tenant count.
+- **Search at the backend, not client-side filter.** The
+  same naive frontend would fetch every tenant and filter
+  in the browser. Fine at 25 tenants, painful at 5,000.
+  The endpoint accepts `search=` so the work scales with
+  the result size, not the catalogue size.
+- **Activity-first sort.** A platform operator opens this
+  page to chase what's *happening* on the platform, not to
+  look up Quiet Co Sdn Bhd. Sorting recent uploads to the
+  top makes the relevant row visible above the fold.
+- **`last_activity_at` falls back to `Organization.created_at`.**
+  An org that's never uploaded still has *some* "last
+  activity" — the moment they signed up. The column never
+  reads "never" for a real org.
+- **Drill-through via query param, not router state.** A
+  `?org=` URL is bookmarkable (paste it in chat with a
+  colleague) and survives a refresh. Pushing the tenant ID
+  through router state would lose both properties.
+
+What's deferred:
+
+- **Tenant detail page.** Today the View link goes to the
+  audit log filtered by org. A dedicated detail page (KPIs,
+  recent invoices, member list, raw timeline) is the
+  natural next step but is a slice in its own right.
+- **Inline tenant impersonation.** "Sign in as this tenant
+  for 30 minutes" is the standard SaaS-admin shortcut; we
+  don't have the impersonation token machinery yet. When it
+  lands the row gets an "Impersonate" button.
+- **Bulk actions.** Suspend, pause billing, send a
+  broadcast email — Phase 5 polish once we have those
+  channels.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -3463,7 +3568,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 350 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 358 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
