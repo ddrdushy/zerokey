@@ -17,7 +17,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 
-import { api, ApiError, type Customer } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  type Customer,
+  type CustomerInvoiceSummary,
+} from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { FieldRow } from "@/components/review/FieldRow";
@@ -38,6 +43,7 @@ export default function CustomerDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [customer, setCustomer] = useState<Customer | null>(null);
+  const [invoices, setInvoices] = useState<CustomerInvoiceSummary[] | null>(null);
   const [draft, setDraft] = useState<Draft>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -58,6 +64,14 @@ export default function CustomerDetailPage() {
         }
         setError(err instanceof Error ? err.message : "Failed to load customer.");
       });
+    // The invoice list is independent of the master detail; load both
+    // in parallel. A 403 on this side is rare (the detail call would have
+    // already redirected), but we still tolerate failures rather than
+    // failing the whole page on a list-fetch error.
+    api
+      .listCustomerInvoices(params.id)
+      .then(setInvoices)
+      .catch(() => setInvoices([]));
   }, [params.id, router]);
 
   const dirtyCount = Object.keys(draft).length;
@@ -202,6 +216,8 @@ export default function CustomerDetailPage() {
           </aside>
         </section>
 
+        <InvoiceHistory invoices={invoices} />
+
         {dirtyCount > 0 && (
           <SaveBar
             count={dirtyCount}
@@ -276,6 +292,109 @@ function AliasCard({ aliases }: { aliases: string[] }) {
         </ul>
       )}
     </div>
+  );
+}
+
+function InvoiceHistory({
+  invoices,
+}: {
+  invoices: CustomerInvoiceSummary[] | null;
+}) {
+  if (invoices === null) {
+    return (
+      <section className="flex flex-col gap-3">
+        <h2 className="text-base font-semibold">Invoices from this buyer</h2>
+        <div className="rounded-xl border border-slate-100 bg-white p-4 text-2xs text-slate-400">
+          Loading…
+        </div>
+      </section>
+    );
+  }
+  if (invoices.length === 0) {
+    return (
+      <section className="flex flex-col gap-3">
+        <h2 className="text-base font-semibold">Invoices from this buyer</h2>
+        <div className="rounded-xl border border-slate-100 bg-white p-6 text-center">
+          <p className="text-2xs text-slate-500">
+            No invoices have referenced this buyer yet. New invoices that
+            match this master appear here automatically.
+          </p>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-base font-semibold">Invoices from this buyer</h2>
+        <span className="text-2xs uppercase tracking-wider text-slate-400">
+          {invoices.length} invoice{invoices.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+        <table className="w-full text-2xs">
+          <thead className="bg-slate-50 text-slate-400">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
+                Invoice number
+              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
+                Issue date
+              </th>
+              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
+                Grand total
+              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
+                Status
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {invoices.map((invoice) => (
+              <tr key={invoice.id} className="hover:bg-slate-50">
+                <td className="px-3 py-3">
+                  <Link
+                    href={`/dashboard/jobs/${invoice.ingestion_job_id}`}
+                    className="font-medium text-ink hover:underline"
+                  >
+                    {invoice.invoice_number || (
+                      <span className="text-slate-400">no number</span>
+                    )}
+                  </Link>
+                </td>
+                <td className="px-3 py-3 text-slate-600">
+                  {invoice.issue_date
+                    ? new Date(invoice.issue_date).toLocaleDateString()
+                    : "—"}
+                </td>
+                <td className="px-3 py-3 text-right font-mono">
+                  {invoice.grand_total
+                    ? `${invoice.currency_code} ${invoice.grand_total}`
+                    : "—"}
+                </td>
+                <td className="px-3 py-3">
+                  <StatusPill status={invoice.status} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const tone =
+    status === "validated" || status === "ready_for_review"
+      ? "bg-success/10 text-success"
+      : status === "error" || status === "rejected"
+        ? "bg-error/10 text-error"
+        : "bg-slate-100 text-slate-600";
+  return (
+    <span className={["inline-block rounded-full px-2 py-0.5 text-[10px] font-medium", tone].join(" ")}>
+      {status.replace(/_/g, " ")}
+    </span>
   );
 }
 

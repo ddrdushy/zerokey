@@ -7,4 +7,9 @@ app_name = "enrichment"
 urlpatterns = [
     path("", views.list_customers, name="list-customers"),
     path("<uuid:customer_id>/", views.customer_detail, name="customer-detail"),
+    path(
+        "<uuid:customer_id>/invoices/",
+        views.customer_invoices,
+        name="customer-invoices",
+    ),
 ]

@@ -1187,9 +1187,7 @@ Durable design decisions:
 
 What's deferred:
 
-- **Per-customer invoice list.** "Show me every invoice from this
-  buyer" is the obvious next drill-down. Cheap once the invoice
-  list endpoint supports a ``buyer_tin`` filter.
+- ~~Per-customer invoice list~~ — shipped in Slice 19.
 - **Search + filter** on the list. List is ordered by usage so the
   top-of-list is what the user usually wants; search waits until
   list size makes it worthwhile.
@@ -1445,6 +1443,95 @@ What's deferred:
   `_check_msic` / `rule_buyer_country_code` /
   `rule_line_item_catalogs`.
 
+### Slice 19 — Per-customer invoice list
+
+Closes the obvious "show me every invoice from this buyer" drill-down on
+the Customers detail surface (Slice 16). The Customers route now answers
+the operator's first follow-up question after looking at a master:
+"how often do we deal with this buyer, and what does the invoice
+history look like?".
+
+Backend:
+
+- **`GET /api/v1/customers/<id>/invoices/`** — compact list of every
+  Invoice on the active org whose buyer matches the master. Match
+  policy mirrors the enrichment-time matcher (`_find_customer_master`)
+  inverted: TIN equality wins when the master has a TIN; otherwise the
+  master's canonical name OR any learned alias matches case-
+  insensitively. Returns most-recent-first, prefetched with line
+  items.
+- **404 (not 200 with empty list) when the customer doesn't belong
+  to the active org** — preserves cross-tenant opacity (otherwise an
+  attacker probing IDs could distinguish "exists but not yours" from
+  "doesn't exist").
+- **`CustomerInvoiceSummarySerializer`** ships a compact shape
+  (id, ingestion_job_id, invoice_number, issue_date, currency_code,
+  grand_total, status, created_at). Full invoice payload is one
+  click away via the ingestion job link in the UI; we don't pay the
+  serialization cost on a list endpoint.
+- **`list_invoices_for_customer_master`** in
+  `apps.enrichment.services`. Cross-context import of
+  `apps.submission.models.Invoice` is OK because enrichment owns the
+  master matching logic and the inverted query is the natural
+  complement.
+
+Frontend:
+
+- **`/dashboard/customers/[id]`** gains an "Invoices from this buyer"
+  section beneath the existing identity / contact / aside layout.
+  Renders as a compact table with invoice number, issue date, grand
+  total (with currency), and a status pill. Each row links to
+  `/dashboard/jobs/<ingestion_job_id>` — the existing review screen.
+- **Empty state** speaks in opportunity ("No invoices have referenced
+  this buyer yet. New invoices that match this master appear here
+  automatically.") per UX_PRINCIPLES principle 7.
+- **Loading state** is a small "Loading…" placeholder while the
+  list fetch is in flight; the master-detail render is independent
+  so the page is usable even if the invoice list is slow.
+- New types `CustomerInvoiceSummary` + `api.listCustomerInvoices(id)`
+  in api.ts. Independent fetch from the master detail — both kick off
+  in the same `useEffect` so the round-trips overlap.
+
+Tests: 6 new (220 passing total). TIN-equality match returns matching
+invoices and excludes non-matching; alias-fallback match (case-
+insensitive against canonical + every alias) when the master has no
+TIN; 404 for cross-tenant customer; empty list for a master with no
+matching invoices; unauth rejected; serializer returns the compact
+field set (only the keys the table needs).
+
+Verified live: created a master + two matching invoices on the same
+TIN, called the service: returned both invoices in created_at desc
+order, with the right grand totals. Cleanup confirmed.
+
+Durable design decisions:
+
+- **Match policy mirrors the enrichment matcher, inverted.** TIN
+  is the canonical key; alias-or-canonical-name is the fallback for
+  no-TIN buyers. The two functions read as natural complements;
+  any future change to enrichment matching (fuzzy, embeddings, etc.)
+  applies symmetrically here.
+- **Compact serializer for list, full for detail.** The list fetches
+  enough to render the table + the click-through link; the detail
+  invoice fetch carries the full payload. Same pattern as the
+  customers list / detail split.
+- **404 over empty 200** for cross-tenant access. Cross-tenant
+  opacity beats the cleaner "always returns a list" API ergonomics
+  here — the one-bit information leak (does this id exist on
+  another tenant) is worth preventing.
+
+What's deferred:
+
+- **Date / status filters** on the list. The list is most-recent-
+  first; filters wait until volume makes them worthwhile.
+- **Per-customer aggregate stats** (total invoiced, average,
+  outstanding). The data is in the line items; renders on the
+  detail aside when we have enough invoices to make the numbers
+  interesting.
+- **Cross-master de-duplication** (one buyer, two masters from a
+  TIN edit). A Settings → "Merge customers" operator action; the
+  rename-via-TIN-edit case in Slice 14 doesn't currently produce
+  these in practice but a deliberate merge surface is worth having.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -1528,7 +1615,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 214 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 220 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -1606,6 +1693,11 @@ Coverage:
   rows + skips deprecated; validation rules' two-tier severity
   (format ERROR + catalog WARNING) tested per-catalog with positive
   + negative cases.
+- Per-customer invoice list — TIN-equality match returns matching +
+  excludes non-matching; alias-fallback match (case-insensitive
+  canonical + alias) when master has no TIN; cross-tenant 404; empty
+  list for master with no invoices; unauth rejected; compact
+  serializer field set pinned.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 

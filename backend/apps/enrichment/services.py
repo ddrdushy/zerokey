@@ -376,6 +376,56 @@ def get_customer_master(
     )
 
 
+def list_invoices_for_customer_master(
+    *,
+    organization_id: UUID | str,
+    customer_id: UUID | str,
+    limit: int | None = 100,
+) -> list:
+    """Invoices on this org whose buyer matches the given CustomerMaster.
+
+    Matching mirrors ``_find_customer_master`` (the enrichment-time
+    matcher) inverted: TIN-equality wins when the master has a TIN;
+    otherwise the master's canonical name OR any learned alias matches
+    invoices whose ``buyer_legal_name`` is the same string
+    (case-insensitive).
+
+    Returns most-recent-first. Cross-tenant isolation is enforced by
+    the explicit ``organization_id`` filter plus RLS on the
+    ``invoice`` table.
+    """
+    # Lazy import to avoid enrichment -> submission cycle at module load.
+    from apps.submission.models import Invoice
+
+    master = get_customer_master(
+        organization_id=organization_id, customer_id=customer_id
+    )
+    if master is None:
+        return []
+
+    qs = Invoice.objects.filter(organization_id=organization_id)
+    if master.tin:
+        # TIN is the canonical key. Anything matching the TIN is one of
+        # the master's invoices regardless of how the LLM wrote the name.
+        qs = qs.filter(buyer_tin=master.tin)
+    else:
+        # No TIN — fall back to the alias / canonical-name set, the same
+        # set the enrichment matcher built up from prior LLM extractions.
+        names = [master.legal_name, *master.aliases]
+        # Case-insensitive match against any of the known names.
+        from django.db.models import Q
+
+        name_q = Q()
+        for name in names:
+            name_q |= Q(buyer_legal_name__iexact=name)
+        qs = qs.filter(name_q)
+
+    qs = qs.order_by("-created_at").prefetch_related("line_items")
+    if limit is not None:
+        qs = qs[:limit]
+    return list(qs)
+
+
 @transaction.atomic
 def update_customer_master(
     *,

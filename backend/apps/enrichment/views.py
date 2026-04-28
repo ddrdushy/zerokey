@@ -1,8 +1,9 @@
 """Enrichment context views — the Customers UI surface.
 
-  GET   /api/v1/customers/        — list buyers (most-used first)
-  GET   /api/v1/customers/<id>/   — buyer detail
-  PATCH /api/v1/customers/<id>/   — direct edits to a CustomerMaster
+  GET   /api/v1/customers/                 — list buyers (most-used first)
+  GET   /api/v1/customers/<id>/            — buyer detail
+  PATCH /api/v1/customers/<id>/            — direct edits to a CustomerMaster
+  GET   /api/v1/customers/<id>/invoices/   — invoices from this buyer
 
 The PATCH path is for staff/users correcting things they know are wrong
 on the master (a wrong MSIC code that's now polluting auto-fill on every
@@ -21,7 +22,7 @@ from rest_framework.response import Response
 
 from . import services
 from .models import CustomerMaster
-from .serializers import CustomerMasterSerializer
+from .serializers import CustomerInvoiceSummarySerializer, CustomerMasterSerializer
 
 
 def _active_org(request: Request) -> str | None:
@@ -57,6 +58,30 @@ def customer_detail(request: Request, customer_id: str) -> Response:
     if customer is None:
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     return Response(CustomerMasterSerializer(customer).data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def customer_invoices(request: Request, customer_id: str) -> Response:
+    """Invoices on the active org whose buyer matches this CustomerMaster."""
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST
+        )
+    # 404 if the master doesn't belong to this org, even if the listing
+    # would otherwise be empty — preserves cross-tenant opacity.
+    if services.get_customer_master(
+        organization_id=organization_id, customer_id=customer_id
+    ) is None:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    invoices = services.list_invoices_for_customer_master(
+        organization_id=organization_id, customer_id=customer_id
+    )
+    return Response(
+        {"results": CustomerInvoiceSummarySerializer(invoices, many=True).data}
+    )
 
 
 def _customer_update(

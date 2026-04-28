@@ -226,3 +226,148 @@ class TestPatchCustomer:
             content_type="application/json",
         )
         assert response.status_code == 404
+
+
+@pytest.mark.django_db
+class TestCustomerInvoicesEndpoint:
+    """``GET /api/v1/customers/<id>/invoices/`` lists matching invoices.
+
+    Match policy mirrors the enrichment matcher (services._find_customer_master):
+    TIN equality wins when the master has a TIN; otherwise legal_name OR
+    any learned alias matches case-insensitively.
+    """
+
+    def _make_invoice(
+        self,
+        org: Organization,
+        *,
+        ingestion_job_id: str,
+        buyer_tin: str = "",
+        buyer_legal_name: str = "",
+    ):
+        from decimal import Decimal
+
+        from apps.submission.models import Invoice
+
+        return Invoice.objects.create(
+            organization=org,
+            ingestion_job_id=ingestion_job_id,
+            invoice_number="INV-001",
+            currency_code="MYR",
+            supplier_legal_name="Acme",
+            supplier_tin="C10000000001",
+            buyer_legal_name=buyer_legal_name,
+            buyer_tin=buyer_tin,
+            grand_total=Decimal("100.00"),
+        )
+
+    def test_lists_invoices_matching_master_tin(self, authed) -> None:
+        client, org = authed
+        master = _make_master(org, tin="C20000000001")
+
+        # Two invoices with the matching TIN, one without.
+        self._make_invoice(
+            org,
+            ingestion_job_id="11111111-1111-4111-8111-111111111111",
+            buyer_tin="C20000000001",
+            buyer_legal_name="Some Variant Name",
+        )
+        self._make_invoice(
+            org,
+            ingestion_job_id="22222222-2222-4222-8222-222222222222",
+            buyer_tin="C20000000001",
+            buyer_legal_name="Another Variant",
+        )
+        self._make_invoice(
+            org,
+            ingestion_job_id="33333333-3333-4333-8333-333333333333",
+            buyer_tin="C99999999999",
+            buyer_legal_name="Different Buyer",
+        )
+
+        response = client.get(f"/api/v1/customers/{master.id}/invoices/")
+        assert response.status_code == 200
+        rows = response.json()["results"]
+        assert len(rows) == 2
+        assert {r["invoice_number"] for r in rows} == {"INV-001"}
+
+    def test_falls_back_to_alias_match_when_master_has_no_tin(self, authed) -> None:
+        client, org = authed
+        # B2C / pre-LHDN buyer with no TIN — match by name.
+        master = _make_master(
+            org, tin="", legal_name="Walk-in Customer"
+        )
+        master.aliases = ["WALK-IN CUSTOMER", "Walk in customer"]
+        master.save()
+
+        # Three invoices: canonical match, alias match (case-insensitive),
+        # and unrelated.
+        self._make_invoice(
+            org,
+            ingestion_job_id="11111111-1111-4111-8111-111111111111",
+            buyer_legal_name="walk-in customer",  # case-insensitive canonical
+        )
+        self._make_invoice(
+            org,
+            ingestion_job_id="22222222-2222-4222-8222-222222222222",
+            buyer_legal_name="WALK-IN CUSTOMER",  # alias hit
+        )
+        self._make_invoice(
+            org,
+            ingestion_job_id="33333333-3333-4333-8333-333333333333",
+            buyer_legal_name="Some other person",
+        )
+
+        response = client.get(f"/api/v1/customers/{master.id}/invoices/")
+        assert response.status_code == 200
+        assert len(response.json()["results"]) == 2
+
+    def test_returns_404_for_other_orgs_customer(self, authed) -> None:
+        client, _ = authed
+        other = Organization.objects.create(
+            legal_name="Other Sdn Bhd",
+            tin="C99999999999",
+            contact_email="other@example",
+        )
+        their_master = _make_master(other)
+
+        response = client.get(f"/api/v1/customers/{their_master.id}/invoices/")
+        assert response.status_code == 404
+
+    def test_empty_list_when_no_matching_invoices(self, authed) -> None:
+        client, org = authed
+        master = _make_master(org, tin="C20000000001")
+
+        response = client.get(f"/api/v1/customers/{master.id}/invoices/")
+        assert response.status_code == 200
+        assert response.json()["results"] == []
+
+    def test_unauthenticated_is_rejected(self) -> None:
+        response = Client().get(
+            "/api/v1/customers/00000000-0000-0000-0000-000000000000/invoices/"
+        )
+        assert response.status_code in (401, 403)
+
+    def test_serializer_returns_compact_shape(self, authed) -> None:
+        client, org = authed
+        master = _make_master(org, tin="C20000000001")
+        self._make_invoice(
+            org,
+            ingestion_job_id="11111111-1111-4111-8111-111111111111",
+            buyer_tin="C20000000001",
+        )
+
+        rows = client.get(f"/api/v1/customers/{master.id}/invoices/").json()["results"]
+        assert len(rows) == 1
+        # Compact set: enough for the table + the link out, not the full
+        # invoice payload.
+        assert set(rows[0].keys()) == {
+            "id",
+            "ingestion_job_id",
+            "invoice_number",
+            "issue_date",
+            "currency_code",
+            "grand_total",
+            "status",
+            "created_at",
+        }

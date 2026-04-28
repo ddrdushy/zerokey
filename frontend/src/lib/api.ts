@@ -152,6 +152,17 @@ export type Throughput = {
   };
 };
 
+export type CustomerInvoiceSummary = {
+  id: string;
+  ingestion_job_id: string;
+  invoice_number: string;
+  issue_date: string | null;
+  currency_code: string;
+  grand_total: string | null;
+  status: string;
+  created_at: string;
+};
+
 export type Customer = {
   id: string;
   legal_name: string;
@@ -251,5 +262,9 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(updates),
     }),
+  listCustomerInvoices: (id: string) =>
+    request<{ results: CustomerInvoiceSummary[] }>(
+      `/customers/${id}/invoices/`,
+    ).then((r) => r.results),
   uploadFile,
 };
