@@ -58,7 +58,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Settings",
     items: [
-      { label: "Organization", href: "/dashboard/settings", icon: Settings, disabled: true },
+      { label: "Organization", href: "/dashboard/settings", icon: Settings },
     ],
   },
 ];

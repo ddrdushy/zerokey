@@ -1887,6 +1887,112 @@ What's deferred:
   "you spent $X this month on AI calls", which is a billing
   surface. Defer to the billing slice.
 
+### Slice 23 — Settings → Organization
+
+Closes the last `Settings` group sidebar item. Lets the user maintain
+their own org's contact + identity details — the kind of edit a
+new customer needs to do once shortly after signup, then occasionally
+as their business changes.
+
+Backend:
+
+- **`apps.identity.services.update_organization`** — strict
+  allowlist (`EDITABLE_ORGANIZATION_FIELDS`): legal_name /
+  sst_number / registered_address / contact_email / contact_phone
+  / language_preference / timezone / logo_url. Same single-audit-
+  event-with-field-names-not-values pattern as the invoice and
+  customer master updaters. Empty `legal_name` rejected; no-op
+  when the submitted values match current.
+- **TIN is excluded by design.** Changing it would invalidate every
+  signed invoice that referenced the prior value (LHDN considers
+  the TIN the canonical supplier identifier on every signed
+  document). If a customer's LHDN-issued TIN actually changes,
+  that's a fresh-tenant operation handled by support, not a
+  self-serve edit. Same logic applies to `billing_currency`
+  (per-Plan), `trial_state` / `subscription_state` (Stripe-managed
+  in a future slice), and `certificate_*` (signing service owns
+  these).
+- **`GET / PATCH /api/v1/identity/organization/`** — single
+  endpoint, two methods. The user-must-be-a-member-of-the-active-
+  org check returns 403 separately from the no-active-org-set 400.
+  Cross-tenant write attempts surface as 403 because the membership
+  check fires before the lookup.
+- **`OrganizationDetailSerializer`** — full read-side shape
+  (including read-only fields like trial_state / certificate_*) so
+  the UI renders the entire org on one page.
+
+Frontend:
+
+- **`/dashboard/settings`** — four sections matching the model's
+  conceptual groups: Identity, Contact, Preferences, Subscription +
+  certificate. Editable sections use the same `FieldRow` + dirty-
+  marker pattern as the invoice review and customer master pages
+  (Slices 15, 16) — reviewers move between editing surfaces without
+  re-learning the gesture vocabulary.
+- **Read-only fields render in `ReadOnlyRow`** with a slate-50 tint
+  + a hint explaining why ("LHDN-issued. Contact support to change.",
+  "Set per Plan; contact support to change."). The visual contrast
+  makes the editable-vs-not distinction immediate.
+- **SaveBar** sticks to the bottom only when dirty count > 0
+  (UX_PRINCIPLES principle 2: one primary action per screen). Helper
+  copy is "Saved values are recorded in your audit log." — turns the
+  audit chain into a reassurance.
+- **Sidebar**: "Organization" drops the `soon` badge.
+- New types `OrganizationDetail` + `api.getOrganization()` /
+  `updateOrganization()` clients.
+
+Tests: 12 new (261 passing total). Service: allowlisted edits land,
+no-op when nothing changes (no audit event), audit payload lists
+field names not values, unknown fields rejected (TIN explicitly
+tested), blank legal_name rejected. Allowlist invariant test pins
+the structural exclusions (TIN / billing_currency / lifecycle /
+certificate_*). Endpoint: GET returns active org + all fields,
+PATCH applies via endpoint, PATCH unknown field 400, unauth
+rejected, no-active-org 400, member-of-different-org 403.
+
+Verified live with Playwright: signed up fresh, navigated to
+/dashboard/settings (sidebar's "Organization" with no soon
+badge). Page rendered with the registered legal_name +
+contact_email + everything. Edited legal_name and contact_phone,
+saved, reloaded → both values persisted. Top-bar's active-org
+label auto-updated to the new legal_name. Audit log showed one
+new `identity.organization.updated` event.
+
+Durable design decisions:
+
+- **Allowlist over denylist** — same rationale as every other
+  edit surface this session. Set is small, explicit, tested. New
+  editable fields opt in deliberately.
+- **TIN is not editable.** Structural choice tied to LHDN's
+  signing semantics, not a UI choice. Documented in the model +
+  in the allowlist's exclusion comment.
+- **Read-only fields stay visible.** The user benefits from
+  seeing the whole org shape in one place; the visual treatment
+  (slate-50 tint, hint text) makes it clear which rows are
+  edit-surfaces and which are reference. Hiding the read-only
+  rows would force the user to remember where to look elsewhere
+  for billing / certificate state.
+- **Single audit event per save**, same as every other multi-
+  field updater. The user's mental model is "I saved my Settings
+  changes", singular.
+
+What's deferred:
+
+- **Role-based permissions on edit.** Right now any active
+  member can edit. Phase 5 ships the
+  per-permission gate (e.g. only owner / admin can change the
+  legal_name). The check goes in the view's
+  `can_user_act_for_organization` block alongside the
+  membership check.
+- **TIN-change support flow.** Changing a customer's TIN is a
+  rare but real event (LHDN reissues for restructuring). Today
+  it's a fresh-tenant operation; a guided "transfer to new TIN"
+  flow that re-signs the certificate and re-keys masters /
+  invoices would belong on a Phase 6 ops surface.
+- **Logo upload, not URL.** UI accepts a URL; the production
+  flow uploads to S3 and stores the resulting URL. Trivial swap
+  when the upload widget lands.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -1970,7 +2076,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 249 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 261 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -2069,6 +2175,14 @@ Coverage:
   list newest-first with cursor pagination; serializer surfaces
   engine_name + vendor via SerializerMethodField; limit clamping +
   invalid-input 400.
+- Organization settings — allowlisted edits land + emit a single
+  audit event with field NAMES not values; no-op detection (no audit
+  event); unknown fields rejected (TIN explicitly tested); blank
+  legal_name rejected; static allowlist invariant pins exclusion of
+  TIN / billing_currency / lifecycle / certificate_*; endpoint
+  enforces membership-of-active-org (403) separately from
+  no-active-org (400); cross-tenant access is 403 not 404 because
+  membership check fires before lookup.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -2101,8 +2215,9 @@ Ordered roughly by Phase 2/3 priority:
    `contact_phone`, `registered_address` are plain text in dev. Same
    KMS dependency as the runtime-config encryption (Slice 10).
 8. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
-   Invoices, Settings. (Customers shipped in Slice 16; Audit log
-   shipped in Slice 20; Engine activity shipped in Slice 22.)
+   Invoices. (Customers shipped in Slice 16; Audit log shipped in
+   Slice 20; Engine activity shipped in Slice 22; Organization
+   settings shipped in Slice 23.)
 9. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
    can wrap the existing `make test` + frontend lint/build.
 

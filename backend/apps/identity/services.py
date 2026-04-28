@@ -141,6 +141,87 @@ def memberships_for(user: User) -> list[OrganizationMembership]:
         )
 
 
+# Editable fields on the Organization detail surface. Settings page edits.
+# Excluded by design:
+#   - tin: LHDN-issued canonical identifier; changing it would invalidate
+#     every signed invoice that referenced the old TIN. If a customer's
+#     LHDN-issued TIN actually changes, that's a fresh-tenant operation
+#     handled by support, not a self-serve edit.
+#   - billing_currency / trial_state / subscription_state / certificate_*:
+#     system-managed (billing flow / signing service own these).
+EDITABLE_ORGANIZATION_FIELDS: frozenset[str] = frozenset(
+    {
+        "legal_name",
+        "sst_number",
+        "registered_address",
+        "contact_email",
+        "contact_phone",
+        "language_preference",
+        "timezone",
+        "logo_url",
+    }
+)
+
+
+class OrganizationUpdateError(Exception):
+    """Raised when an org update violates the editable-fields allowlist."""
+
+
+def get_organization(*, organization_id: uuid.UUID | str) -> Organization | None:
+    return Organization.objects.filter(id=organization_id).first()
+
+
+@transaction.atomic
+def update_organization(
+    *,
+    organization_id: uuid.UUID | str,
+    updates: dict[str, str],
+    actor_user_id: uuid.UUID | str,
+) -> Organization:
+    """Apply Settings → Organization edits, audit-logged.
+
+    Same shape as the Invoice / CustomerMaster updaters: strict
+    allowlist, single audit event, NO values in the audit payload
+    (PII).
+    """
+    unknown = set(updates.keys()) - EDITABLE_ORGANIZATION_FIELDS
+    if unknown:
+        raise OrganizationUpdateError(
+            f"Cannot edit non-editable organization fields: {sorted(unknown)}. "
+            f"Editable: {sorted(EDITABLE_ORGANIZATION_FIELDS)}"
+        )
+
+    org = Organization.objects.get(id=organization_id)
+    changed: list[str] = []
+    for field_name, raw_value in updates.items():
+        new_value = "" if raw_value is None else str(raw_value)
+        if field_name == "legal_name" and not new_value.strip():
+            raise OrganizationUpdateError("legal_name cannot be empty.")
+        previous = getattr(org, field_name) or ""
+        if previous == new_value:
+            continue
+        setattr(org, field_name, new_value)
+        changed.append(field_name)
+
+    if not changed:
+        return org
+
+    org.save()
+    record_event(
+        action_type="identity.organization.updated",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=str(organization_id),
+        affected_entity_type="Organization",
+        affected_entity_id=str(organization_id),
+        payload={
+            # Field names only — values can be PII (legal name, address, etc.).
+            "changed_fields": sorted(changed),
+        },
+    )
+    return org
+
+
 def can_user_act_for_organization(user: User, organization_id: uuid.UUID | str) -> bool:
     """True if ``user`` has an active membership in ``organization_id``.
 

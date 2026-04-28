@@ -211,6 +211,26 @@ export type CustomerInvoiceSummary = {
   created_at: string;
 };
 
+export type OrganizationDetail = {
+  id: string;
+  legal_name: string;
+  tin: string;
+  sst_number: string;
+  registered_address: string;
+  contact_email: string;
+  contact_phone: string;
+  billing_currency: string;
+  trial_state: string;
+  subscription_state: string;
+  certificate_uploaded: boolean;
+  certificate_expiry_date: string | null;
+  logo_url: string;
+  language_preference: string;
+  timezone: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Customer = {
   id: string;
   legal_name: string;
@@ -320,6 +340,13 @@ export const api = {
       tampering_detected: boolean;
       support_message: string;
     }>("/audit/verify/", { method: "POST" }),
+  getOrganization: () =>
+    request<OrganizationDetail>("/identity/organization/"),
+  updateOrganization: (updates: Partial<Record<keyof OrganizationDetail, string>>) =>
+    request<OrganizationDetail>("/identity/organization/", {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    }),
   engineSummary: () =>
     request<{ results: EngineSummary[] }>("/engines/").then((r) => r.results),
   listEngineCalls: (params?: { limit?: number; beforeStartedAt?: string }) => {

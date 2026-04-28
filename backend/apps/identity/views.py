@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from . import services
 from .serializers import (
     LoginSerializer,
+    OrganizationDetailSerializer,
     RegisterSerializer,
     SwitchOrganizationSerializer,
     UserSerializer,
@@ -121,3 +122,49 @@ def switch_organization(request: Request) -> Response:
 
     request.session["organization_id"] = str(organization_id)
     return Response(UserSerializer(request.user, context={"request": request}).data)
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def organization_detail(request: Request) -> Response:
+    """Settings → Organization surface.
+
+    GET   returns the full Organization shape for the active org.
+    PATCH applies edits via the allowlisted ``update_organization`` service.
+
+    Active-org scoping is the user's session ``organization_id`` (set by
+    the registration / login flow). A user with multiple memberships
+    edits the org currently selected by the switch-organization endpoint.
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization. Switch organization first."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == "PATCH":
+        if not isinstance(request.data, dict):
+            return Response(
+                {"detail": "Body must be a JSON object."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            org = services.update_organization(
+                organization_id=organization_id,
+                updates=request.data,
+                actor_user_id=request.user.id,
+            )
+        except services.OrganizationUpdateError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(OrganizationDetailSerializer(org).data)
+
+    org = services.get_organization(organization_id=organization_id)
+    if org is None:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    return Response(OrganizationDetailSerializer(org).data)

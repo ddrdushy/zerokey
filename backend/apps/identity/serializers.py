@@ -28,6 +28,41 @@ class OrganizationSummarySerializer(serializers.ModelSerializer):
         fields = ["id", "legal_name", "tin", "subscription_state", "trial_state"]
 
 
+class OrganizationDetailSerializer(serializers.ModelSerializer):
+    """Full organization shape for the Settings → Organization page.
+
+    Editable fields are tracked in
+    ``apps.identity.services.EDITABLE_ORGANIZATION_FIELDS``; the view
+    enforces the allowlist on PATCH. The serializer's ``read_only_fields``
+    is for safety against an accidental writable Meta default — the actual
+    write path is the ``update_organization`` service, never the
+    serializer's ``.save()``.
+    """
+
+    class Meta:
+        model = Organization
+        fields = [
+            "id",
+            "legal_name",
+            "tin",
+            "sst_number",
+            "registered_address",
+            "contact_email",
+            "contact_phone",
+            "billing_currency",
+            "trial_state",
+            "subscription_state",
+            "certificate_uploaded",
+            "certificate_expiry_date",
+            "logo_url",
+            "language_preference",
+            "timezone",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
 class MembershipSerializer(serializers.ModelSerializer):
     organization = OrganizationSummarySerializer(read_only=True)
     role = serializers.CharField(source="role.name", read_only=True)
