@@ -4680,6 +4680,127 @@ What's deferred:
 
 ---
 
+### Slice 47 — NotificationPreference + Settings → Notifications tab
+
+The customer Settings now has its fourth tab. Per-user, per-
+tenant notification preferences for the in-app bell + email
+channels. The bell aggregator (Slice 28) already exists; this
+slice ships the *preferences* layer the bell + future email
+channel will read at delivery time.
+
+Backend:
+
+- **`apps.identity.models.NotificationPreference`** —
+  TenantScopedModel keyed by ``(user, organization)`` with a
+  ``preferences`` JSONField. Per-event toggles use a JSON dict
+  rather than column-per-event so adding an event type doesn't
+  require a migration. RLS migration follows the per-tenant
+  pattern. Same user belonging to two orgs has two independent
+  rows — preferences may legitimately differ per role.
+- **`apps.identity.notifications`**:
+  - ``EVENT_KEYS`` — canonical list of recognised events
+    (key, label, description). Today: inbox.item_opened,
+    invoice.validated, invoice.lhdn_rejected,
+    audit.chain_verified, organization.membership.updated.
+    Adding an event is a one-line change here.
+  - ``get_preferences`` — auto-materialises the row with
+    defaults (all channels on) on first read. Returns the
+    full schema (event allowlist + label + description) plus
+    the user's settings, so the UI renders both pieces from
+    one round-trip.
+  - ``set_preferences`` — replaces per-event channel toggles
+    atomically. Unknown event keys reject (typo on FE side
+    surfaces the contract violation); unknown channels (a
+    future ``push`` or ``sms``) are silently dropped so a
+    stale FE doesn't block the save when a new channel
+    lands. Audited as
+    ``identity.notification_preferences.updated`` with the
+    list of event keys whose preferences changed — no
+    boolean values in payload (PII-clean).
+- **Endpoint**: ``GET / PATCH /api/v1/identity/organization/notification-preferences/``.
+
+Frontend:
+
+- **`/dashboard/settings/notifications`** — table with one
+  row per event (label + description) and two toggle switches
+  per row (in-app bell + email).
+- **Optimistic updates + 350ms debounce** — toggles respond
+  instantly; quick clicks across multiple events collapse
+  into one PATCH. Saved-flash indicator appears in the
+  header for ~1.2s on success. On failure, the page reloads
+  from server to discard the optimistic state.
+- **"Email needs SMTP" footer note** — until the operator
+  configures SMTP credentials (Slice 41 namespace), email
+  toggles capture preference but nothing actually sends.
+  The frontend says so honestly rather than pretending email
+  works.
+- **Tabs strip extended** to include "Notifications" as the
+  fourth tab.
+- ``api.getNotificationPreferences`` /
+  ``setNotificationPreferences`` + ``NotificationPreferenceRow``
+  type added.
+
+Tests: 9 new (461 passing total, was 452). Auth gate. GET
+returns full event schema with defaults. First GET
+materialises the row. PATCH disables one channel without
+touching others. Unknown event key → 400. Unknown channel
+silently dropped. Audit event records event keys only (no
+boolean values in payload — sanity-checked by serialising +
+grepping for "true"/"false"). No-op skips audit. Per-(user,
+org) isolation: same user in two orgs has independent
+preferences; setting one doesn't affect the other.
+
+Verified live: signed up fresh, navigated to
+`/dashboard/settings/notifications`. 4 tabs visible
+(Organization, Members, API keys, Notifications). 5 events
+render with description + 2 toggle switches each. All defaults
+on (success-green). Footer note about SMTP visible.
+
+Durable design decisions:
+
+- **Per-(user, org), not per-user.** A user who's owner at
+  one tenant and viewer at another has different stakes in
+  notifications. The bell is already tenant-scoped (it
+  filters by active org); preferences must be too.
+- **JSON dict, not column-per-event.** Adding a new event
+  is a one-line ``EVENT_KEYS`` append in code; no migration.
+  The cost is no per-event index, but we never query "give
+  me everyone who wants email for X" — the preferences are
+  read at *delivery* time per (user, event), which is a
+  point lookup on a small JSON.
+- **Allowlist enforcement on event keys, silent drop on
+  channels.** Event keys are part of the schema contract —
+  a typo means the FE is broken. Channel names will grow
+  over time (push, sms, slack); a stale FE that doesn't
+  know about the new channel shouldn't lose the ability to
+  save its old preferences. Asymmetric strictness is the
+  right call here.
+- **Auto-materialise on first read.** Same lazy-init
+  pattern the SystemSetting resolver uses (Slice 41). The
+  alternative — failing if no row exists — forces every
+  consumer to handle the absence explicitly, which buys
+  nothing.
+- **Audit event records keys only.** A user's notification
+  toggles are arguably PII (preference signal). Recording
+  WHICH events they tweaked is enough for compliance; the
+  ON/OFF state of each is recoverable from the row itself
+  if needed.
+
+What's deferred:
+
+- **Actual email delivery.** SMTP credentials slot exists
+  (Slice 41 ``email`` namespace); a delivery service that
+  reads NotificationPreference + sends via the platform
+  SMTP is the natural next slice.
+- **Push notifications + Slack.** Channel additions —
+  drop into ``VALID_CHANNELS`` + a delivery worker.
+- **Per-tenant defaults.** Today defaults are platform-
+  wide (all on). A future "this org's owners get email
+  on rejections by default" preset would land as another
+  layer in ``get_preferences``.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -4761,7 +4882,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 452 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 461 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

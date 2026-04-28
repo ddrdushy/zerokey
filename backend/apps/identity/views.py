@@ -249,6 +249,47 @@ def organization_api_keys(request: Request) -> Response:
     )
 
 
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def notification_preferences(request: Request) -> Response:
+    """Settings → Notifications. Per-user, per-tenant event preferences.
+
+    GET   returns ``{events: [{key, label, description, in_app, email}, ...]}``.
+    PATCH accepts ``{"<event_key>": {"in_app": bool, "email": bool}, ...}``.
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    from . import notifications as notif_service
+
+    if request.method == "PATCH":
+        body = request.data or {}
+        try:
+            result = notif_service.set_preferences(
+                organization_id=organization_id,
+                user=request.user,
+                updates=body,
+            )
+        except notif_service.NotificationPreferenceError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)
+
+    return Response(
+        notif_service.get_preferences(
+            organization_id=organization_id, user=request.user
+        )
+    )
+
+
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
 def revoke_organization_api_key(request: Request, api_key_id: str) -> Response:

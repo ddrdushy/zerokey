@@ -52,6 +52,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 // --- Identity --------------------------------------------------------------
 
+export type NotificationPreferenceRow = {
+  key: string;
+  label: string;
+  description: string;
+  in_app: boolean;
+  email: boolean;
+};
+
 export type APIKeyRow = {
   id: string;
   label: string;
@@ -764,6 +772,17 @@ export const api = {
     request<APIKeyRow>(
       `/identity/organization/api-keys/${apiKeyId}/`,
       { method: "DELETE" },
+    ),
+  getNotificationPreferences: () =>
+    request<{ events: NotificationPreferenceRow[] }>(
+      "/identity/organization/notification-preferences/",
+    ),
+  setNotificationPreferences: (
+    updates: Record<string, { in_app?: boolean; email?: boolean }>,
+  ) =>
+    request<{ events: NotificationPreferenceRow[] }>(
+      "/identity/organization/notification-preferences/",
+      { method: "PATCH", body: JSON.stringify(updates) },
     ),
   updateOrganization: (updates: Partial<Record<keyof OrganizationDetail, string>>) =>
     request<OrganizationDetail>("/identity/organization/", {

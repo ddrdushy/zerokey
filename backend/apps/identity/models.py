@@ -229,6 +229,53 @@ class OrganizationMembership(TenantScopedModel):
         return f"{self.user.email} @ {self.organization.legal_name} ({self.role.name})"
 
 
+class NotificationPreference(TenantScopedModel):
+    """Per-user, per-tenant notification preferences.
+
+    Controls which events the user wants to be notified about, and on
+    which channels. Tenant-scoped because preferences may differ when
+    one user belongs to multiple orgs (e.g. they're an owner at Acme
+    so they get inbox alerts, but a viewer at Beta so they don't).
+    Surfaced from Settings → Notifications.
+
+    Per-event toggles use a JSONField rather than a column-per-event
+    so adding a new event type doesn't require a migration. The list
+    of recognised event keys lives in code (``EVENT_KEYS`` in the
+    services module) — anything outside that allowlist on save is
+    rejected.
+
+    The Slice 28 in-app bell already aggregates state without a
+    Notification table — this row stores the *preferences* layer the
+    bell + the future email/push channels read.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    user = models.ForeignKey(
+        "identity.User",
+        on_delete=models.CASCADE,
+        related_name="notification_preferences",
+    )
+
+    # Per-event channel preferences:
+    #   {"<event_key>": {"in_app": bool, "email": bool}}
+    # Empty dict = "use the platform defaults" (everything on).
+    preferences = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "identity_notification_preference"
+        ordering = ["organization", "user"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "organization"],
+                name="uniq_notif_pref_per_user_org",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"NotifPrefs({self.user_id} @ {self.organization_id})"
+
+
 class APIKey(TenantScopedModel):
     """A long-lived bearer credential scoped to one organization.
 

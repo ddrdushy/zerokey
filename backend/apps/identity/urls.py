@@ -44,4 +44,9 @@ urlpatterns = [
         views.revoke_organization_api_key,
         name="organization-api-key-revoke",
     ),
+    path(
+        "organization/notification-preferences/",
+        views.notification_preferences,
+        name="notification-preferences",
+    ),
 ]
