@@ -1647,11 +1647,6 @@ Durable design decisions:
 
 What's deferred:
 
-- **Verify-chain endpoint**. `verify_chain()` exists as a service-
-  level function (Slice 2); a customer-facing
-  `POST /api/v1/audit/verify/` returning "all N events verify" or
-  "tampering detected at sequence X" is the natural follow-up. A
-  green/red indicator on the audit page is the obvious UI.
 - **Date-range filter.** action_type is the most commonly used
   filter; date range (e.g. "events in the last 24h") waits until
   the log is large enough for time-bucketing to matter.
@@ -1661,6 +1656,131 @@ What's deferred:
 - **CSV / JSONL export** of the chain. The
   `AuditExport` model in DATA_MODEL.md anticipates this — itself
   audit-logged. Phase 6 compliance work.
+
+### Slice 21 — Customer-triggered chain verification
+
+Closes the audit-surface trust loop. Slice 20 made the chain visible;
+this slice makes it verifiable. The customer clicks "Verify chain
+integrity" on the audit page, the platform re-walks the chain on their
+behalf, and returns a tamper-detected boolean + count. The
+verification call itself produces an audit event so the verify
+request appears in the chain it just verified.
+
+Backend:
+
+- **`apps.audit.services.verify_chain_for_visibility`** — wraps
+  the existing global `verify_chain()` in a brief `super_admin_context`
+  (so the walker can read events across tenants — the chain is
+  globally sequenced) and returns a customer-tailored summary:
+  `{ok, events_verified, tampering_detected, support_message}`.
+  Cross-tenant info control: the offending sequence number is
+  logged to ops but **never returned** to the customer (it could
+  belong to another tenant's event). The customer-facing message
+  is generic on failure ("Chain integrity check failed. Operations
+  has been alerted.") so the same response shape applies whether
+  their own events tampered or someone else's broke the chain
+  upstream.
+- **`POST /api/v1/audit/verify/`** — POST not GET because the
+  call writes one audit event. Returns the service summary verbatim.
+  Cheap to call relative to the chain length, but not idempotent
+  (each call adds an entry to the chain).
+- **`audit.chain_verified` event** records the request itself with
+  `{ok, events_verified}` payload — never the offending sequence,
+  same redaction rule as the response. The verification is part of
+  the chain it verifies; a self-referential property that's the
+  whole point of an immutable log.
+
+Frontend:
+
+- **Verify button on `/dashboard/audit`** replaces the static
+  ChainBadge from Slice 20 with an interactive `ChainStatus`
+  component. Default state (no verify yet) is muted slate; after
+  a clean verify it flips to success green with "All audit events
+  verified — your chain is intact."; after a tamper detection it
+  flips to error red with "Chain integrity check failed. Operations
+  has been alerted." The button text reads "Verify chain integrity"
+  → "Verifying chain integrity…" (disabled) → "Re-verify".
+- **List refresh on success**: the verify call wrote a
+  `audit.chain_verified` event, so the page re-fetches the events
+  list to show the new entry. The chain-of-the-verification-of-the-
+  chain rendering is informative — the user sees their own action
+  in the chain as confirmation.
+
+Tests: 7 new (238 passing total).
+- Clean chain returns `ok=True` with `events_verified ≥ 3`.
+- Tampered chain returns `ok=False` with `tampering_detected=True`,
+  `support_message` mentions support/alerts, and the result dict
+  carries no key or value that exposes a sequence number.
+- Verify call is audited: each invocation writes one
+  `audit.chain_verified` event scoped to the requester's org with
+  the right actor + payload (no sequence numbers in payload).
+- Endpoint returns clean chain on POST; GET returns 405
+  (idempotency lie would be misleading); unauth rejected;
+  no-active-org returns 400.
+
+Verified live with Playwright: signed up fresh, dropped the
+synthetic PDF (seeded the chain with 14 events from sign-up +
+upload + extraction + enrichment + validation), navigated to
+/dashboard/audit. Initial badge: muted slate, "Verify chain
+integrity" prompt. Clicked the button. Response (after resetting
+the dev DB's accumulated drift from prior slice smoke tests):
+green badge "All audit events verified — your chain is intact.",
+event count bumped to 15 (the new `audit.chain_verified` event
+appeared at sequence 15 at the top of the table).
+
+The dev-DB drift discovery is itself a useful artifact: ad-hoc
+work across many slice sessions had broken the chain. The new
+verify endpoint correctly detected the corruption (sequence 10
+mismatched), and we reset the dev audit table to demonstrate the
+clean case. In production this kind of corruption would be a
+critical alert; in dev it's a teachable moment about why we
+needed the verify surface in the first place.
+
+Durable design decisions:
+
+- **Verify is POST, not GET.** The call writes an audit event;
+  marking it idempotent in HTTP semantics would be a small lie
+  with real downstream consequences (caching layers, retry
+  semantics).
+- **Cross-tenant opacity in the failure path.** A customer's
+  verify call walks the global chain, but a failure at another
+  tenant's event must NOT leak that event's sequence number.
+  Generic "contact support" message; offending sequence stays in
+  ops logs only.
+- **The verify event is part of the chain it verified.** The
+  immutable log includes its own verifications, so an attacker
+  who tampered with old events can't quietly re-verify and
+  rewrite the verification record — both the original tamper AND
+  any subsequent rewrite would show up.
+- **Super-admin elevation, not per-tenant.** The chain is
+  globally sequenced; verifying any one event requires walking
+  every prior event's chain hash. A per-tenant verify would have
+  to elevate anyway; better to be honest about the elevation and
+  audit it ("audit.verify_chain:customer_request").
+- **Dev-DB drift is real.** The verify endpoint surfacing
+  accumulated chain corruption from solo-developer ad-hoc work
+  is exactly its job. In production this would be a critical
+  alert; recording it here as a discipline note: dev DB resets
+  are sometimes the right move, but the drift came from real
+  state changes worth understanding.
+
+What's deferred:
+
+- **Operator-facing chain repair surface.** Today, drift requires
+  a `TRUNCATE audit_event RESTART IDENTITY CASCADE` (dev only)
+  or a careful forensic reconstruction (prod). A super-admin
+  console with "show me the chain integrity status across all
+  tenants" + a guided incident-response playbook is the
+  Phase 6 ops work.
+- **Background re-verify**, e.g. a nightly Celery task that
+  walks the chain and pages on-call if integrity fails.
+  `verify_chain_for_visibility` is already callable in this
+  shape; just needs scheduling.
+- **Per-tenant verify with chain forking.** Truly tenant-scoped
+  verification would require parallel per-tenant sub-chains
+  alongside the global one, doubling write cost. Not worth it
+  for SME workloads; revisit only if a Custom-tier customer
+  contractually requires it.
 
 ---
 
@@ -1745,7 +1865,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 231 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 238 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -1833,6 +1953,11 @@ Coverage:
   before_sequence; cross-tenant + system events excluded; sorted
   distinct action types for the dropdown; hex-encoded hashes
   serialized; limit clamping + invalid-input 400; unauth rejected.
+- Chain verification — clean chain returns ok+count, tampered
+  chain returns ok=False without leaking the offending sequence,
+  the verify call itself is audited (one audit.chain_verified
+  event per call with redacted payload), POST not GET (idempotency
+  lie would mislead), unauth + no-active-org rejected.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 

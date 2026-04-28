@@ -20,7 +20,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronRight, ShieldCheck } from "lucide-react";
+import { ChevronDown, ChevronRight, ShieldAlert, ShieldCheck } from "lucide-react";
 
 import { api, ApiError, type AuditEvent } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
@@ -28,6 +28,13 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
+
+type VerifyResult = {
+  ok: boolean;
+  events_verified: number;
+  support_message: string;
+  checked_at: string;
+};
 
 export default function AuditLogPage() {
   const router = useRouter();
@@ -38,6 +45,8 @@ export default function AuditLogPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
 
   // Load initial page + action-type filter list.
   useEffect(() => {
@@ -99,6 +108,32 @@ export default function AuditLogPage() {
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
+  async function onVerifyChain() {
+    setVerifying(true);
+    setError(null);
+    try {
+      const result = await api.verifyAuditChain();
+      setVerifyResult({
+        ok: result.ok,
+        events_verified: result.events_verified,
+        support_message: result.support_message,
+        checked_at: new Date().toISOString(),
+      });
+      // The verify call itself produces an audit event — refresh the list
+      // and total so the user sees their verification request appear.
+      const fresh = await api.listAuditEvents({
+        actionType: filterAction || undefined,
+        limit: PAGE_SIZE,
+      });
+      setEvents(fresh.results);
+      setTotal(fresh.total);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Verification failed.");
+    } finally {
+      setVerifying(false);
+    }
+  }
+
   const hasMore = useMemo(() => {
     if (!events) return false;
     if (filterAction) return events.length > 0 && events.length % PAGE_SIZE === 0;
@@ -117,7 +152,12 @@ export default function AuditLogPage() {
               Every business action, hash-chained, append-only
             </p>
           </div>
-          <ChainBadge total={total} />
+          <ChainStatus
+            total={total}
+            result={verifyResult}
+            verifying={verifying}
+            onVerify={onVerifyChain}
+          />
         </header>
 
         {error && (
@@ -165,14 +205,56 @@ export default function AuditLogPage() {
   );
 }
 
-function ChainBadge({ total }: { total: number }) {
+function ChainStatus({
+  total,
+  result,
+  verifying,
+  onVerify,
+}: {
+  total: number;
+  result: VerifyResult | null;
+  verifying: boolean;
+  onVerify: () => void;
+}) {
+  const verified = result?.ok === true;
+  const tampered = result?.ok === false;
+
+  // Tone: success after a clean verify, error after a tamper detection,
+  // muted-but-informative before any verify has been attempted.
+  const Icon = tampered ? ShieldAlert : ShieldCheck;
+  const containerCls = cn(
+    "flex flex-col items-end gap-1 rounded-md px-3 py-1.5 text-2xs",
+    verified && "bg-success/10 text-success",
+    tampered && "bg-error/10 text-error",
+    !result && "bg-slate-100 text-slate-600",
+  );
+
   return (
-    <div className="rounded-md bg-success/10 px-3 py-1.5 text-2xs text-success">
-      <span className="inline-flex items-center gap-1.5">
-        <ShieldCheck className="h-3.5 w-3.5" />
-        <span className="font-medium">{total.toLocaleString()}</span>
-        <span>event{total === 1 ? "" : "s"} on the chain</span>
-      </span>
+    <div className="flex flex-col items-end gap-2">
+      <div className={containerCls}>
+        <span className="inline-flex items-center gap-1.5">
+          <Icon className="h-3.5 w-3.5" />
+          <span className="font-medium">{total.toLocaleString()}</span>
+          <span>event{total === 1 ? "" : "s"} on the chain</span>
+        </span>
+        {result && (
+          <span className="text-[10px] opacity-80">
+            {result.support_message}
+          </span>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onVerify}
+        disabled={verifying}
+        className="text-[11px] font-medium text-slate-600 underline-offset-4 hover:text-ink hover:underline disabled:opacity-50"
+      >
+        {verifying
+          ? "Verifying chain integrity…"
+          : result
+            ? "Re-verify"
+            : "Verify chain integrity"}
+      </button>
     </div>
   );
 }

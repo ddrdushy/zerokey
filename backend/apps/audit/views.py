@@ -1,11 +1,12 @@
 """Audit context views.
 
-  GET /api/v1/audit/stats/         — counts for the active org's KPI tile.
-  GET /api/v1/audit/events/        — paginated list, optional ?action_type filter.
-  GET /api/v1/audit/action-types/  — distinct action types for the dropdown.
+  GET  /api/v1/audit/stats/         — counts for the active org's KPI tile.
+  GET  /api/v1/audit/events/        — paginated list, optional ?action_type filter.
+  GET  /api/v1/audit/action-types/  — distinct action types for the dropdown.
+  POST /api/v1/audit/verify/        — verify the chain on the customer's behalf.
 
-Reads only. The audit log is append-only at the application layer; nothing
-in this module mutates events. Tenant isolation comes from RLS plus the
+Reads only (apart from ``verify`` which writes one audit event recording the
+verification call itself). Tenant isolation comes from RLS plus the
 explicit ``organization_id`` filter in the service.
 """
 
@@ -79,6 +80,29 @@ def list_events(request: Request) -> Response:
             "total": total,
         }
     )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def verify_chain_view(request: Request) -> Response:
+    """Customer-triggered chain verification.
+
+    POST not GET because the call writes one audit event (recording that
+    the verification was requested) — same convention every other
+    business-meaningful action follows. Cheap to call but not trivially
+    idempotent: each call writes a fresh ``audit.chain_verified`` event.
+    """
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    result = services.verify_chain_for_visibility(
+        organization_id=organization_id,
+        actor_user_id=request.user.id,
+    )
+    return Response(result)
 
 
 @api_view(["GET"])

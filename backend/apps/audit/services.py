@@ -20,6 +20,7 @@ concurrency but is acceptable for unit tests, which run single-threaded.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -30,6 +31,8 @@ from django.utils import timezone
 
 from .chain import GENESIS_PREV_HASH, ChainIntegrityError, compute_hashes, verify_link
 from .models import AuditEvent
+
+logger = logging.getLogger(__name__)
 
 
 def _next_sequence() -> int:
@@ -267,6 +270,73 @@ def list_action_types_for_organization(
 def count_events_for_organization(*, organization_id: UUID | str) -> int:
     """Total event count for the org. Renders as a context strip on the page."""
     return AuditEvent.objects.filter(organization_id=organization_id).count()
+
+
+def verify_chain_for_visibility(
+    *, organization_id: UUID | str, actor_user_id: UUID | str
+) -> dict[str, Any]:
+    """Customer-triggered chain verification.
+
+    The audit chain is *global* (events from every tenant participate
+    in one sequence; a row's ``chain_hash`` links to the previous row's
+    regardless of which tenant produced it). A per-tenant verification
+    would still have to walk the global sequence to validate any tenant
+    row, so this elevates briefly to super-admin, runs the full chain
+    verifier, and returns a customer-tailored summary.
+
+    Cross-tenant information control: on tamper detection we DO NOT
+    return the offending sequence number to the customer (it might
+    point at another tenant's event). The caller gets only "tampering
+    detected; contact support" — the underlying sequence is logged for
+    operations.
+
+    Audited: emits one ``audit.chain_verified`` event per call,
+    organization-scoped to the requester. Same shape as every other
+    customer-initiated action.
+    """
+    # Lazy import to avoid circular: tenancy reads from audit on init.
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="audit.verify_chain:customer_request"):
+        try:
+            count = verify_chain()
+            ok = True
+        except ChainIntegrityError as exc:
+            count = 0
+            ok = False
+            # Log to ops with the offending sequence so the team can investigate.
+            # The customer-facing return below intentionally omits the sequence
+            # since it might point at another tenant's event.
+            logger.error("audit chain integrity check failed: %s", exc)
+
+    # Audit the verification act itself. Outside the elevation context so the
+    # event reads under normal RLS — the customer sees their own verify call
+    # in their own log.
+    record_event(
+        action_type="audit.chain_verified",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=str(organization_id),
+        affected_entity_type="AuditChain",
+        affected_entity_id="",
+        payload={
+            "ok": ok,
+            "events_verified": count,
+        },
+    )
+
+    return {
+        "ok": ok,
+        "events_verified": count,
+        # Generic message — never the underlying sequence number, which
+        # could belong to another tenant.
+        "tampering_detected": not ok,
+        "support_message": (
+            "All audit events verified — your chain is intact."
+            if ok
+            else "Chain integrity check failed. Operations has been alerted."
+        ),
+    }
 
 
 def verify_chain() -> int:

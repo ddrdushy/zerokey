@@ -285,6 +285,13 @@ export const api = {
   },
   listAuditActionTypes: () =>
     request<{ results: string[] }>("/audit/action-types/").then((r) => r.results),
+  verifyAuditChain: () =>
+    request<{
+      ok: boolean;
+      events_verified: number;
+      tampering_detected: boolean;
+      support_message: string;
+    }>("/audit/verify/", { method: "POST" }),
   throughput: (days = 7) => request<Throughput>(`/ingestion/throughput/?days=${days}`),
   updateInvoice: (id: string, updates: Record<string, string | null>) =>
     request<Invoice>(`/invoices/${id}/`, {
