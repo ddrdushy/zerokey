@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { api, ApiError, type IngestionJob } from "@/lib/api";
+import { api, ApiError, type IngestionJob, type Invoice } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 const TERMINAL = new Set(["validated", "rejected", "cancelled", "error", "ready_for_review"]);
@@ -12,6 +12,7 @@ export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [job, setJob] = useState<IngestionJob | null>(null);
+  const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -25,6 +26,14 @@ export default function JobDetailPage() {
         if (cancelled) return;
         setJob(data);
         setLoading(false);
+        // Try to fetch the structured invoice if it exists. 404 is fine —
+        // structuring may still be in flight or the engine was unavailable.
+        if (data.status === "ready_for_review" || TERMINAL.has(data.status)) {
+          api
+            .getInvoiceForJob(params.id)
+            .then((inv) => !cancelled && setInvoice(inv))
+            .catch(() => {});
+        }
         if (!TERMINAL.has(data.status)) {
           timer = setTimeout(load, 2000);
         }
@@ -90,6 +99,8 @@ export default function JobDetailPage() {
           <div className="mt-1">{job.error_message}</div>
         </section>
       )}
+
+      {invoice && <InvoiceCard invoice={invoice} />}
 
       {job.extracted_text && (
         <section>
@@ -160,5 +171,142 @@ function StatusPill({ status }: { status: string }) {
     <span className={["rounded-full px-3 py-1 text-2xs font-medium", tone].join(" ")}>
       {status.replace(/_/g, " ")}
     </span>
+  );
+}
+
+
+function InvoiceCard({ invoice }: { invoice: Invoice }) {
+  const hasAnyField =
+    invoice.invoice_number ||
+    invoice.supplier_legal_name ||
+    invoice.buyer_legal_name ||
+    invoice.grand_total;
+
+  return (
+    <section>
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-xl font-semibold">Structured invoice</h2>
+        {invoice.overall_confidence != null && (
+          <span className="text-2xs uppercase tracking-wider text-slate-400">
+            confidence {(invoice.overall_confidence * 100).toFixed(0)}% ·{" "}
+            {invoice.structuring_engine || "—"}
+          </span>
+        )}
+      </div>
+
+      {!hasAnyField && (
+        <p className="mt-3 text-base text-slate-400">
+          {invoice.error_message ||
+            "No fields populated. Auto-structuring may have been skipped or the document didn't contain recognised invoice text."}
+        </p>
+      )}
+
+      {hasAnyField && (
+        <>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <Field label="Invoice number" value={invoice.invoice_number} />
+            <Field
+              label="Issue date"
+              value={invoice.issue_date ? new Date(invoice.issue_date).toLocaleDateString() : ""}
+            />
+            <Field label="Currency" value={invoice.currency_code} />
+            <Field
+              label="Grand total"
+              value={invoice.grand_total ? `${invoice.currency_code} ${invoice.grand_total}` : ""}
+            />
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
+            <Party
+              label="Supplier"
+              name={invoice.supplier_legal_name}
+              tin={invoice.supplier_tin}
+              address={invoice.supplier_address}
+            />
+            <Party
+              label="Buyer"
+              name={invoice.buyer_legal_name}
+              tin={invoice.buyer_tin}
+              address={invoice.buyer_address}
+            />
+          </div>
+
+          {invoice.line_items.length > 0 && (
+            <div className="mt-6 overflow-hidden rounded-xl border border-slate-100">
+              <table className="w-full text-2xs">
+                <thead className="bg-slate-50 text-slate-400">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">#</th>
+                    <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
+                      Description
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
+                      Qty
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
+                      Unit price
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
+                      Tax
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
+                      Total
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {invoice.line_items.map((line) => (
+                    <tr key={line.id}>
+                      <td className="px-3 py-2 text-slate-400">{line.line_number}</td>
+                      <td className="px-3 py-2">{line.description}</td>
+                      <td className="px-3 py-2 text-right font-mono">{line.quantity ?? "—"}</td>
+                      <td className="px-3 py-2 text-right font-mono">
+                        {line.unit_price_excl_tax ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono">
+                        {line.tax_amount ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono">
+                        {line.line_total_incl_tax ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="rounded-xl border border-slate-100 bg-white p-4">
+      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">{label}</div>
+      <div className="mt-1 text-base">{value || <span className="text-slate-400">—</span>}</div>
+    </div>
+  );
+}
+
+function Party({
+  label,
+  name,
+  tin,
+  address,
+}: {
+  label: string;
+  name: string;
+  tin: string;
+  address: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-100 bg-white p-4">
+      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">{label}</div>
+      <div className="mt-2 text-base font-medium">{name || <span className="text-slate-400">—</span>}</div>
+      {tin && <div className="font-mono text-2xs text-slate-600">TIN {tin}</div>}
+      {address && <div className="mt-1 text-2xs text-slate-600 whitespace-pre-line">{address}</div>}
+    </div>
   );
 }

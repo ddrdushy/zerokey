@@ -95,6 +95,14 @@ def logout_view(request: Request) -> Response:
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def me(request: Request) -> Response:
+    # If the user is authenticated but their session has no active org (e.g.
+    # they signed in before any membership existed, or admin truncates wiped
+    # state), auto-pick their first active membership. Better UX than a stuck
+    # "No active organization" dashboard.
+    if not request.session.get("organization_id"):
+        memberships = services.memberships_for(request.user)
+        if memberships:
+            request.session["organization_id"] = str(memberships[0].organization_id)
     return Response(UserSerializer(request.user, context={"request": request}).data)
 
 

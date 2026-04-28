@@ -255,6 +255,24 @@ def _complete(
         },
     )
 
+    # Create the Invoice row + chain a structuring task. Cross-context import
+    # of services (not models) is allowed.
+    from apps.submission.services import create_invoice_from_extraction
+
+    invoice = create_invoice_from_extraction(
+        organization_id=job.organization_id,
+        ingestion_job_id=job.id,
+        extracted_text=text,
+    )
+
+    # Queue the structuring task only if we have any text to structure on.
+    if text.strip():
+        from django.db import transaction as _txn
+
+        from apps.extraction.tasks import structure_invoice as structure_task
+
+        _txn.on_commit(lambda: structure_task.delay(str(invoice.id)))
+
 
 @transaction.atomic
 def _fail(job: IngestionJob, *, error: str) -> None:

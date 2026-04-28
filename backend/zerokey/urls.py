@@ -36,4 +36,5 @@ urlpatterns = [
     # Bounded-context routes mount under /api/v1/ as they are added.
     path("api/v1/identity/", include("apps.identity.urls")),
     path("api/v1/ingestion/", include("apps.ingestion.urls")),
+    path("api/v1/invoices/", include("apps.submission.urls")),
 ]

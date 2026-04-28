@@ -18,6 +18,45 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(
+    name="extraction.structure_invoice",
+    queue="high",
+    max_retries=0,
+    acks_late=False,
+)
+def structure_invoice(invoice_id: str) -> dict[str, str | float | int]:
+    """Run FieldStructure on an invoice's raw text and populate Invoice fields."""
+    from apps.identity.tenancy import set_tenant, super_admin_context
+    from apps.submission.services import structure_invoice as _structure
+
+    logger.info("structure_invoice: starting invoice=%s", invoice_id)
+    # Worker has no tenant context; brief-elevate to find the org, then pin.
+    with super_admin_context(reason="extraction.pipeline:invoice_lookup"):
+        from apps.submission.models import Invoice
+
+        invoice = Invoice.objects.get(id=invoice_id)
+    set_tenant(invoice.organization_id)
+
+    try:
+        result = _structure(invoice_id)
+    except Exception:
+        logger.exception("structure_invoice: failed invoice=%s", invoice_id)
+        raise
+    logger.info(
+        "structure_invoice: complete invoice=%s engine=%s confidence=%s lines=%s",
+        invoice_id,
+        result.engine,
+        result.overall_confidence,
+        result.line_count,
+    )
+    return {
+        "invoice_id": str(result.invoice.id),
+        "engine": result.engine,
+        "confidence": result.overall_confidence,
+        "line_count": result.line_count,
+    }
+
+
+@shared_task(
     name="extraction.extract_invoice",
     queue="high",
     max_retries=0,

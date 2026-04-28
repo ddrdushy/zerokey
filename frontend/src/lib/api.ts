@@ -69,6 +69,47 @@ export type Me = {
   active_organization_id: string | null;
 };
 
+export type LineItem = {
+  id: string;
+  line_number: number;
+  description: string;
+  unit_of_measurement: string;
+  quantity: string | null;
+  unit_price_excl_tax: string | null;
+  line_subtotal_excl_tax: string | null;
+  tax_type_code: string;
+  tax_rate: string | null;
+  tax_amount: string | null;
+  line_total_incl_tax: string | null;
+  classification_code: string;
+};
+
+export type Invoice = {
+  id: string;
+  ingestion_job_id: string;
+  status: string;
+  invoice_number: string;
+  issue_date: string | null;
+  due_date: string | null;
+  currency_code: string;
+  supplier_legal_name: string;
+  supplier_tin: string;
+  supplier_address: string;
+  buyer_legal_name: string;
+  buyer_tin: string;
+  buyer_address: string;
+  subtotal: string | null;
+  total_tax: string | null;
+  grand_total: string | null;
+  overall_confidence: number | null;
+  per_field_confidence: Record<string, number>;
+  structuring_engine: string;
+  error_message: string;
+  line_items: LineItem[];
+  created_at: string;
+  updated_at: string;
+};
+
 export type IngestionJob = {
   id: string;
   source_channel: string;
@@ -133,5 +174,6 @@ export const api = {
   listJobs: () =>
     request<{ results: IngestionJob[] }>("/ingestion/jobs/").then((r) => r.results),
   getJob: (id: string) => request<IngestionJob>(`/ingestion/jobs/${id}/`),
+  getInvoiceForJob: (jobId: string) => request<Invoice>(`/invoices/by-job/${jobId}/`),
   uploadFile,
 };
