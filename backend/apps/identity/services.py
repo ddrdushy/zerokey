@@ -116,6 +116,20 @@ def register_owner(
         payload={"user_id": str(user.id), "role": owner_role.name},
     )
 
+    # Auto-bootstrap a 14-day trial subscription so the customer
+    # lands on a known billing state. Idempotent — if billing's
+    # bootstrap helper finds an existing subscription it returns
+    # that. Wrapped in try so a billing-app outage doesn't block
+    # registration.
+    try:
+        from apps.billing.services import bootstrap_trial_subscription
+
+        bootstrap_trial_subscription(organization_id=organization.id)
+    except Exception:  # noqa: BLE001
+        # Registration must not fail because billing fell over;
+        # operations can backfill via admin or shell.
+        pass
+
     return RegistrationResult(user=user, organization=organization, membership=membership)
 
 

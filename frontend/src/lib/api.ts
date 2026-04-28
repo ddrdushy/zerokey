@@ -52,6 +52,47 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 // --- Identity --------------------------------------------------------------
 
+export type BillingPlan = {
+  id: string;
+  slug: string;
+  version: number;
+  name: string;
+  description: string;
+  tier: string;
+  monthly_price_cents: number;
+  annual_price_cents: number;
+  billing_currency: string;
+  included_invoices_per_month: number;
+  per_overage_cents: number;
+  included_users: number;
+  included_api_keys: number;
+  features: Record<string, unknown>;
+};
+
+export type BillingSubscription = {
+  id: string;
+  status: "active" | "trialing" | "past_due" | "cancelled" | "replaced";
+  billing_cycle: "monthly" | "annual";
+  plan: BillingPlan;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  trial_started_at: string | null;
+  trial_ends_at: string | null;
+  cancel_at_period_end: boolean;
+  cancelled_at: string | null;
+  stripe_customer_id: string;
+  stripe_subscription_id: string;
+};
+
+export type BillingUsage = {
+  event_type: string;
+  period_start: string | null;
+  period_end: string | null;
+  count: number;
+  limit: number;
+  overage_count: number;
+};
+
 export type NotificationPreferenceRow = {
   key: string;
   label: string;
@@ -784,6 +825,12 @@ export const api = {
       "/identity/organization/notification-preferences/",
       { method: "PATCH", body: JSON.stringify(updates) },
     ),
+  getBillingOverview: () =>
+    request<{
+      subscription: BillingSubscription | null;
+      usage: BillingUsage;
+      available_plans: BillingPlan[];
+    }>("/billing/overview/"),
   updateOrganization: (updates: Partial<Record<keyof OrganizationDetail, string>>) =>
     request<OrganizationDetail>("/identity/organization/", {
       method: "PATCH",
