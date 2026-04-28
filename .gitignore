@@ -37,6 +37,10 @@ backend/media/
 backend/db.sqlite3*
 backend/*.sqlite3*
 
+# Celery Beat scheduler state (runtime artifact)
+backend/celerybeat-schedule
+backend/celerybeat-schedule.*
+
 # Node / Next.js
 node_modules/
 .next/

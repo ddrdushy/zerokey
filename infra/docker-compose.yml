@@ -175,6 +175,33 @@ services:
       minio:
         condition: service_healthy
 
+  # Celery Beat — schedules recurring tasks (currently: audit chain
+  # verification every six hours). One beat container only; multiple
+  # would dispatch each tick more than once. Beat itself does no work,
+  # just enqueues; the actual task runs on the general worker via the
+  # ``low`` queue.
+  beat:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    command:
+      [
+        "celery",
+        "-A",
+        "zerokey",
+        "beat",
+        "--loglevel=info",
+      ]
+    environment: *backend-env
+    volumes:
+      - ../backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   # Signing-service worker — dedicated to the signing queue only.
   # In production this runs on isolated containers with restricted IAM
   # (read-only S3 to the cert prefix, KMS decrypt to the cert envelope key,

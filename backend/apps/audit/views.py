@@ -107,6 +107,26 @@ def verify_chain_view(request: Request) -> Response:
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def latest_verification_view(request: Request) -> Response:
+    """Most recent chain verification run, manual or scheduled.
+
+    Read-only — returns ``{"latest": null}`` before the first beat tick
+    (or for a fresh deployment with no verifications yet) so the UI can
+    render an explicit "no verification yet" state without 404 handling.
+    The shape is sanitised by the service: no ``error_detail``, no
+    sequence number on tamper detection.
+    """
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return Response({"latest": services.latest_chain_verification()})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def list_action_types(request: Request) -> Response:
     organization_id = _active_org(request)
     if not organization_id:

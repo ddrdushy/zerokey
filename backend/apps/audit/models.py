@@ -97,3 +97,47 @@ class AuditEvent(models.Model):
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         raise RuntimeError("AuditEvent rows cannot be deleted from application code.")
+
+
+class ChainVerificationRun(models.Model):
+    """One execution of the chain integrity check.
+
+    Records both background (Celery beat) and customer-triggered runs in a
+    single table so the "last verification" surface on the audit page can
+    show a unified status regardless of who or what kicked off the check.
+
+    System-level (no ``organization`` column): the chain itself is global,
+    and verification reads every event under super-admin elevation. The
+    table is read-only to the app role except for the audit task that
+    writes it; UI access goes through a service that filters out
+    operational fields (``error_detail``) before returning.
+    """
+
+    class Status(models.TextChoices):
+        OK = "ok", "Ok"
+        TAMPERED = "tampered", "Tampered"
+        ERROR = "error", "Error"
+
+    class Source(models.TextChoices):
+        SCHEDULED = "scheduled", "Scheduled"
+        MANUAL = "manual", "Manual"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    started_at = models.DateTimeField(default=timezone.now, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices)
+    events_verified = models.IntegerField(default=0)
+    source = models.CharField(max_length=16, choices=Source.choices)
+
+    # Operational detail — never returned to customers. The customer-facing
+    # contract is "ok / tampering detected; contact support" same as the
+    # interactive verify call. The detail here is for the ops dashboard /
+    # logs only.
+    error_detail = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "chain_verification_run"
+        ordering = ["-started_at"]
+
+    def __str__(self) -> str:
+        return f"{self.status} via {self.source} @ {self.started_at.isoformat()}"

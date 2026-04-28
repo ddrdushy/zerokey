@@ -213,6 +213,25 @@ CELERY_TASK_ACKS_LATE = True
 # need to enumerate them here.
 CELERY_TASK_DEFAULT_QUEUE = "default"
 
+# --- Celery Beat (scheduled tasks) -----------------------------------------------------
+# Scheduled (recurring) tasks live here. The beat container reads this dict
+# and dispatches at the configured interval. Each entry pins to a queue that
+# matches the worker fleet so the task is picked up.
+
+# The audit chain verification cadence. Default 6 hours — frequent enough to
+# catch tampering within a meaningful window, cheap enough that even a multi-
+# million-event chain finishes well under the interval. Tunable per-environment
+# via env so dev can dial it down to seconds for live testing.
+AUDIT_CHAIN_VERIFY_SECONDS = env.int("AUDIT_CHAIN_VERIFY_SECONDS", default=6 * 60 * 60)
+
+CELERY_BEAT_SCHEDULE = {
+    "audit.verify_audit_chain": {
+        "task": "audit.verify_audit_chain",
+        "schedule": float(AUDIT_CHAIN_VERIFY_SECONDS),
+        "options": {"queue": "low"},
+    },
+}
+
 # --- Logging --------------------------------------------------------------------------
 # Sensitive data is never logged (CLAUDE.md). Loggers must rely on field-level redaction
 # at the call site; the formatter does not redact retroactively.

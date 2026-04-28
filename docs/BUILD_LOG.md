@@ -2390,6 +2390,176 @@ What's deferred:
 
 ---
 
+### Slice 27 — Background chain verification
+
+The audit chain has been verifiable on demand since Slice 21
+(`POST /api/v1/audit/verify/`). This slice adds the second half:
+a Celery beat task that verifies the chain on a schedule
+regardless of customer activity, and a "last verified" trust
+footer on the audit log page that surfaces the result. Together
+they let the customer see "we last verified the chain X minutes
+ago" without ever clicking anything — the trust signal is
+ambient instead of on-demand.
+
+Backend:
+
+- **`ChainVerificationRun`** model (system-level, no
+  ``organization`` column — the chain is global). Records every
+  run, manual or scheduled, in a single table. Fields: status
+  (`ok` / `tampered` / `error`), source (`scheduled` / `manual`),
+  events_verified, started_at, completed_at, error_detail.
+  Migration `audit/0004_chainverificationrun`. No RLS — read by
+  any authenticated session via the service, which strips
+  operational fields (``error_detail``) before returning.
+- **`apps.audit.tasks.verify_audit_chain`** — `@shared_task` on
+  the `low` queue. Calls `run_scheduled_chain_verification`,
+  which is a thin wrapper around the shared
+  `_run_chain_verification` core. The core runs the chain
+  walker under super-admin elevation, catches
+  `ChainIntegrityError` (→ status=tampered with the offending
+  sequence in `error_detail`) and any other exception (→
+  status=error with the exception type+message). The run is
+  recorded for *every* outcome — silent failure on a trust
+  surface is worse than an explicit "we tried at T, here's what
+  happened".
+- **Manual verify path now writes a run row too.**
+  `verify_chain_for_visibility` (the customer-triggered call
+  from Slice 21) was refactored to use the same
+  `_run_chain_verification` core with `source=manual`. The
+  audit page's "last verified" surface unifies both kinds of
+  trigger — whichever ran most recently, that's what shows.
+- **System-level audit event** `audit.chain_verified` is
+  emitted with `organization_id=NULL`, `actor_type=service`,
+  `actor_id=audit.verify_audit_chain`, `payload.source=scheduled`.
+  Manual runs continue to emit user-scoped events for the
+  customer's own log. The two coexist on the chain without
+  duplicating; tenants don't see system events under RLS.
+- **`latest_chain_verification`** service returns the most
+  recent run in a customer-safe shape: status, ok, source,
+  events_verified, timestamps, support_message. Never
+  `error_detail`; never the offending sequence number.
+  `GET /api/v1/audit/verify/last/` exposes it.
+- **Celery Beat schedule** in `settings.base`:
+  `AUDIT_CHAIN_VERIFY_SECONDS` (default 6h, env-overridable for
+  dev) drives the cadence. The beat container is a new service
+  in `infra/docker-compose.yml` — single instance, since
+  multiple beats would dispatch each tick more than once. Beat
+  itself does no work; the task runs on the general worker via
+  the `low` queue.
+
+Frontend:
+
+- **Audit page footer** (`/dashboard/audit`) now surfaces the
+  latest verification under the chain-status badge: "Last
+  verified 12 minutes ago · scheduled run" when the background
+  task has run, "All audit events verified — your chain is
+  intact." (or the tamper message) immediately after the user
+  clicks Re-verify, and "Background verification runs every six
+  hours." when no run has happened yet.
+- **`api.latestAuditVerification()`** + `LatestVerification`
+  type. The page fetches once on mount, and after a manual
+  verify completes, refetches so the footer reflects the just-
+  completed run.
+- **CTA wording adapts**: "Verify chain integrity" before any
+  run is observed, "Re-verify now" after — same button, same
+  endpoint, just the right framing for the state.
+
+Tests: 12 new (311 passing total). Service: clean chain →
+status=ok with the verified count + system audit event with
+`actor_type=service` + `organization_id=NULL` + payload
+records `source=scheduled`. Tampered chain → status=tampered
+with the sequence in `error_detail` (operational only). Celery
+task path under `CELERY_TASK_ALWAYS_EAGER` → invokes the
+service end-to-end, run row exists. Manual run via
+`verify_chain_for_visibility` → writes a run row with
+`source=manual`. `latest_chain_verification` → returns None
+before any run, returns sanitised shape after (no
+`error_detail`). Tampered run → customer-facing surface omits
+the sequence entirely. Endpoint: `GET /verify/last/` → 200
+with `{"latest": null}` before any run, returns latest with
+sanitised shape after; unauthenticated → 401/403; no active
+org → 400.
+
+Verified live with Playwright: signed up fresh on a reset audit
+table. Triggered the scheduled task once via shell so the dev
+DB has a run on it. Visited /dashboard/audit — the chain badge
+showed "4 events on the chain" with "Last verified just now ·
+scheduled run" beneath it (success-tinted). Clicked "Re-verify
+now"; badge updated to "5 events on the chain" with "All audit
+events verified — your chain is intact." A new
+`audit.chain_verified` event appeared in the table at the
+top, scoped to the user (manual run). Beat container also
+verified to be running and dispatching at the configured
+cadence.
+
+Durable design decisions:
+
+- **One run table for both manual and scheduled.** A separate
+  `ManualVerificationRun` + `ScheduledVerificationRun` would
+  give a clean type distinction at the cost of forcing every
+  surface ("show me the latest", "list runs") to UNION two
+  tables. Since the surfaces only ever care about which one
+  ran most recently regardless of source, the unified table
+  with a `source` column is the right shape. The constraint
+  this puts on the future: if scheduled and manual diverge in
+  what they store, we'll have to split — but they share the
+  same chain-walker, the same outcomes, and the same UI
+  representation, so divergence is unlikely.
+- **No retries on the task.** Same reasoning as
+  `extraction.extract_invoice`: a transient DB failure is
+  recorded as `status=error` and visible on the next page
+  load; the next beat tick re-attempts naturally. A retry
+  storm on a cryptographic check buys nothing.
+- **`error_detail` never reaches customers.** It carries the
+  offending sequence number (which under our global chain
+  could belong to another tenant) and exception messages
+  (which may carry environmental detail). The customer
+  surface gets the same generic "tampering detected; contact
+  support" message Slice 21 established. Operations sees
+  `error_detail` via the audit table directly.
+- **Recording `error` runs (not just ok/tampered).** Silent
+  failure on a trust surface is worse than visible failure.
+  If the database hiccupped during the verify, the page should
+  show "Last verification errored at T — operations notified"
+  rather than "Last verified at T-6h" (because the older run
+  was the previous *successful* one). Today the latest-run
+  query is unconditional `ORDER BY started_at DESC LIMIT 1`
+  for exactly this reason — even errored runs surface.
+- **Six-hour default cadence.** Frequent enough to detect
+  tampering within a meaningful window, rare enough that even
+  a multi-million-event chain finishes well under one
+  interval (the walker is O(N) over events, the chain itself
+  is the bottleneck). Tunable per-environment via
+  `AUDIT_CHAIN_VERIFY_SECONDS`; dev overrides to seconds for
+  testing.
+- **Beat as its own container.** Mixing beat into a worker is
+  technically possible (`celery worker -B`) but every guide
+  warns it's a footgun: a worker restart loses scheduling, a
+  multi-worker fleet ends up with multiple beats. One
+  dedicated single-instance beat container is the
+  unambiguous shape.
+
+What's deferred:
+
+- **Run history page.** The DB has every run; the UI surfaces
+  only the latest. A "verification history" page (or a
+  filter on the audit log page for `audit.chain_verified` —
+  which already works) is out of scope; the current trust
+  signal is the freshness of *one* run.
+- **Operations alerting on tamper.** Right now a `tampered`
+  run only logs to ops via `logger.error` and surfaces on the
+  audit page. Paging on-call or filing a ticket should wire
+  through a notification service when one exists — the
+  detection is in place, the channel isn't.
+- **Beat-schedule dynamic config.** `AUDIT_CHAIN_VERIFY_SECONDS`
+  is read at startup. Changing the cadence requires a beat
+  restart. A django-celery-beat-style DB-backed schedule
+  would make this dynamic; deferred until a second
+  scheduled task lands and the env-var pattern starts to
+  feel restrictive.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -2471,7 +2641,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 299 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 311 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

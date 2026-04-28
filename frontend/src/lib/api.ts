@@ -182,6 +182,16 @@ export type AuditEventListResponse = {
   total: number;
 };
 
+export type LatestVerification = {
+  status: "ok" | "tampered" | "error";
+  ok: boolean;
+  events_verified: number;
+  source: "scheduled" | "manual";
+  started_at: string;
+  completed_at: string | null;
+  support_message: string;
+};
+
 export type ThroughputPoint = {
   date: string;
   day: string;
@@ -413,6 +423,10 @@ export const api = {
       tampering_detected: boolean;
       support_message: string;
     }>("/audit/verify/", { method: "POST" }),
+  latestAuditVerification: () =>
+    request<{ latest: LatestVerification | null }>("/audit/verify/last/").then(
+      (r) => r.latest,
+    ),
   getOrganization: () =>
     request<OrganizationDetail>("/identity/organization/"),
   updateOrganization: (updates: Partial<Record<keyof OrganizationDetail, string>>) =>

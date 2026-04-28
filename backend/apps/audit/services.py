@@ -30,7 +30,7 @@ from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from .chain import GENESIS_PREV_HASH, ChainIntegrityError, compute_hashes, verify_link
-from .models import AuditEvent
+from .models import AuditEvent, ChainVerificationRun
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +272,55 @@ def count_events_for_organization(*, organization_id: UUID | str) -> int:
     return AuditEvent.objects.filter(organization_id=organization_id).count()
 
 
+def _run_chain_verification(
+    *, source: ChainVerificationRun.Source
+) -> ChainVerificationRun:
+    """Execute one chain verification and record a ``ChainVerificationRun`` row.
+
+    Shared core for both the customer-triggered (manual) call and the
+    Celery beat task (scheduled). Returns the persisted run so the caller
+    can build any external response or audit shape it needs.
+
+    The run is recorded for *every* outcome — including ``error`` — so the
+    audit page can surface "we tried at T, it errored" rather than going
+    silent on infrastructure failures. ``error_detail`` is operational only
+    and never leaves the API server.
+    """
+    # Lazy import to avoid circular: tenancy reads from audit on init.
+    from apps.identity.tenancy import super_admin_context
+
+    run = ChainVerificationRun.objects.create(
+        status=ChainVerificationRun.Status.OK,  # provisional; overwritten before save
+        source=source,
+        events_verified=0,
+    )
+    try:
+        with super_admin_context(reason=f"audit.verify_chain:{source}"):
+            count = verify_chain()
+        run.status = ChainVerificationRun.Status.OK
+        run.events_verified = count
+    except ChainIntegrityError as exc:
+        run.status = ChainVerificationRun.Status.TAMPERED
+        run.events_verified = 0
+        run.error_detail = str(exc)
+        # Log to ops with the offending sequence so the team can investigate.
+        # The customer-facing path intentionally omits the sequence since it
+        # might point at another tenant's event.
+        logger.error("audit chain integrity check failed: %s", exc)
+    except Exception as exc:
+        # Anything non-tamper (DB unreachable, OOM, …) is recorded as ``error``
+        # rather than swallowed — silent failure on a trust surface is worse
+        # than an explicit "we couldn't run the check at T".
+        run.status = ChainVerificationRun.Status.ERROR
+        run.events_verified = 0
+        run.error_detail = f"{type(exc).__name__}: {exc}"
+        logger.exception("audit chain verification raised unexpectedly")
+    finally:
+        run.completed_at = timezone.now()
+        run.save(update_fields=["status", "events_verified", "error_detail", "completed_at"])
+    return run
+
+
 def verify_chain_for_visibility(
     *, organization_id: UUID | str, actor_user_id: UUID | str
 ) -> dict[str, Any]:
@@ -294,24 +343,14 @@ def verify_chain_for_visibility(
     organization-scoped to the requester. Same shape as every other
     customer-initiated action.
     """
-    # Lazy import to avoid circular: tenancy reads from audit on init.
-    from apps.identity.tenancy import super_admin_context
+    run = _run_chain_verification(source=ChainVerificationRun.Source.MANUAL)
+    ok = run.status == ChainVerificationRun.Status.OK
 
-    with super_admin_context(reason="audit.verify_chain:customer_request"):
-        try:
-            count = verify_chain()
-            ok = True
-        except ChainIntegrityError as exc:
-            count = 0
-            ok = False
-            # Log to ops with the offending sequence so the team can investigate.
-            # The customer-facing return below intentionally omits the sequence
-            # since it might point at another tenant's event.
-            logger.error("audit chain integrity check failed: %s", exc)
-
-    # Audit the verification act itself. Outside the elevation context so the
-    # event reads under normal RLS — the customer sees their own verify call
-    # in their own log.
+    # Audit the verification act itself under normal RLS so the customer
+    # sees their own verify call in their own log. ``error`` runs (e.g. DB
+    # transient) are surfaced as not-ok with the same generic message —
+    # the customer doesn't need to distinguish "tampered" from "couldn't
+    # run", both mean "ops needs to look at this".
     record_event(
         action_type="audit.chain_verified",
         actor_type=AuditEvent.ActorType.USER,
@@ -321,16 +360,77 @@ def verify_chain_for_visibility(
         affected_entity_id="",
         payload={
             "ok": ok,
-            "events_verified": count,
+            "events_verified": run.events_verified,
         },
     )
 
     return {
         "ok": ok,
-        "events_verified": count,
+        "events_verified": run.events_verified,
         # Generic message — never the underlying sequence number, which
         # could belong to another tenant.
-        "tampering_detected": not ok,
+        "tampering_detected": run.status == ChainVerificationRun.Status.TAMPERED,
+        "support_message": (
+            "All audit events verified — your chain is intact."
+            if ok
+            else "Chain integrity check failed. Operations has been alerted."
+        ),
+    }
+
+
+def run_scheduled_chain_verification() -> ChainVerificationRun:
+    """Background-task entry point.
+
+    Called by ``apps.audit.tasks.verify_audit_chain`` on the beat
+    schedule. Records a ``scheduled`` run and emits a system-level
+    audit event (``organization_id=NULL``, ``actor_type=service``)
+    so the verification activity itself is auditable.
+    """
+    run = _run_chain_verification(source=ChainVerificationRun.Source.SCHEDULED)
+    ok = run.status == ChainVerificationRun.Status.OK
+
+    # System-level event: no tenant, actor is the service. Operations sees
+    # these in cross-tenant queries; tenants don't see them in their log.
+    record_event(
+        action_type="audit.chain_verified",
+        actor_type=AuditEvent.ActorType.SERVICE,
+        actor_id="audit.verify_audit_chain",
+        organization_id=None,
+        affected_entity_type="AuditChain",
+        affected_entity_id="",
+        payload={
+            "ok": ok,
+            "events_verified": run.events_verified,
+            "source": "scheduled",
+        },
+    )
+    return run
+
+
+def latest_chain_verification() -> dict[str, Any] | None:
+    """Customer-facing view of the most recent verification run.
+
+    Returns ``None`` when no run has occurred yet (fresh deployment, no
+    beat tick since startup). Otherwise returns a redacted shape: status,
+    events_verified, when it ran, and a customer-safe message — never
+    ``error_detail`` (operational) or the offending sequence number
+    (cross-tenant).
+
+    Both manual and scheduled runs are visible in the same shape, so the
+    audit page can render "Last verified 12 minutes ago — all clean"
+    regardless of who triggered it.
+    """
+    run = ChainVerificationRun.objects.order_by("-started_at").first()
+    if run is None:
+        return None
+    ok = run.status == ChainVerificationRun.Status.OK
+    return {
+        "status": run.status,
+        "ok": ok,
+        "events_verified": run.events_verified,
+        "source": run.source,
+        "started_at": run.started_at.isoformat(),
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "support_message": (
             "All audit events verified — your chain is intact."
             if ok

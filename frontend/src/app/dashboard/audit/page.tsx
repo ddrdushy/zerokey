@@ -22,7 +22,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, ShieldAlert, ShieldCheck } from "lucide-react";
 
-import { api, ApiError, type AuditEvent } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  type AuditEvent,
+  type LatestVerification,
+} from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -47,6 +52,8 @@ export default function AuditLogPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
+  const [latestVerification, setLatestVerification] =
+    useState<LatestVerification | null>(null);
 
   // Load initial page + action-type filter list.
   useEffect(() => {
@@ -83,6 +90,15 @@ export default function AuditLogPage() {
       .listAuditActionTypes()
       .then(setActionTypes)
       .catch(() => setActionTypes([]));
+  }, []);
+
+  // Latest background verification — surfaces the "we last checked X minutes
+  // ago, you don't have to" trust signal even before the user clicks verify.
+  useEffect(() => {
+    api
+      .latestAuditVerification()
+      .then(setLatestVerification)
+      .catch(() => setLatestVerification(null));
   }, []);
 
   async function onLoadMore() {
@@ -127,6 +143,9 @@ export default function AuditLogPage() {
       });
       setEvents(fresh.results);
       setTotal(fresh.total);
+      // Manual run also writes a ChainVerificationRun row — refresh the
+      // "last verified" footer so it reflects the just-completed run.
+      api.latestAuditVerification().then(setLatestVerification).catch(() => {});
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed.");
     } finally {
@@ -155,6 +174,7 @@ export default function AuditLogPage() {
           <ChainStatus
             total={total}
             result={verifyResult}
+            latest={latestVerification}
             verifying={verifying}
             onVerify={onVerifyChain}
           />
@@ -208,26 +228,42 @@ export default function AuditLogPage() {
 function ChainStatus({
   total,
   result,
+  latest,
   verifying,
   onVerify,
 }: {
   total: number;
   result: VerifyResult | null;
+  latest: LatestVerification | null;
   verifying: boolean;
   onVerify: () => void;
 }) {
-  const verified = result?.ok === true;
-  const tampered = result?.ok === false;
+  // The "last verification" line collapses both interactive and scheduled
+  // runs into a single trust signal. Interactive (verifyResult) takes
+  // priority when present — the user just clicked, the freshest answer is
+  // theirs. Otherwise we surface whatever the background task last did,
+  // even if no human has clicked verify yet on this page load.
+  const interactiveVerified = result?.ok === true;
+  const interactiveTampered = result?.ok === false;
+  const backgroundOk = latest?.ok === true;
+  const backgroundFailed = latest && latest.ok === false;
 
-  // Tone: success after a clean verify, error after a tamper detection,
-  // muted-but-informative before any verify has been attempted.
+  const verified = interactiveVerified || (!result && backgroundOk);
+  const tampered = interactiveTampered || (!result && backgroundFailed);
+
   const Icon = tampered ? ShieldAlert : ShieldCheck;
   const containerCls = cn(
     "flex flex-col items-end gap-1 rounded-md px-3 py-1.5 text-2xs",
     verified && "bg-success/10 text-success",
     tampered && "bg-error/10 text-error",
-    !result && "bg-slate-100 text-slate-600",
+    !verified && !tampered && "bg-slate-100 text-slate-600",
   );
+
+  const footerLine = result
+    ? result.support_message
+    : latest
+      ? `Last verified ${formatRelative(latest.started_at)} · ${latest.source} run`
+      : "Background verification runs every six hours.";
 
   return (
     <div className="flex flex-col items-end gap-2">
@@ -237,11 +273,7 @@ function ChainStatus({
           <span className="font-medium">{total.toLocaleString()}</span>
           <span>event{total === 1 ? "" : "s"} on the chain</span>
         </span>
-        {result && (
-          <span className="text-[10px] opacity-80">
-            {result.support_message}
-          </span>
-        )}
+        <span className="text-[10px] opacity-80">{footerLine}</span>
       </div>
       <button
         type="button"
@@ -251,12 +283,29 @@ function ChainStatus({
       >
         {verifying
           ? "Verifying chain integrity…"
-          : result
-            ? "Re-verify"
+          : result || latest
+            ? "Re-verify now"
             : "Verify chain integrity"}
       </button>
     </div>
   );
+}
+
+function formatRelative(iso: string): string {
+  // Human-friendly relative time. The audit page surfaces "last verified
+  // X minutes/hours ago" rather than a raw timestamp because that's how
+  // operators reason about freshness ("recent" / "stale").
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "recently";
+  const diffMs = Date.now() - then;
+  const diffSec = Math.max(0, Math.round(diffMs / 1000));
+  if (diffSec < 60) return "just now";
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} minute${diffMin === 1 ? "" : "s"} ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? "" : "s"} ago`;
+  const diffDay = Math.round(diffHr / 24);
+  return `${diffDay} day${diffDay === 1 ? "" : "s"} ago`;
 }
 
 function FilterBar({

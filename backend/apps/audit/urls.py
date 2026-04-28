@@ -9,4 +9,5 @@ urlpatterns = [
     path("events/", views.list_events, name="list-events"),
     path("action-types/", views.list_action_types, name="list-action-types"),
     path("verify/", views.verify_chain_view, name="verify-chain"),
+    path("verify/last/", views.latest_verification_view, name="latest-verification"),
 ]
