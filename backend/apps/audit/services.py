@@ -214,6 +214,61 @@ def _daily_sparkline(
     return series
 
 
+def list_events_for_organization(
+    *,
+    organization_id: UUID | str,
+    action_type: str | None = None,
+    limit: int = 50,
+    before_sequence: int | None = None,
+) -> list[AuditEvent]:
+    """List audit events for an organization, newest first.
+
+    Used by the customer-facing audit log page. Tenant-scoped — RLS
+    belt-and-suspenders. ``action_type`` filters by exact match; the
+    UI's "all" filter passes ``None``. ``before_sequence`` is the
+    pagination cursor (each page returns events strictly older than
+    the last-seen sequence number).
+
+    Pagination via sequence number rather than offset keeps the
+    query cheap as the log grows: the index on
+    ``(organization, sequence)`` makes both filters point lookups.
+    """
+    qs = AuditEvent.objects.filter(organization_id=organization_id)
+    if action_type:
+        qs = qs.filter(action_type=action_type)
+    if before_sequence is not None:
+        qs = qs.filter(sequence__lt=before_sequence)
+    return list(qs.order_by("-sequence")[:limit])
+
+
+def list_action_types_for_organization(
+    *, organization_id: UUID | str
+) -> list[str]:
+    """Distinct action types present on the org's audit log.
+
+    Drives the filter dropdown on the audit log page so the user only
+    sees codes that actually appear in their data. Sorted alphabetically
+    so the dropdown order is stable.
+
+    The ``order_by()`` clearing matters: AuditEvent's default
+    ``Meta.ordering = ["sequence"]`` would otherwise add sequence to the
+    SELECT column list and defeat ``DISTINCT`` (every row's sequence is
+    unique, so every action_type would appear once per row that emitted
+    it). Explicit no-ordering query.
+    """
+    return sorted(
+        AuditEvent.objects.filter(organization_id=organization_id)
+        .order_by()
+        .values_list("action_type", flat=True)
+        .distinct()
+    )
+
+
+def count_events_for_organization(*, organization_id: UUID | str) -> int:
+    """Total event count for the org. Renders as a context strip on the page."""
+    return AuditEvent.objects.filter(organization_id=organization_id).count()
+
+
 def verify_chain() -> int:
     """Re-hash every event in order and confirm the chain is intact.
 

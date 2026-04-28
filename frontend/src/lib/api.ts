@@ -134,6 +134,26 @@ export type AuditStats = {
   sparkline: Array<{ date: string; count: number }>;
 };
 
+export type AuditEvent = {
+  id: string;
+  sequence: number;
+  timestamp: string;
+  actor_type: string;
+  actor_id: string;
+  action_type: string;
+  affected_entity_type: string;
+  affected_entity_id: string;
+  payload: Record<string, unknown>;
+  payload_schema_version: number;
+  content_hash: string;
+  chain_hash: string;
+};
+
+export type AuditEventListResponse = {
+  results: AuditEvent[];
+  total: number;
+};
+
 export type ThroughputPoint = {
   date: string;
   day: string;
@@ -248,6 +268,23 @@ export const api = {
   getJob: (id: string) => request<IngestionJob>(`/ingestion/jobs/${id}/`),
   getInvoiceForJob: (jobId: string) => request<Invoice>(`/invoices/by-job/${jobId}/`),
   auditStats: () => request<AuditStats>("/audit/stats/"),
+  listAuditEvents: (params?: {
+    actionType?: string;
+    limit?: number;
+    beforeSequence?: number;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.actionType) search.set("action_type", params.actionType);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.beforeSequence !== undefined)
+      search.set("before_sequence", String(params.beforeSequence));
+    const qs = search.toString();
+    return request<AuditEventListResponse>(
+      `/audit/events/${qs ? `?${qs}` : ""}`,
+    );
+  },
+  listAuditActionTypes: () =>
+    request<{ results: string[] }>("/audit/action-types/").then((r) => r.results),
   throughput: (days = 7) => request<Throughput>(`/ingestion/throughput/?days=${days}`),
   updateInvoice: (id: string, updates: Record<string, string | null>) =>
     request<Invoice>(`/invoices/${id}/`, {

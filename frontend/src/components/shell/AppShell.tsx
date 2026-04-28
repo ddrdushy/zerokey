@@ -51,7 +51,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Compliance",
     items: [
-      { label: "Audit log", href: "/dashboard/audit", icon: ShieldCheck, disabled: true },
+      { label: "Audit log", href: "/dashboard/audit", icon: ShieldCheck },
       { label: "Engine activity", href: "/dashboard/engines", icon: Sparkles, disabled: true },
     ],
   },

@@ -1532,6 +1532,136 @@ What's deferred:
   rename-via-TIN-edit case in Slice 14 doesn't currently produce
   these in practice but a deliberate merge surface is worth having.
 
+### Slice 20 — Audit log page
+
+Surfaces ZeroKey's most distinctive technical claim — the immutable,
+hash-chained audit log — to the user. Every business-meaningful action
+has been producing events since Slice 2; this slice is the operator +
+compliance-officer surface for browsing them. The chain itself was
+already trustworthy; what changed is that customers can now SEE it.
+
+Backend:
+
+- **`GET /api/v1/audit/events/`** — paginated list, scoped to active
+  org, newest-first. Filters: `?action_type=<exact match>` + cursor-
+  based pagination via `?before_sequence=<n>` (each page returns
+  events strictly older than the cursor). The cursor approach keeps
+  queries to point lookups on the `(organization, sequence)` index
+  as the log grows. `limit` clamped to 1–200.
+- **`GET /api/v1/audit/action-types/`** — distinct action types
+  present on the org's log, sorted alphabetically. Powers the
+  filter dropdown so users only see codes that actually appear in
+  their data.
+- **`AuditEventSerializer`** exposes the full row including
+  `content_hash` and `chain_hash` as hex strings (the model stores
+  them as raw bytes; hex is the presentation form for the
+  "technical details" expandable). Read-only by design — the audit
+  table is append-only at the application layer (model.save / .delete
+  refuse) and at the database layer (RLS revokes UPDATE/DELETE from
+  the app role).
+- **Service helper distinct() ordering bug fix**: AuditEvent's
+  default `Meta.ordering = ["sequence"]` would otherwise add
+  sequence to the SELECT column list and defeat `DISTINCT` (every
+  row's sequence is unique → every action_type returns once per
+  emission). The fix is `.order_by()` to clear the default before
+  `.values_list().distinct()`. Documented inline so the next
+  reader doesn't reintroduce the bug.
+
+Frontend:
+
+- **`/dashboard/audit`** — table view with sequence, timestamp,
+  action (rendered as inline code), actor (type:id), affected
+  entity (type:id). Each row expands inline to reveal the JSON
+  payload + a "Technical details · hash chain" disclosure
+  containing schema version, sequence, content_hash, chain_hash.
+  Pagination via "Load more" using the sequence cursor.
+- **Chain badge** at the top right: a Signal-success-tinted pill
+  with a shield icon and the live event count
+  ("14 events on the chain"). Lightweight, calm, but visually
+  signals "this is on the immutable chain" without making a
+  marketing claim.
+- **Filter dropdown** is populated from
+  `listAuditActionTypes()` so only present codes appear; "All
+  actions" is the default option, "Clear filter" link reset.
+- **Empty state** speaks in opportunity ("Audit events appear here
+  as soon as anything happens — sign-ins, uploads, validation,
+  edits. Every event is hash-chained and immutable.") per
+  UX_PRINCIPLES principle 7.
+- **Sidebar**: `Audit log` drops the `soon` badge, becomes a real
+  link.
+
+Tests: 11 new (231 passing total). Service-level: list returns
+org events newest-first, action_type filter is exact match,
+before_sequence cursor paginates correctly, cross-tenant rows
+(including system events with `organization_id IS NULL`) are NOT
+returned, action-types service returns sorted distinct codes.
+Endpoint-level: GET returns results + total + hex-encoded hashes,
+action_type filter via query param, limit clamping, invalid limit
+400, unauth rejected, action-types endpoint returns the list.
+
+Verified live with Playwright: signed up fresh, dropped the
+synthetic PDF, navigated to /dashboard/audit. The page rendered
+14 events from the full upload pipeline:
+`identity.user.registered` →
+`identity.organization.created` →
+`identity.membership.created` →
+`auth.login_success` →
+`ingestion.job.received` →
+`ingestion.job.state_changed` →
+`ingestion.job.vision_escalation_started` →
+`ingestion.job.vision_escalation_skipped` →
+`ingestion.job.extracted` →
+`invoice.created` →
+`invoice.structuring_skipped` →
+`invoice.enriched` →
+`invoice.validated`. Chain badge showed "14 events on the chain".
+Action-type filter narrowed to 1 row when set to
+`ingestion.job.received`. Row expansion revealed the JSON payload
+and the hex content/chain hashes.
+
+Durable design decisions:
+
+- **Cursor pagination over offset.** As the audit log grows, an
+  offset query gets progressively more expensive. The
+  `(organization, sequence)` index makes cursor-based lookups
+  point queries forever. The frontend's "Load more" pattern uses
+  the last-seen sequence as the cursor.
+- **Hex hashes in the API.** The model stores raw bytes for byte-
+  exact hashing math; the API exposes hex because that's what
+  reads correctly in a "technical details" disclosure. The
+  conversion is unidirectional — the API never accepts a hash
+  from the client (it can't, the audit log is read-only).
+- **Filter dropdown reads from the data, not a static list.**
+  Keeps the dropdown honest: only codes the user has actually
+  produced are selectable. New codes ship live without needing a
+  frontend update.
+- **System events (`organization_id IS NULL`) excluded** from the
+  customer-facing list. Platform housekeeping (nightly
+  verifications, etc.) belongs in an internal ops surface, not
+  in the customer's tenant view.
+- **Append-only is enforced at every layer.** Model rejects save
+  on existing rows + rejects delete; RLS revokes UPDATE/DELETE
+  from the app role; serializer is read-only fields. The
+  customer surface inherits all three by default — the page has
+  no edit affordance because there was never a write path.
+
+What's deferred:
+
+- **Verify-chain endpoint**. `verify_chain()` exists as a service-
+  level function (Slice 2); a customer-facing
+  `POST /api/v1/audit/verify/` returning "all N events verify" or
+  "tampering detected at sequence X" is the natural follow-up. A
+  green/red indicator on the audit page is the obvious UI.
+- **Date-range filter.** action_type is the most commonly used
+  filter; date range (e.g. "events in the last 24h") waits until
+  the log is large enough for time-bucketing to matter.
+- **Search across payload contents.** Implementable with a GIN
+  index on the JSON column; valuable for support investigations
+  ("show me events that mention this UUID"). Phase 5 territory.
+- **CSV / JSONL export** of the chain. The
+  `AuditExport` model in DATA_MODEL.md anticipates this — itself
+  audit-logged. Phase 6 compliance work.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -1615,7 +1745,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 220 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 231 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -1698,6 +1828,11 @@ Coverage:
   canonical + alias) when master has no TIN; cross-tenant 404; empty
   list for master with no invoices; unauth rejected; compact
   serializer field set pinned.
+- Audit log surface — list scoped to active org, newest-first;
+  action_type filter (exact match); cursor pagination via
+  before_sequence; cross-tenant + system events excluded; sorted
+  distinct action types for the dropdown; hex-encoded hashes
+  serialized; limit clamping + invalid-input 400; unauth rejected.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -1730,8 +1865,8 @@ Ordered roughly by Phase 2/3 priority:
    `contact_phone`, `registered_address` are plain text in dev. Same
    KMS dependency as the runtime-config encryption (Slice 10).
 8. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
-   Invoices, Audit log, Engine activity, Settings. (Customers
-   shipped in Slice 16.)
+   Invoices, Engine activity, Settings. (Customers shipped in
+   Slice 16; Audit log shipped in Slice 20.)
 9. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
    can wrap the existing `make test` + frontend lint/build.
 
