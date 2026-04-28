@@ -29,19 +29,34 @@ from django.utils import timezone
 from .chain import GENESIS_PREV_HASH, ChainIntegrityError, compute_hashes, verify_link
 from .models import AuditEvent
 
-_AUDIT_ADVISORY_LOCK_ID = 0x7A65726F6B6579  # ASCII "zerokey"
-
-
-def _acquire_advisory_lock() -> None:
-    if connection.vendor != "postgresql":
-        return
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT pg_advisory_xact_lock(%s);", [_AUDIT_ADVISORY_LOCK_ID])
-
 
 def _next_sequence() -> int:
-    last = AuditEvent.objects.order_by("-sequence").values_list("sequence", flat=True).first()
-    return 1 if last is None else last + 1
+    """Atomically reserve the next gap-free sequence number.
+
+    On PostgreSQL we keep a dedicated single-row counter and increment it via
+    ``UPDATE … RETURNING``. Postgres serializes concurrent UPDATEs on the same
+    row through MVCC row locks — no advisory lock needed, no race window
+    between SELECT and INSERT. Inside the caller's ``transaction.atomic()``
+    block, a rollback unwinds the increment alongside the audit row insert,
+    so gap-free is preserved.
+
+    On SQLite (test db) we fall back to ``max + 1`` since SQLite tests are
+    single-threaded.
+    """
+    if connection.vendor != "postgresql":
+        last = AuditEvent.objects.order_by("-sequence").values_list("sequence", flat=True).first()
+        return 1 if last is None else last + 1
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO audit_sequence (id, value)
+            VALUES (1, 1)
+            ON CONFLICT (id) DO UPDATE SET value = audit_sequence.value + 1
+            RETURNING value;
+            """
+        )
+        return int(cursor.fetchone()[0])
 
 
 def _previous_chain_hash() -> bytes:
@@ -74,8 +89,6 @@ def record_event(
     actor = AuditEvent.ActorType(actor_type) if isinstance(actor_type, str) else actor_type
 
     with transaction.atomic():
-        _acquire_advisory_lock()
-
         sequence = _next_sequence()
         previous_chain_hash = _previous_chain_hash()
 
