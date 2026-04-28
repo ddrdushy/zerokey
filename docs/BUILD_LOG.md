@@ -2807,6 +2807,113 @@ What's deferred:
 
 ---
 
+### Slice 30 — Line-items-aware structuring prompt
+
+The Slice 29 live test surfaced a real bug: the Telekom invoice
+populated 11 header fields but **zero line items**, even though
+the actual PDF clearly shows two charges. The prompt was the bug
+— it told the model "all values are extracted strings", so when
+the model saw `line_items` in the schema it returned an empty
+string instead of an array. This slice fixes the prompt and
+locks the new behaviour in tests.
+
+Backend:
+
+- **`apps.extraction.prompts.build_field_structure_prompt`** —
+  shared prompt builder consumed by both Ollama and Claude
+  adapters. Splits the schema into header fields (string values)
+  and the `line_items` structured key (JSON array with its own
+  documented sub-schema). The line-item sub-schema (description,
+  quantity, unit_of_measurement, unit_price_excl_tax,
+  line_subtotal_excl_tax, tax_type_code, tax_rate, tax_amount,
+  line_total_incl_tax, classification_code) lives in the same
+  module so adapters and tests share one source of truth.
+- **`OllamaFieldStructureAdapter`** + **`ClaudeFieldStructureAdapter`**
+  + **`ClaudeVisionAdapter`** all now call the shared builder.
+  Inline prompt strings deleted; the only adapter-specific bit
+  is *how* the prompt is wrapped (text-only HTTP body for
+  Ollama, mixed document+text content blocks for Claude).
+- **`max_tokens` bumped 2048 → 4096** on the Claude paths so a
+  long invoice with many line items doesn't get truncated. Ollama
+  has no max_tokens cap by default, so it picks up the longer
+  output naturally.
+- **JSON-payload parsing**: both adapters now keep `line_items`
+  as a parsed list internally, JSON-encode it back to a string
+  on the way out so the `StructuredExtractResult.fields:
+  dict[str, str]` contract is preserved. The receiver
+  (`submission._materialise_line_items`) handles both
+  "raw is the list" and "raw is a JSON-encoded string" — keeping
+  the list intact while in-flight saves a round-trip.
+- **Confidence heuristic refined**: `"[]"` and `"{}"` (the
+  JSON-encoded empty list / empty dict) are treated as
+  "not populated" so a model that returned an empty array for
+  line_items doesn't fraudulently get scored 0.85.
+
+Tests: 4 new (324 passing total, was 320). The prompt builder
+tests pin down the contract without coupling to exact wording:
+flat fields are listed; `line_items` is announced as a JSON
+array with documented sub-fields when present; the section is
+omitted when not in schema; the prompt asks for clean JSON
+(no prose, no fences). Existing adapter tests pass unchanged
+since they mock httpx and don't assert on the prompt body.
+
+Verified live: re-uploaded `invoice 5.pdf` (Telekom Malaysia)
+with the new prompt + worker restart. Line items populated:
+
+| # | Description       | Qty    | Unit Price | Tax  | Total  |
+|---|-------------------|--------|------------|------|--------|
+| 1 | Business High Sp… | 1.0000 | 109.00     | 6.54 | 115.54 |
+| 2 | Business Voice :… | 1.0000 | 30.00      | 1.80 | 31.80  |
+
+Sum 147.34 vs grand total 147.35 — one-cent rounding consistent
+with Telekom's own breakdown. Validation went 4 errors → 3
+errors as the "needs at least one line item" issue cleared. The
+remaining 3/2 are real LHDN compliance issues (currency code
+"RM" vs "MYR", missing supplier/buyer TIN on a 2022-era
+Telekom invoice, due-date-in-the-past warning) — exactly what
+they should be.
+
+Durable design decisions:
+
+- **Prompt is a shared contract, not adapter trivia.** The
+  service decides the schema; the adapters decide how to ask
+  models. Putting the prompt in `apps.extraction.prompts`
+  rather than inlining it in each adapter means a schema
+  change (add/remove a field, refine `line_items` sub-keys)
+  edits one file and every model sees the consistent ask.
+- **Sub-schema lives next to the prompt, not imported from
+  submission.** Cross-context imports are forbidden; even a
+  documentation-only shared list of line-item field names
+  goes through the bounded-context boundary. The prompt
+  module owns its own copy and the test pins drift if the
+  two ever diverge.
+- **The vision prompt reuses the structuring builder.** Vision
+  inputs (image / PDF document block) provide the source
+  document; the schema + instruction layer is identical to
+  text structuring. The builder takes a `text=` argument that
+  the vision path stuffs with `"(see attached document)"` —
+  one builder, both paths, no drift.
+- **`"[]"` is not populated.** A model returning an empty
+  array for line items is a real outcome (single-line invoice
+  with everything in totals, etc.) but it shouldn't score the
+  same as "we successfully extracted three line items". The
+  confidence heuristic now demotes empty containers to 0.0,
+  so the per-field confidence dot in the UI stays honest.
+
+What's deferred:
+
+- **More structured keys.** Future LHDN fields like
+  `allowances` or `discount_breakdown` will follow the
+  same pattern — branch in `prompts.py`, no adapter touch
+  required.
+- **Per-line confidence.** Today `line_items` gets one overall
+  0.85 / 0.0 score. Per-line confidence would need either the
+  model returning it explicitly (most don't) or a calibrated
+  validator (e.g. line-total-equals-quantity-times-unit-price
+  → high confidence). Phase 5 polish.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -2888,7 +2995,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 320 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 324 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

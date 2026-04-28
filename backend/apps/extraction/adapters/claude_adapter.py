@@ -30,6 +30,7 @@ from apps.extraction.capabilities import (
     VisionExtractEngine,
 )
 from apps.extraction.credentials import require_engine_credential
+from apps.extraction.prompts import build_field_structure_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,14 @@ def _client(*, engine_name: str):
 
 
 def _parse_json_payload(text: str) -> dict[str, str]:
-    """Models occasionally wrap JSON in prose or fences; strip both."""
+    """Models occasionally wrap JSON in prose or fences; strip both.
+
+    Header fields come back as strings; ``line_items`` comes back as a
+    list of dicts. We flatten to ``dict[str, str]`` per the
+    StructuredExtractResult contract by JSON-encoding the list back into
+    a string — the receiver
+    (``submission.services._materialise_line_items``) parses it.
+    """
     text = text.strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -76,9 +84,17 @@ def _parse_json_payload(text: str) -> dict[str, str]:
         parsed = json.loads(text)
     except json.JSONDecodeError:
         return {}
-    if isinstance(parsed, dict):
-        return {str(k): str(v) for k, v in parsed.items()}
-    return {}
+    if not isinstance(parsed, dict):
+        return {}
+    flat: dict[str, str] = {}
+    for k, v in parsed.items():
+        if v is None:
+            flat[str(k)] = ""
+        elif isinstance(v, (list, dict)):
+            flat[str(k)] = json.dumps(v)
+        else:
+            flat[str(k)] = str(v)
+    return flat
 
 
 _IMAGE_MIME_PREFIX = "image/"
@@ -120,27 +136,23 @@ class ClaudeVisionAdapter(VisionExtractEngine):
         client = _client(engine_name=self.name)
 
         document_block = _document_block(body=body, mime_type=mime_type)
-        schema_list = "\n".join(f"- {f}" for f in target_schema)
+        # Vision and text-structure share the same target schema, so the
+        # text prompt builder works here too — we just stuff a placeholder
+        # string for the "invoice text" section since the document is
+        # passed via the binary block instead.
+        text_prompt = build_field_structure_prompt(
+            text="(see attached document)", target_schema=target_schema
+        )
 
         message = client.messages.create(
             model=DEFAULT_MODEL,
-            max_tokens=2048,
+            max_tokens=4096,
             messages=[
                 {
                     "role": "user",
                     "content": [
                         document_block,
-                        {
-                            "type": "text",
-                            "text": (
-                                "You are extracting fields from a Malaysian invoice for "
-                                "LHDN MyInvois submission. Return a single JSON object whose "
-                                "keys are exactly the field names below and whose values are "
-                                "extracted strings. If a field is absent, use an empty string.\n\n"
-                                f"Fields:\n{schema_list}\n\n"
-                                "Respond with the JSON object only, no prose."
-                            ),
-                        },
+                        {"type": "text", "text": text_prompt},
                     ],
                 }
             ],
@@ -150,9 +162,17 @@ class ClaudeVisionAdapter(VisionExtractEngine):
         raw = "\n".join(text_blocks)
         fields = _parse_json_payload(raw)
 
-        # Per-field confidence: not provided by the API; we treat
-        # populated-and-non-empty as 0.85, missing as 0.0.
-        per_field_confidence = {f: (0.85 if fields.get(f) else 0.0) for f in target_schema}
+        # Confidence: same heuristic as the structuring path; "[]" is the
+        # JSON-encoded empty list of line items, which should NOT count.
+        def _populated(field: str) -> bool:
+            value = fields.get(field, "")
+            if not value:
+                return False
+            if value in ("[]", "{}"):
+                return False
+            return True
+
+        per_field_confidence = {f: (0.85 if _populated(f) else 0.0) for f in target_schema}
         overall = sum(per_field_confidence.values()) / max(len(per_field_confidence), 1)
 
         return StructuredExtractResult(
@@ -174,22 +194,15 @@ class ClaudeFieldStructureAdapter(FieldStructureEngine):
 
     def structure_fields(self, *, text: str, target_schema: list[str]) -> StructuredExtractResult:
         client = _client(engine_name=self.name)
-        schema_list = "\n".join(f"- {f}" for f in target_schema)
 
         message = client.messages.create(
             model=DEFAULT_MODEL,
-            max_tokens=2048,
+            max_tokens=4096,
             messages=[
                 {
                     "role": "user",
-                    "content": (
-                        "You are structuring extracted text from a Malaysian invoice for "
-                        "LHDN MyInvois submission. Return a single JSON object whose keys "
-                        "are exactly the field names below and whose values are extracted "
-                        "strings. If a field is absent, use an empty string.\n\n"
-                        f"Fields:\n{schema_list}\n\n"
-                        f"Invoice text:\n---\n{text}\n---\n\n"
-                        "Respond with the JSON object only, no prose."
+                    "content": build_field_structure_prompt(
+                        text=text, target_schema=target_schema
                     ),
                 }
             ],
@@ -199,7 +212,18 @@ class ClaudeFieldStructureAdapter(FieldStructureEngine):
         raw = "\n".join(text_blocks)
         fields = _parse_json_payload(raw)
 
-        per_field_confidence = {f: (0.85 if fields.get(f) else 0.0) for f in target_schema}
+        # Confidence: 0.85 if populated. The flat dict has line_items as a
+        # JSON-encoded string; "[]" is two chars and would naively count as
+        # populated. Detect and demote to 0.0.
+        def _populated(field: str) -> bool:
+            value = fields.get(field, "")
+            if not value:
+                return False
+            if value in ("[]", "{}"):
+                return False
+            return True
+
+        per_field_confidence = {f: (0.85 if _populated(f) else 0.0) for f in target_schema}
         overall = sum(per_field_confidence.values()) / max(len(per_field_confidence), 1)
 
         return StructuredExtractResult(

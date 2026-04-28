@@ -44,6 +44,7 @@ from apps.extraction.capabilities import (
     StructuredExtractResult,
 )
 from apps.extraction.credentials import engine_credential, require_engine_credential
+from apps.extraction.prompts import build_field_structure_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +97,16 @@ def _resolve_config(*, engine_name: str) -> tuple[str, str | None, str]:
     return host.rstrip("/"), api_key, model
 
 
-def _parse_json_payload(text: str) -> dict[str, str]:
-    """Strip code fences then JSON-load; flatten to ``{str: str}``."""
+def _parse_json_payload(text: str) -> dict[str, Any]:
+    """Strip code fences then JSON-load. Returns the dict as-is.
+
+    Header fields come back as strings; ``line_items`` comes back as a
+    list of dicts. The downstream materialiser
+    (``submission.services._materialise_line_items``) handles both
+    "raw is the list" and "raw is a JSON-encoded string" — keeping the
+    list intact here avoids a needless string-round-trip on the happy
+    path.
+    """
     text = text.strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -109,31 +118,7 @@ def _parse_json_payload(text: str) -> dict[str, str]:
         return {}
     if not isinstance(parsed, dict):
         return {}
-    flat: dict[str, str] = {}
-    for k, v in parsed.items():
-        if v is None:
-            flat[str(k)] = ""
-        elif isinstance(v, (dict, list)):
-            # Nested structures aren't part of our schema; flatten to JSON
-            # text so the caller can still see what the model returned and
-            # the pipeline doesn't blow up.
-            flat[str(k)] = json.dumps(v)
-        else:
-            flat[str(k)] = str(v)
-    return flat
-
-
-def _build_prompt(*, text: str, target_schema: list[str]) -> str:
-    schema_list = "\n".join(f"- {f}" for f in target_schema)
-    return (
-        "You are structuring extracted text from a Malaysian invoice for "
-        "LHDN MyInvois submission. Return a single JSON object whose keys "
-        "are exactly the field names below and whose values are extracted "
-        "strings. If a field is absent, use an empty string.\n\n"
-        f"Fields:\n{schema_list}\n\n"
-        f"Invoice text:\n---\n{text}\n---\n\n"
-        "Respond with the JSON object only, no prose."
-    )
+    return parsed
 
 
 class OllamaFieldStructureAdapter(FieldStructureEngine):
@@ -166,7 +151,9 @@ class OllamaFieldStructureAdapter(FieldStructureEngine):
             "messages": [
                 {
                     "role": "user",
-                    "content": _build_prompt(text=text, target_schema=target_schema),
+                    "content": build_field_structure_prompt(
+                        text=text, target_schema=target_schema
+                    ),
                 }
             ],
             "stream": False,
@@ -200,15 +187,39 @@ class OllamaFieldStructureAdapter(FieldStructureEngine):
             raise EngineUnavailable("Ollama response was not JSON") from exc
 
         message = envelope.get("message") or {}
-        raw = str(message.get("content") or "")
-        fields = _parse_json_payload(raw)
+        raw_envelope = str(message.get("content") or "")
+        parsed = _parse_json_payload(raw_envelope)
 
-        # Per-field confidence: Ollama doesn't expose calibrated logprobs in
-        # the chat API, so we use the same populated-as-0.85 / missing-as-0
-        # heuristic the Claude adapter uses. Calibration tables land later
-        # per ENGINE_REGISTRY.md.
+        # Flatten to ``dict[str, str]`` per the StructuredExtractResult
+        # contract. ``line_items`` is the one structured key — it comes
+        # back as a list of dicts; we JSON-encode it so the receiver
+        # (``submission._materialise_line_items``) can parse it back. The
+        # alternative — widening the contract to ``dict[str, Any]`` —
+        # would force every consumer to type-check on every field; this
+        # one indirection is cheaper.
+        fields: dict[str, str] = {}
+        for key, value in parsed.items():
+            if value is None:
+                fields[str(key)] = ""
+            elif isinstance(value, (list, dict)):
+                fields[str(key)] = json.dumps(value)
+            else:
+                fields[str(key)] = str(value)
+
+        # Per-field confidence: 0.85 if the model populated the field with
+        # something non-empty, 0.0 otherwise. For ``line_items`` "non-empty"
+        # means the parsed list had at least one entry — a JSON string of
+        # ``"[]"`` should NOT count as confident.
+        def _is_populated(key: str) -> bool:
+            value = parsed.get(key)
+            if value is None or value == "":
+                return False
+            if isinstance(value, (list, dict)):
+                return len(value) > 0
+            return True
+
         per_field_confidence = {
-            f: (0.85 if fields.get(f) else 0.0) for f in target_schema
+            f: (0.85 if _is_populated(f) else 0.0) for f in target_schema
         }
         overall = sum(per_field_confidence.values()) / max(len(per_field_confidence), 1)
 
