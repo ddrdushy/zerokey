@@ -28,7 +28,7 @@ from django.utils import timezone
 from apps.audit.models import AuditEvent
 from apps.audit.services import record_event
 
-from .models import ExceptionInboxItem, Invoice, LineItem
+from .models import ExceptionInboxItem, ExtractionCorrection, Invoice, LineItem
 
 logger = logging.getLogger(__name__)
 
@@ -538,21 +538,42 @@ def update_invoice(
 
     invoice = Invoice.objects.get(organization_id=organization_id, id=invoice_id)
 
+    # ExtractionCorrection rows we accumulate during the update — one
+    # per (field, original, corrected) triple. Persisted as a bulk
+    # insert at the end so a partial save doesn't half-stamp the
+    # training-data table.
+    correction_rows: list[ExtractionCorrection] = []
+
     changed_header: list[str] = []
     for field_name, raw_value in updates.items():
         coerced = _coerce_field(invoice, field_name, raw_value)
         previous = getattr(invoice, field_name)
         if previous == coerced:
             continue
+        correction_rows.append(
+            _build_correction(
+                invoice=invoice,
+                field_name=field_name,
+                original=previous,
+                corrected=coerced,
+                actor_user_id=actor_user_id,
+            )
+        )
         setattr(invoice, field_name, coerced)
         changed_header.append(field_name)
 
     # Apply structural changes first (remove, then add) so cell edits
     # see the post-add line set. Removes-before-adds means "I deleted
     # line 1 and added a new one" doesn't accidentally remove the new line.
-    removed_numbers = _apply_line_item_removes(invoice, remove_payload)
-    added_numbers = _apply_line_item_adds(invoice, add_payload)
-    changed_lines = _apply_line_item_updates(invoice, line_items_payload)
+    removed_numbers = _apply_line_item_removes(
+        invoice, remove_payload, correction_rows=correction_rows, actor_user_id=actor_user_id
+    )
+    added_numbers = _apply_line_item_adds(
+        invoice, add_payload, correction_rows=correction_rows, actor_user_id=actor_user_id
+    )
+    changed_lines = _apply_line_item_updates(
+        invoice, line_items_payload, correction_rows=correction_rows, actor_user_id=actor_user_id
+    )
 
     if not (
         changed_header
@@ -574,6 +595,12 @@ def update_invoice(
             confidence[field_name] = 1.0
         invoice.per_field_confidence = confidence
         invoice.save()
+
+    # Persist the training-data rows. One bulk insert per update; if the
+    # transaction rolls back upstream the rows roll back too, so the
+    # training table never disagrees with the invoice's actual state.
+    if correction_rows:
+        ExtractionCorrection.objects.bulk_create(correction_rows)
 
     record_event(
         action_type="invoice.updated",
@@ -610,6 +637,55 @@ def update_invoice(
         added_line_numbers=added_numbers,
         removed_line_numbers=removed_numbers,
     )
+
+
+def _build_correction(
+    *,
+    invoice: Invoice,
+    field_name: str,
+    original: Any,
+    corrected: Any,
+    actor_user_id: UUID | str | None,
+) -> ExtractionCorrection:
+    """Build an unsaved ``ExtractionCorrection`` from before+after values.
+
+    JSON-encodes both values so the type information survives — a
+    Decimal "100.00" round-trips as the string "100.00", a dict
+    snapshot of a removed line round-trips as a dict. This lets a
+    future analytics consumer distinguish "user typed 100.00 over a
+    blank" from "user typed 100.00 over a Decimal", which matters for
+    per-engine accuracy attribution.
+    """
+    return ExtractionCorrection(
+        organization_id=invoice.organization_id,
+        invoice=invoice,
+        field_name=field_name[:128],
+        original_value=_jsonify_value(original),
+        corrected_value=_jsonify_value(corrected),
+        extracted_by_engine=invoice.structuring_engine or "",
+        user_id=actor_user_id if actor_user_id else None,
+    )
+
+
+def _jsonify_value(value: Any) -> str:
+    """Serialise a value for ``ExtractionCorrection.original_value`` /
+    ``corrected_value``.
+
+    Decimals → JSON strings (preserving precision); date / datetime →
+    ISO strings; dict / list → ``json.dumps``; everything else → str().
+    Empty string for None to keep the column non-null.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if hasattr(value, "to_eng_string"):  # Decimal
+        return str(value)
+    if hasattr(value, "isoformat"):  # date / datetime
+        return value.isoformat()
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, default=str, sort_keys=True)
+    return str(value)
 
 
 def _coerce_field(invoice: Invoice, field_name: str, raw_value: Any) -> Any:
@@ -715,7 +791,11 @@ def _propagate_corrections_to_master(invoice: Invoice, changed: list[str]) -> No
 
 
 def _apply_line_item_updates(
-    invoice: Invoice, payload: Any
+    invoice: Invoice,
+    payload: Any,
+    *,
+    correction_rows: list[ExtractionCorrection] | None = None,
+    actor_user_id: UUID | str | None = None,
 ) -> list[dict[str, Any]]:
     """Apply user edits to LineItems addressed by ``line_number``.
 
@@ -773,6 +853,16 @@ def _apply_line_item_updates(
             previous = getattr(line, field_name)
             if previous == coerced:
                 continue
+            if correction_rows is not None:
+                correction_rows.append(
+                    _build_correction(
+                        invoice=invoice,
+                        field_name=f"line_items[{line_number}].{field_name}",
+                        original=previous,
+                        corrected=coerced,
+                        actor_user_id=actor_user_id,
+                    )
+                )
             setattr(line, field_name, coerced)
             changed_for_line.append(field_name)
 
@@ -797,7 +887,13 @@ def _apply_line_item_updates(
     return changed_summaries
 
 
-def _apply_line_item_removes(invoice: Invoice, payload: Any) -> list[int]:
+def _apply_line_item_removes(
+    invoice: Invoice,
+    payload: Any,
+    *,
+    correction_rows: list[ExtractionCorrection] | None = None,
+    actor_user_id: UUID | str | None = None,
+) -> list[int]:
     """Delete line items addressed by ``line_number``.
 
     Returns the list of line_numbers removed. Validation rules:
@@ -830,12 +926,47 @@ def _apply_line_item_removes(invoice: Invoice, payload: Any) -> list[int]:
             raise InvoiceUpdateError(
                 f"remove_line_items[{entry}] does not exist on this invoice."
             )
-        by_number[entry].delete()
+        line_to_remove = by_number[entry]
+        if correction_rows is not None:
+            correction_rows.append(
+                _build_correction(
+                    invoice=invoice,
+                    field_name=f"line_items[{entry}]",
+                    original=_serialise_line_for_correction(line_to_remove),
+                    corrected="",
+                    actor_user_id=actor_user_id,
+                )
+            )
+        line_to_remove.delete()
         removed.append(entry)
     return sorted(removed)
 
 
-def _apply_line_item_adds(invoice: Invoice, payload: Any) -> list[int]:
+def _serialise_line_for_correction(line: LineItem) -> dict[str, Any]:
+    """Compact dict snapshot of a LineItem for the correction record.
+
+    Keeps the same keys that EDITABLE_LINE_FIELDS exposes — the user
+    didn't choose any other column — and JSON-serialises Decimals as
+    strings so the value round-trips cleanly through
+    ExtractionCorrection.original_value.
+    """
+    out: dict[str, Any] = {"line_number": line.line_number}
+    for field_name in sorted(EDITABLE_LINE_FIELDS):
+        value = getattr(line, field_name, None)
+        if hasattr(value, "to_eng_string"):  # Decimal
+            out[field_name] = str(value)
+        else:
+            out[field_name] = value
+    return out
+
+
+def _apply_line_item_adds(
+    invoice: Invoice,
+    payload: Any,
+    *,
+    correction_rows: list[ExtractionCorrection] | None = None,
+    actor_user_id: UUID | str | None = None,
+) -> list[int]:
     """Insert new line items, server-assigned line_numbers.
 
     Returns the list of line_numbers assigned. Validation rules:
@@ -898,7 +1029,17 @@ def _apply_line_item_adds(invoice: Invoice, payload: Any) -> list[int]:
                 confidence[field_name] = 1.0
 
         kwargs["per_field_confidence"] = confidence
-        LineItem.objects.create(**kwargs)
+        new_line = LineItem.objects.create(**kwargs)
+        if correction_rows is not None:
+            correction_rows.append(
+                _build_correction(
+                    invoice=invoice,
+                    field_name=f"line_items[{next_number}]",
+                    original="",
+                    corrected=_serialise_line_for_correction(new_line),
+                    actor_user_id=actor_user_id,
+                )
+            )
         assigned.append(next_number)
         next_number += 1
 

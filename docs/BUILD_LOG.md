@@ -4296,6 +4296,129 @@ What's deferred:
 
 ---
 
+### Slice 44 — ExtractionCorrection model + automatic capture
+
+The "learn from corrections" product claim was structurally
+unsupported until now: every edit fired an `invoice.updated`
+audit event but no queryable training data persisted. Per
+DATA_MODEL.md §93 we needed `(field, original, corrected,
+user, timestamp, engine)` rows to drive engine accuracy
+analysis. This slice closes the gap with zero behaviour
+change visible to end users.
+
+Backend:
+
+- **`apps.submission.models.ExtractionCorrection`** —
+  TenantScopedModel with `invoice` FK, `field_name`,
+  `original_value` + `corrected_value` (both JSON-encoded
+  strings so type info round-trips), `extracted_by_engine`
+  (denormalised from Invoice.structuring_engine for query
+  speed), `user_id` (soft FK), `created_at`. Indexes on
+  `(organization, field_name)` and `(extracted_by_engine,
+  field_name)` for the per-engine accuracy reports the
+  table is designed for.
+- **Migration `submission/0005_extractioncorrection`** +
+  **`0006_correction_rls_policy`** — RLS uses the same
+  per-tenant pattern every other tenant-scoped table uses.
+- **`update_invoice` captures corrections inline** — the
+  helper functions `_apply_line_item_updates`,
+  `_apply_line_item_removes`, `_apply_line_item_adds` each
+  optionally accept a shared `correction_rows: list[]` and
+  push `_build_correction(...)` rows during their normal
+  loop. The header path appends in its own loop. After all
+  edits land + the invoice saves, one `ExtractionCorrection.
+  objects.bulk_create(correction_rows)` flushes. Inside the
+  same `transaction.atomic()` so a save rollback unwinds the
+  training rows too.
+- **Naming convention**:
+  - Header field → `"<field>"` (e.g. `"supplier_legal_name"`)
+  - Line cell    → `"line_items[<n>].<field>"` (e.g.
+    `"line_items[3].quantity"`)
+  - Line add     → `"line_items[<n>]"` with `original=""`
+    and `corrected=<JSON snapshot>`
+  - Line remove  → `"line_items[<n>]"` with `original=<JSON
+    snapshot>` and `corrected=""`
+- **`_jsonify_value` helper** — Decimals stringify cleanly,
+  date / datetime → ISO, dict / list → `json.dumps`,
+  everything else → `str()`. None becomes empty-string so
+  the column stays non-null (we don't need to distinguish
+  null from blank — the audit chain has the truthful
+  before/after).
+- **`_serialise_line_for_correction`** captures a
+  LineItem's editable fields as a compact dict for the
+  add / remove correction snapshots.
+
+Tests: 8 new (426 passing total, was 418). Header edit →
+1 row. No-op edit → 0 rows. Multi-field edit → multiple
+rows. Line cell edit → row with `line_items[N].field`
+naming. Line add → row with `original=""` and JSON
+snapshot in `corrected_value`. Line remove → mirror. Engine
+attribution populated from `Invoice.structuring_engine`.
+Blank-to-value is recorded as a correction (the training
+signal "model missed this field").
+
+Verified live: nothing visible — this is invisible
+infrastructure. The persistence is correct (tested) and
+the existing edit flows continue to work unchanged (all 68
+prior submission tests still pass).
+
+Durable design decisions:
+
+- **Bulk-create after the save, not row-at-a-time.** A
+  multi-field edit (10 line cells changed in one save) was
+  going to be 10 INSERTs if we wrote inline. Accumulating
+  rows in a list and writing one bulk_create at the end
+  cuts that to one round-trip. Inside the existing
+  transaction so atomicity is preserved.
+- **JSON-encoded values, not separate typed columns.** The
+  alternative — `original_decimal`, `original_string`,
+  `original_dict` columns — explodes the schema for marginal
+  query benefit. Storing as TEXT with `json.dumps`
+  semantics keeps the table narrow and lets analysts
+  decode at query time with `jsonb_path_query` or in pandas.
+- **Engine name on the correction row, not just FK to
+  Invoice.** Pure denormalisation for a future "which
+  engine missed which field most often" report — joining
+  through Invoice + EngineCall every time would be slow.
+  The engine name on the correction is set at the moment of
+  the correction, so even if the Invoice is later
+  re-extracted with a different engine the historical
+  attribution stays correct.
+- **`user_id` soft FK, not `User` ForeignKey.** A user
+  deletion (rare but possible — a customer expunges an
+  account) must not cascade-delete their training history.
+  The data is impersonal aggregated signal anyway — the
+  user_id is for aggregation queries, not for joining back
+  to a user.
+- **No-op skip without comparing JSON.** The existing
+  `update_invoice` already skips fields where the new
+  value equals the existing value; the correction loop
+  rides on the same comparison. A field that flickers (set
+  to X, then set back to X by a save-no-changes click)
+  doesn't pollute the training data.
+
+What's deferred:
+
+- **Per-engine accuracy dashboard.** The data is now
+  populated; a chart showing "ollama-structure: 92%
+  accuracy on supplier_tin" is a Phase 5 polish slice.
+- **Feedback loop into engine routing.** Long-term, the
+  correction rate per (engine, field) should feed the
+  routing decision (e.g. demote engines whose corrections
+  exceed threshold). Today the rows just accumulate.
+- **Per-correction confidence delta.** The correction's
+  effect on the engine's calibration could be weighted by
+  the original confidence — a 0.95-confidence wrong
+  prediction is worse than a 0.20 one. Not in the schema
+  yet.
+- **Correction surfacing in the customer audit log.** The
+  `invoice.updated` event already carries the field NAMES
+  changed; a deeper view that joins through to the
+  `ExtractionCorrection` rows would give the customer a
+  "history of edits to this invoice" page.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -4377,7 +4500,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 418 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 426 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

@@ -23,6 +23,7 @@ from __future__ import annotations
 import uuid
 
 from django.db import models
+from django.utils import timezone
 
 from apps.identity.models import TenantScopedModel
 
@@ -279,3 +280,75 @@ class ExceptionInboxItem(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"{self.reason} on {self.invoice_id} ({self.status})"
+
+
+class ExtractionCorrection(TenantScopedModel):
+    """One human correction to an extracted field.
+
+    Per DATA_MODEL.md §93: when the user edits a value the extractor
+    populated (or left blank), we capture the delta — original value,
+    corrected value, who changed it, when. This is the persistence
+    layer behind the "learn from corrections" product claim.
+
+    Captured automatically inside ``apps.submission.services.update_invoice``
+    on every header / line-item / addition / removal. The audit event
+    ``invoice.updated`` already records the change as a *fact*; this
+    table records it as *training data* — the rows are queryable for
+    per-engine accuracy analysis, per-tenant correction-rate dashboards,
+    and (eventually) feedback into the engine routing decision.
+
+    Field naming convention:
+      - Header field      → ``"<field>"`` e.g. ``"supplier_legal_name"``
+      - Line-item field   → ``"line_items[<line_number>].<field>"``
+        e.g. ``"line_items[3].quantity"``
+      - Add (new line)    → ``"line_items[<line_number>]"`` with
+        ``original_value=""`` and ``corrected_value="<json>"``
+      - Remove (line)     → ``"line_items[<line_number>]"`` with
+        ``corrected_value=""`` and ``original_value="<json>"``
+
+    Storage: ``original_value`` + ``corrected_value`` are JSON-encoded
+    strings (so a Decimal "100.00" and the string "100.00" are
+    distinguishable). The field column is short enough that an index
+    on (organization, field_name) makes per-field accuracy queries
+    cheap.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.CASCADE,
+        related_name="corrections",
+    )
+
+    field_name = models.CharField(max_length=128, db_index=True)
+
+    # JSON-encoded "before" and "after" so type information survives
+    # the round-trip (vs. plain strings where Decimal("100.0") and
+    # "100.0" are indistinguishable).
+    original_value = models.TextField(blank=True)
+    corrected_value = models.TextField(blank=True)
+
+    # Engine that produced ``original_value``, when known. Lets a future
+    # report say "qwen3-coder corrected wrongly on supplier_tin 23% of
+    # the time" without joining through Invoice.structuring_engine.
+    extracted_by_engine = models.CharField(max_length=128, blank=True)
+
+    # The user who made the correction. Soft FK by uuid so a user
+    # deletion (rare; usually deactivated, not deleted) doesn't
+    # cascade-delete the training data.
+    user_id = models.UUIDField(null=True, blank=True, db_index=True)
+
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "extraction_correction"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["organization", "field_name"]),
+            models.Index(fields=["invoice", "-created_at"]),
+            models.Index(fields=["extracted_by_engine", "field_name"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.field_name} on {self.invoice_id} by {self.user_id}"
