@@ -1993,6 +1993,113 @@ What's deferred:
   flow uploads to S3 and stores the resulting URL. Trivial swap
   when the upload widget lands.
 
+### Slice 24 — Invoices route
+
+Closes the second-to-last sidebar `soon` item. Distinct from the
+dashboard's "recent uploads" excerpt: the all-invoices route is a
+filterable, paginated list across the customer's entire history.
+
+Backend:
+
+- **`list_invoices_for_organization`** in
+  `apps.submission.services` — three filters that match the user's
+  mental model of "find an invoice":
+  - `status`: exact match against `Invoice.Status`.
+  - `search`: case-insensitive substring against `invoice_number`
+    OR `buyer_legal_name` OR `buyer_tin`. The user doesn't always
+    remember which field the value lives in; one box covers all
+    three.
+  - `before_created_at`: cursor pagination — same idiom as the
+    audit log + engine activity surfaces.
+- **`count_invoices_for_organization`** — list-page header context.
+  Renders as "N total" alongside the filter bar so the user sees
+  the unfiltered total even when looking at a filtered slice.
+- **`InvoiceListSummarySerializer`** — wider than the per-customer
+  summary (Slice 19) because the list view needs `buyer_legal_name`
+  + `buyer_tin` per row (no per-row buyer header). Compact enough
+  to keep the response cheap; the full Invoice payload is one click
+  away via the ingestion job link.
+- **`GET /api/v1/invoices/`** with `?status=` / `?search=` /
+  `?limit=` / `?before_created_at=` query params. Limit clamping
+  (1–200), ISO-8601 cursor parsing, invalid input → 400. Mounted
+  on the existing `/api/v1/invoices/` URL prefix; the empty-path
+  pattern (`""`) is the list endpoint.
+
+Frontend:
+
+- **`/dashboard/invoices`** — table with invoice number / buyer
+  (name + TIN stacked) / issue date / grand total / status pill.
+  Each row links to the existing review screen via the ingestion
+  job id.
+- **Filter bar** — status dropdown (hard-coded to match the
+  backend's `Invoice.Status` set; UI list changes when the state
+  machine evolves, which is rare and code-reviewed) + free-text
+  search input. Search applies on Enter or click, not on every
+  keystroke — avoids hammering the API as the user types.
+- **"N total" header context** stays unfiltered so the user can
+  see the full inventory size at a glance even while looking at a
+  narrow filtered slice.
+- **Empty states** are filter-aware: the unfiltered empty state
+  speaks in opportunity ("Drop your first invoice →" link to the
+  dashboard); the filtered empty state nudges toward "Clear
+  filters" instead.
+- **"Load more" pagination** with the standard
+  `created_at` cursor.
+- New types `InvoiceListSummary` + `InvoiceListResponse`, and an
+  `api.listInvoices()` client.
+- **Sidebar**: "Invoices" drops the `soon` badge.
+
+Tests: 12 new (273 passing total). Service: returns org invoices
+newest-first; status exact match; search OR-matches on three
+fields case-insensitive; cursor produces strictly older pages;
+cross-tenant rows excluded; count is per-org. Endpoint: GET
+returns results + total + compact field set; status / search
+filters via query param; invalid limit / cursor → 400; unauth
+rejected.
+
+Verified live with Playwright: signed up fresh, /dashboard/invoices
+showed "No invoices yet" with the upload-prompt link. Dropped two
+PDFs, returned to the page: "2 total" header, two table rows.
+Status filter narrowed to 2 rows for `ready_for_review`. Free-text
+search "C" returned 0 rows (correct — synthetic empty PDFs
+produce empty buyer fields, so no value contained "C"); the
+filtered empty state and "Clear filters" link rendered as
+designed.
+
+Durable design decisions:
+
+- **Search is OR across three fields, not a separate search-by
+  selector.** UX-driven: users find an invoice by whatever they
+  remember about it. The backend takes a single substring and the
+  Django ORM does the OR; tests pin the three-field behaviour.
+- **Status options hard-coded on the frontend.** Pulling from a
+  dynamic API would let the dropdown drift if the backend
+  silently added states. The state machine is small and rarely
+  changes; keeping the list of statuses next to the rendering
+  code makes new states a deliberate, code-reviewed UI change.
+- **Search applies on Enter, not on input.** Type-ahead search
+  feels modern but means hitting the API on every keystroke;
+  for a list of invoices that's all backend roundtrips with no
+  visible benefit. Explicit Enter / click matches the deliberate
+  feel of the rest of the surface.
+- **Header "N total" stays unfiltered.** Filtered total would
+  require a separate query and add visual noise. The unfiltered
+  total is the answer to "how big is my invoice corpus?"; the
+  filtered list answer to "what am I looking at right now?".
+
+What's deferred:
+
+- **Date range filter.** Search + status cover the common cases;
+  date range waits until volume makes time-bucketing useful.
+- **Saved filter presets** ("show me invoices that need
+  attention" — issues > 0, not validated). The data is there;
+  the UI hook is small. Phase 5 polish.
+- **Bulk actions** (export, archive, retry submission). Operator
+  surface; low immediate value while submission isn't wired.
+- **Per-row inline actions** (view audit log entries, view
+  validation issues without clicking through). Clean detail flow
+  is enough for v1.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -2076,7 +2183,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 261 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 273 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -2183,6 +2290,11 @@ Coverage:
   enforces membership-of-active-org (403) separately from
   no-active-org (400); cross-tenant access is 403 not 404 because
   membership check fires before lookup.
+- All-invoices list — newest-first, status exact match, search
+  OR-matches across invoice_number / buyer_legal_name / buyer_tin
+  case-insensitively, cursor pagination, cross-tenant rows excluded,
+  count is per-org, compact serializer field set pinned, invalid
+  limit / cursor → 400.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -2214,10 +2326,10 @@ Ordered roughly by Phase 2/3 priority:
 7. **PII field-level encryption** — `Organization.contact_email`,
    `contact_phone`, `registered_address` are plain text in dev. Same
    KMS dependency as the runtime-config encryption (Slice 10).
-8. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
-   Invoices. (Customers shipped in Slice 16; Audit log shipped in
-   Slice 20; Engine activity shipped in Slice 22; Organization
-   settings shipped in Slice 23.)
+8. **Frontend sub-routes that show "soon" in the sidebar** — Inbox.
+   (Customers shipped in Slice 16; Audit log shipped in Slice 20;
+   Engine activity shipped in Slice 22; Organization settings shipped
+   in Slice 23; Invoices shipped in Slice 24.)
 9. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
    can wrap the existing `make test` + frontend lint/build.
 

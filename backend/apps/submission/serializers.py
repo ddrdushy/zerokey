@@ -38,6 +38,32 @@ class LineItemSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class InvoiceListSummarySerializer(serializers.ModelSerializer):
+    """Compact Invoice shape for the all-invoices list page.
+
+    Wider than the per-customer summary (Slice 19) because the all-
+    invoices view doesn't have a buyer column header — every row needs
+    to carry buyer_legal_name + buyer_tin so the table renders
+    "who is this invoice from?" for each row.
+    """
+
+    class Meta:
+        model = Invoice
+        fields = [
+            "id",
+            "ingestion_job_id",
+            "invoice_number",
+            "issue_date",
+            "currency_code",
+            "grand_total",
+            "buyer_legal_name",
+            "buyer_tin",
+            "status",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
 class ValidationIssueSerializer(serializers.Serializer):
     """Mirror of validation.ValidationIssue for embedding in the Invoice payload.
 

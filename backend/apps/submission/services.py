@@ -852,6 +852,51 @@ def _propagate_line_corrections_to_item_master(
         master.save()
 
 
+def list_invoices_for_organization(
+    *,
+    organization_id: UUID,
+    status: str | None = None,
+    search: str | None = None,
+    limit: int = 50,
+    before_created_at: datetime | None = None,
+) -> list[Invoice]:
+    """All-invoices list for the active org's main Invoices route.
+
+    Filters:
+      - ``status``: exact match against ``Invoice.Status`` choices.
+      - ``search``: case-insensitive substring against
+        ``invoice_number`` OR ``buyer_legal_name`` OR ``buyer_tin``.
+        The user's mental model on this surface is "find an invoice"
+        and they don't always remember which field they're looking for.
+      - ``before_created_at``: cursor pagination — each page is
+        strictly older than the cursor.
+
+    Newest-first by ``created_at`` (matches the customer's mental
+    model: "what did I just upload?"). Bounded by ``limit`` (caller
+    clamps).
+    """
+    qs = Invoice.objects.filter(organization_id=organization_id)
+    if status:
+        qs = qs.filter(status=status)
+    if search:
+        from django.db.models import Q
+
+        target = search.strip()
+        qs = qs.filter(
+            Q(invoice_number__icontains=target)
+            | Q(buyer_legal_name__icontains=target)
+            | Q(buyer_tin__icontains=target)
+        )
+    if before_created_at is not None:
+        qs = qs.filter(created_at__lt=before_created_at)
+    return list(qs.order_by("-created_at")[:limit])
+
+
+def count_invoices_for_organization(*, organization_id: UUID) -> int:
+    """Total invoice count for the org. Renders as the list-page header context."""
+    return Invoice.objects.filter(organization_id=organization_id).count()
+
+
 def get_invoice_for_job(*, organization_id: UUID, ingestion_job_id: UUID) -> Invoice | None:
     return Invoice.objects.filter(
         organization_id=organization_id, ingestion_job_id=ingestion_job_id

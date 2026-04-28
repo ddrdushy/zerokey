@@ -250,6 +250,24 @@ export type Customer = {
   updated_at: string;
 };
 
+export type InvoiceListSummary = {
+  id: string;
+  ingestion_job_id: string;
+  invoice_number: string;
+  issue_date: string | null;
+  currency_code: string;
+  grand_total: string | null;
+  buyer_legal_name: string;
+  buyer_tin: string;
+  status: string;
+  created_at: string;
+};
+
+export type InvoiceListResponse = {
+  results: InvoiceListSummary[];
+  total: number;
+};
+
 export type IngestionJob = {
   id: string;
   source_channel: string;
@@ -315,6 +333,21 @@ export const api = {
     request<{ results: IngestionJob[] }>("/ingestion/jobs/").then((r) => r.results),
   getJob: (id: string) => request<IngestionJob>(`/ingestion/jobs/${id}/`),
   getInvoiceForJob: (jobId: string) => request<Invoice>(`/invoices/by-job/${jobId}/`),
+  listInvoices: (params?: {
+    status?: string;
+    search?: string;
+    limit?: number;
+    beforeCreatedAt?: string;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.search) search.set("search", params.search);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.beforeCreatedAt)
+      search.set("before_created_at", params.beforeCreatedAt);
+    const qs = search.toString();
+    return request<InvoiceListResponse>(`/invoices/${qs ? `?${qs}` : ""}`);
+  },
   auditStats: () => request<AuditStats>("/audit/stats/"),
   listAuditEvents: (params?: {
     actionType?: string;
