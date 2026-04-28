@@ -438,6 +438,100 @@ Deferred (worth flagging):
   confidence calibration; we still trust raw vendor confidences.
   Calibration tables are a Phase 3 follow-up.
 
+### Slice 10 — DB-backed runtime config (Engine credentials + SystemSetting)
+
+Moves rotatable secrets out of `.env` and into a DB-backed store the
+super-admin can edit at runtime (per ROADMAP.md Phase 5: "the
+super-admin console implements the plan editor, feature flag editor,
+and engine routing rule editor"). The data model lands now; the
+dedicated UI is still a Phase 5 surface, but the Django admin already
+exposes both new tables so a fresh deployment can rotate keys today
+without touching `.env`.
+
+The line drawn:
+
+- **Stays in `.env`** — anything needed at process boot (settings
+  module, `DJANGO_*`, Postgres / Redis / Qdrant connection strings,
+  `POSTGRES_APP_*`, `NEXT_PUBLIC_API_BASE_URL`, AWS/KMS root creds,
+  `KMS_KEY_ALIAS`). Self-evident — you can't read settings out of a
+  DB you haven't connected to yet.
+- **Moved to DB** — per-engine vendor credentials (Anthropic, Azure,
+  OpenAI) and platform-wide integration credentials (LHDN, Stripe).
+  These are exactly the values ENGINE_REGISTRY.md and BUSINESS_MODEL.md
+  spec as super-admin-rotatable.
+
+Backend:
+
+- **`Engine.credentials` JSONField** — per-engine vendor credentials
+  live on the existing `extraction.Engine` row. Migration
+  `extraction/0003_engine_credentials.py`. The Django admin Engine
+  editor exposes the field in a "Credentials" fieldset with a notice
+  about KMS-encryption status (plaintext today; envelope-encrypted
+  when the signing service brings KMS online).
+- **`apps.administration.SystemSetting`** — single-row-per-namespace
+  table for platform-wide integrations. The `values` JSON dict
+  carries the namespace's keys; the namespace itself is the unit of
+  edit (super-admin updates "LHDN credentials" as a set, not one key
+  at a time). Migration `administration/0001_initial.py`. Registered
+  in Django admin.
+- **`apps.extraction.credentials.engine_credential` /
+  `require_engine_credential`** — the resolver every adapter calls
+  instead of `os.environ.get`. Lookup order: `Engine.credentials[key]`
+  → `os.environ[env_fallback]` → `None` (or `EngineUnavailable` for
+  the `require_*` variant). Empty strings fall through to env so a
+  cleared field in the UI doesn't silently leave the system
+  unconfigured.
+- **`apps.administration.services.system_setting` /
+  `require_system_setting` / `upsert_system_setting`** — same
+  resolver shape for platform-wide values, plus an atomic upsert
+  that emits an `administration.system_setting.updated` audit event
+  whose payload lists affected key names but **never the values**
+  themselves.
+- **Claude adapter wired through the resolver.** `_client()` now
+  takes the calling engine's name and calls `require_engine_credential(
+  engine_name=..., key="api_key", env_fallback="ANTHROPIC_API_KEY")`.
+  Both the vision and structure adapter rows can carry independent
+  keys (per ENGINE_REGISTRY.md's "customers maintain separate vendor
+  accounts per use case" note) but typically share one. No other
+  adapters use external credentials yet, so this is the only call site.
+
+`.env.example` and `.env` reorganised into two sections — required
+boot values vs. optional bootstrap fallbacks for DB-managed secrets.
+Each fallback variable is documented with the DB row it falls back
+from. `.env` had no values filled in locally, so the rewrite is safe.
+
+Tests: 17 new (8 SystemSetting, 9 engine credentials including a
+direct adapter-reads-resolver regression test). Suite is now 98
+passing / 4 skipped.
+
+Verified live: applied both new migrations on the running stack;
+wrote a `lhdn` SystemSetting row and an `Engine.credentials.api_key`
+row via super-admin context; confirmed the resolver returns the DB
+value over the env value, and falls back to env when the DB row is
+cleared.
+
+Durable design decisions:
+
+- **Resolver lives at each context's seam, not in a single shared
+  module.** `extraction.credentials` for per-engine,
+  `administration.services` for platform-wide. The two have the
+  same shape but they answer different questions, and merging them
+  would couple the contexts.
+- **Empty string is "not set"**, not "explicitly cleared". The
+  super-admin clearing a field in the UI is the same operation as
+  not having configured it yet — both fall through to env. No
+  three-way "unset/empty/cleared" tri-state.
+- **Audit payload lists affected keys, never values.** The audit log
+  is the LAST place credentials should leak. The upsert service
+  enforces this structurally.
+- **Plaintext today, KMS-encrypted later.** The encryption swap is
+  a single migration when KMS provisions; the resolver call sites
+  don't change. Documented in the migration and on each model.
+- **Two anthropic engine rows can carry different keys.** The
+  resolver looks up by `Engine.name`, not vendor. ENGINE_REGISTRY.md
+  anticipates BFSI customers wanting separate accounts per use case;
+  this preserves that future without forcing it today.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -521,7 +615,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 81 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 98 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -551,6 +645,13 @@ Coverage:
   degrade on no-route / adapter-unavailable / vendor-failure with audit
   events recorded at every branch. Adapter mime dispatch (PDF document
   block vs image block) covered separately.
+- Runtime config resolvers — DB-first with env fallback for both
+  `Engine.credentials` (per-engine, via `extraction.credentials`) and
+  `SystemSetting.values` (platform-wide, via `administration.services`);
+  per-engine isolation, empty-string fall-through, `EngineUnavailable` /
+  `SettingNotConfigured` on missing required values; upsert audit
+  payload lists keys not values; Claude adapter regression test pins
+  the DB-first resolution at the call site.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 

@@ -62,6 +62,14 @@ class Engine(models.Model):
     # Cents-per-call baseline (rough). Calibrated against actual EngineCall rows.
     cost_per_call_micros = models.IntegerField(default=0)
 
+    # Per-engine vendor credentials (api keys, endpoint URLs, project ids).
+    # Resolved by ``apps.extraction.credentials.engine_credential`` with an
+    # env-var fallback so first boot still works before the super-admin has
+    # populated the row. Plaintext for now; KMS-backed envelope encryption
+    # lands when the signing service brings KMS online (BUILD_LOG deferred
+    # item #6). DO NOT log this field — the redaction allowlist excludes it.
+    credentials = models.JSONField(default=dict, blank=True)
+
     description = models.TextField(blank=True)
 
     created_at = models.DateTimeField(default=timezone.now)

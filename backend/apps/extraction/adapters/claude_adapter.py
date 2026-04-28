@@ -22,7 +22,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import os
 
 from apps.extraction.capabilities import (
     EngineUnavailable,
@@ -30,6 +29,7 @@ from apps.extraction.capabilities import (
     StructuredExtractResult,
     VisionExtractEngine,
 )
+from apps.extraction.credentials import require_engine_credential
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +44,20 @@ STRUCTURE_COST_MICROS = 4_000  # ~$0.004 per call
 # (Per the model knowledge cutoff: Sonnet 4.6 ID is "claude-sonnet-4-6".)
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
+# Credential key on the Engine.credentials JSONField. The same key is used
+# by both Anthropic adapter rows (vision + structure) so the super-admin
+# typically populates them with the same value, but they CAN diverge for
+# customers who maintain separate Anthropic accounts per use case.
+_API_KEY_FIELD = "api_key"
+_API_KEY_ENV_FALLBACK = "ANTHROPIC_API_KEY"
 
-def _client():
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        raise EngineUnavailable("ANTHROPIC_API_KEY is not set; Claude adapter is unavailable.")
+
+def _client(*, engine_name: str):
+    api_key = require_engine_credential(
+        engine_name=engine_name,
+        key=_API_KEY_FIELD,
+        env_fallback=_API_KEY_ENV_FALLBACK,
+    )
     try:
         from anthropic import Anthropic
     except ImportError as exc:
@@ -108,7 +117,7 @@ class ClaudeVisionAdapter(VisionExtractEngine):
     def extract_vision(
         self, *, body: bytes, mime_type: str, target_schema: list[str]
     ) -> StructuredExtractResult:
-        client = _client()
+        client = _client(engine_name=self.name)
 
         document_block = _document_block(body=body, mime_type=mime_type)
         schema_list = "\n".join(f"- {f}" for f in target_schema)
@@ -164,7 +173,7 @@ class ClaudeFieldStructureAdapter(FieldStructureEngine):
     name = STRUCTURE_ADAPTER_NAME
 
     def structure_fields(self, *, text: str, target_schema: list[str]) -> StructuredExtractResult:
-        client = _client()
+        client = _client(engine_name=self.name)
         schema_list = "\n".join(f"- {f}" for f in target_schema)
 
         message = client.messages.create(
