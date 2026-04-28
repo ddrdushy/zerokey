@@ -250,6 +250,34 @@ export type Customer = {
   updated_at: string;
 };
 
+export type InboxItem = {
+  id: string;
+  reason:
+    | "validation_failure"
+    | "structuring_skipped"
+    | "low_confidence_extraction"
+    | "lhdn_rejection"
+    | "manual_review_requested";
+  priority: "normal" | "urgent";
+  status: "open" | "resolved";
+  detail: Record<string, unknown>;
+  resolved_at: string | null;
+  resolved_by_user_id: string | null;
+  resolution_note: string;
+  created_at: string;
+  updated_at: string;
+  invoice_id: string;
+  ingestion_job_id: string;
+  invoice_number: string;
+  invoice_status: string;
+  buyer_legal_name: string;
+};
+
+export type InboxListResponse = {
+  results: InboxItem[];
+  total: number;
+};
+
 export type InvoiceListSummary = {
   id: string;
   ingestion_job_id: string;
@@ -333,6 +361,18 @@ export const api = {
     request<{ results: IngestionJob[] }>("/ingestion/jobs/").then((r) => r.results),
   getJob: (id: string) => request<IngestionJob>(`/ingestion/jobs/${id}/`),
   getInvoiceForJob: (jobId: string) => request<Invoice>(`/invoices/by-job/${jobId}/`),
+  listInbox: (params?: { reason?: string; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.reason) search.set("reason", params.reason);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    const qs = search.toString();
+    return request<InboxListResponse>(`/inbox/${qs ? `?${qs}` : ""}`);
+  },
+  resolveInboxItem: (id: string, note?: string) =>
+    request<InboxItem>(`/inbox/${id}/resolve/`, {
+      method: "POST",
+      body: JSON.stringify(note ? { note } : {}),
+    }),
   listInvoices: (params?: {
     status?: string;
     search?: string;

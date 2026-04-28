@@ -38,6 +38,51 @@ class LineItemSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class ExceptionInboxItemSerializer(serializers.ModelSerializer):
+    """Compact shape for the Inbox table.
+
+    Embeds the small invoice context the table displays (number, buyer
+    name, status, ingestion job for the click-through link). Full
+    invoice payload is one click away.
+    """
+
+    invoice_id = serializers.UUIDField(source="invoice.id", read_only=True)
+    ingestion_job_id = serializers.UUIDField(
+        source="invoice.ingestion_job_id", read_only=True
+    )
+    invoice_number = serializers.CharField(
+        source="invoice.invoice_number", read_only=True
+    )
+    invoice_status = serializers.CharField(source="invoice.status", read_only=True)
+    buyer_legal_name = serializers.CharField(
+        source="invoice.buyer_legal_name", read_only=True
+    )
+
+    class Meta:
+        # Avoid the late-import; reach the model via the serializer field declarations.
+        from .models import ExceptionInboxItem as _Model
+
+        model = _Model
+        fields = [
+            "id",
+            "reason",
+            "priority",
+            "status",
+            "detail",
+            "resolved_at",
+            "resolved_by_user_id",
+            "resolution_note",
+            "created_at",
+            "updated_at",
+            "invoice_id",
+            "ingestion_job_id",
+            "invoice_number",
+            "invoice_status",
+            "buyer_legal_name",
+        ]
+        read_only_fields = fields
+
+
 class InvoiceListSummarySerializer(serializers.ModelSerializer):
     """Compact Invoice shape for the all-invoices list page.
 

@@ -2100,6 +2100,156 @@ What's deferred:
   validation issues without clicking through). Clean detail flow
   is enough for v1.
 
+### Slice 25 — Exception Inbox
+
+Closes the **last** sidebar `soon` item and finally turns the dashboard
+into a navigable, complete product. The Inbox is the triage queue per
+DATA_MODEL.md "exception inbox entities" — invoices the pipeline has
+flagged for human attention. Unlike the other surfaces (which are
+read-or-edit views over existing data), the Inbox is a real **workflow
+abstraction**: items appear automatically when conditions trigger,
+disappear automatically when conditions clear, and can be manually
+resolved when the operator decides nothing more needs doing.
+
+Backend:
+
+- **`apps.submission.ExceptionInboxItem`** model with RLS migration
+  (per-table CREATE POLICY pattern matching every other tenant-scoped
+  table). Five reasons enumerated:
+  - `validation_failure` — the post-validation hook opens this when
+    the invoice has blocking errors.
+  - `structuring_skipped` — the no-text + no-vision pipeline branch
+    opens this when an invoice can't be auto-structured.
+  - `low_confidence_extraction`, `lhdn_rejection`,
+    `manual_review_requested` — defined in the schema; the trigger
+    points wire in as those pipelines mature.
+  - Status: `open` / `resolved`. `unique_together (invoice, reason)`
+    prevents flapping conditions from creating duplicate rows.
+- **`apps.submission.inbox`** module — the single entry point for the
+  inbox lifecycle:
+  - `ensure_open(invoice, reason, priority, detail)` — idempotent
+    upsert. New row → audit `inbox.item_opened`. Already-open row +
+    state changed (priority / detail) → save + audit
+    `inbox.item_reopened`. Resolved row → reopens (status = open,
+    resolved_* cleared), audit `inbox.item_reopened`. Already-open
+    row + no changes → no-op (no audit noise).
+  - `resolve_for_reason(invoice, reason, ...)` — closes every open
+    row matching, used by the auto-resolve path. No-op when no open
+    rows exist.
+  - `resolve_by_user(organization_id, item_id, actor_user_id, note)`
+    — manual close from the UI. Idempotent on already-resolved.
+  - `list_open_for_organization` / `count_open_for_organization` —
+    the read surface.
+- **Pipeline wiring** (`_sync_validation_inbox` in
+  `apps.submission.services`):
+  - Called from `apply_structured_fields` (post-structuring),
+    `finalize_invoice_without_structuring` (no-text path), and
+    `update_invoice` (post-edit re-validation).
+  - When `validation_result.has_blocking_errors` → ensure_open with
+    `reason=validation_failure` + detail `{errors, warnings}`. When
+    clean → resolve_for_reason. The auto-resolve actor is
+    `None` for pipeline runs and the editing user's id for
+    user-triggered re-validates (the audit log distinguishes
+    automatic from user-triggered in the resolution_note).
+  - The no-structuring path also opens a `structuring_skipped` item
+    with the underlying reason in detail.
+- **API endpoints** (`/api/v1/inbox/`):
+  - `GET /` — list open items with embedded invoice context (number,
+    status, buyer, ingestion job id for click-through), optional
+    `?reason=` filter, `?limit=` clamped 1–500.
+  - `POST /<id>/resolve/` — manual close. Optional `note` in body.
+    Cross-tenant id returns 404 (membership-of-active-org check is
+    implicit via the service's `organization_id=` filter).
+- **Audit events**: `inbox.item_opened` / `inbox.item_reopened` /
+  `inbox.item_resolved`. Payloads carry the invoice id, reason, and
+  whether the resolution was automatic — never message text or PII.
+
+Frontend:
+
+- **`/dashboard/inbox`** — table with reason badge / invoice link /
+  buyer / detail summary / created timestamp / "Mark resolved"
+  action. Filter dropdown driven by the reason set; empty state
+  speaks "Inbox zero" (with a calm green count badge) when there
+  are no open items.
+- **Detail summary** is reason-aware: a `validation_failure` row
+  renders "N errors · M warnings" with the error count in red; a
+  `structuring_skipped` row renders the underlying reason text;
+  unknown reasons fall back to a JSON snapshot (so new reasons
+  surface visibly even before the UI is taught about them).
+- **Optimistic-ish resolve**: clicking "Mark resolved" calls the
+  API, then refetches the list so the resolved item drops out
+  cleanly and the count updates.
+- **Sidebar**: "Inbox" drops the `soon` badge — the last one in
+  the navigation. Every group is now fully implemented.
+- New types `InboxItem` + `InboxListResponse` + `api.listInbox()` /
+  `resolveInboxItem()` clients.
+
+Tests: 17 new (290 passing total). Service: ensure_open creates +
+audits; second call is idempotent (no extra row, no extra audit on
+no-op); reopen resets resolved_* + audits; priority change writes
+audit. resolve_for_reason closes open rows + records "automatic"
+in payload; no-op when nothing open. resolve_by_user records the
+actor + idempotent on already-resolved. List + count scoped to
+active org, exclude resolved + cross-tenant. Pipeline wiring:
+deliberate validation failure → inbox row appears via the
+`update_invoice` path; fixing the failure on a subsequent edit
+auto-resolves it. Endpoint: GET returns embedded invoice context;
+POST resolve marks done with the actor; cross-tenant resolve →
+404; unauth rejected; invalid limit → 400.
+
+Verified live with Playwright: signed up fresh, /dashboard/inbox
+showed "Inbox zero" with the calm success badge. Dropped a PDF
+(synthetic empty, no API key for vision). Returned to inbox: 2
+open items appeared automatically — `Structuring skipped` ("No
+extracted text and no vision adapter available.") and
+`Validation failure` ("6 errors · 1 warning"). Clicked "Mark
+resolved" on the first row; count dropped from 2 to 1, list
+refreshed, the item disappeared.
+
+Durable design decisions:
+
+- **One inbox row per (invoice, reason).** A flapping condition
+  (validate → fix → re-break → fix) reopens and re-resolves the
+  same row; we never accumulate a graveyard of identical rows.
+  The `unique_together` constraint enforces this at the DB layer
+  alongside the `ensure_open` semantics in code.
+- **Status NOT a separate "needs attention" flag on the
+  Invoice.** The Inbox is its own table because reasons can
+  coexist (an invoice can have BOTH validation_failure AND
+  structuring_skipped at the same time, which a single boolean
+  can't represent). The audit-log story also wants per-reason
+  events, not per-invoice toggles.
+- **Auto-resolution distinguishes itself from manual** in the
+  audit log. Automatic resolution leaves `resolved_by_user_id`
+  null; manual resolution stamps the actor. Same pattern as
+  every other system-vs-user audit distinction.
+- **"Show resolved" is deferred.** Triage is forward-looking; the
+  open-only default keeps the page honest about "what needs your
+  attention right now". The audit log preserves the full lifecycle
+  for anyone who needs the recovery view.
+- **Reason-specific detail rendering.** Unknown reasons fall back
+  to JSON, so adding a new reason on the backend doesn't require
+  a coordinated frontend change to be visibly useful (it'll
+  render with the JSON detail until the UI is taught its
+  shape).
+
+What's deferred:
+
+- **Show resolved toggle.** Forward-looking is the right default;
+  add the toggle when an actual customer asks for it.
+- **Bulk resolve** (select multiple rows, mark resolved). Phase 5
+  operator polish.
+- **Notifications** when items appear. The existing audit chain
+  already records the events; the user-facing notification (email /
+  in-app push) wires through the `Notification` model in
+  DATA_MODEL.md when the channel infrastructure lands.
+- **Low-confidence-extraction trigger.** The reason exists in the
+  enum; the actual hook fires once we have a calibrated confidence
+  threshold per engine (depends on the offline calibration tables
+  in ENGINE_REGISTRY.md).
+- **LHDN-rejection trigger.** Wires in when the MyInvois
+  submission service ships (KMS-gated).
+
 ---
 
 ## Architectural decisions worth preserving
@@ -2183,7 +2333,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 273 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 290 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -2295,6 +2445,14 @@ Coverage:
   case-insensitively, cursor pagination, cross-tenant rows excluded,
   count is per-org, compact serializer field set pinned, invalid
   limit / cursor → 400.
+- Exception Inbox — ensure_open is idempotent (creates + audits, no-op
+  on unchanged, reopens resolved + audits, priority change writes
+  audit); resolve_for_reason closes open rows automatically;
+  resolve_by_user is idempotent + records actor; list + count scope to
+  active org and exclude resolved / cross-tenant; pipeline wiring
+  end-to-end (validation failure opens row, subsequent fix auto-
+  resolves it); endpoint embeds invoice context, cross-tenant
+  resolve → 404, invalid limit → 400.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -2326,10 +2484,11 @@ Ordered roughly by Phase 2/3 priority:
 7. **PII field-level encryption** — `Organization.contact_email`,
    `contact_phone`, `registered_address` are plain text in dev. Same
    KMS dependency as the runtime-config encryption (Slice 10).
-8. **Frontend sub-routes that show "soon" in the sidebar** — Inbox.
-   (Customers shipped in Slice 16; Audit log shipped in Slice 20;
-   Engine activity shipped in Slice 22; Organization settings shipped
-   in Slice 23; Invoices shipped in Slice 24.)
+8. ~~**Frontend sub-routes that show "soon" in the sidebar.**~~ All
+   shipped: Customers (Slice 16) → Audit log (Slice 20) → Engine
+   activity (Slice 22) → Organization settings (Slice 23) →
+   Invoices (Slice 24) → Inbox (Slice 25). The sidebar is now
+   entirely real surfaces.
 9. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
    can wrap the existing `make test` + frontend lint/build.
 

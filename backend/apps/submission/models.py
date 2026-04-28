@@ -195,3 +195,87 @@ class LineItem(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"{self.invoice_id} L{self.line_number}: {self.description[:30]}"
+
+
+class ExceptionInboxItem(TenantScopedModel):
+    """An invoice flagged for human attention.
+
+    Per DATA_MODEL.md "exception inbox entities", these are the queue
+    items the operator works through to triage invoices that didn't
+    sail straight through the pipeline. Auto-created when an invoice
+    hits a "needs attention" condition (validation error, structuring
+    skipped, low confidence, LHDN rejection); auto-resolved when the
+    condition clears (e.g. user fixes the validation issue).
+
+    Lives in submission because the entity is keyed by Invoice and the
+    lifecycle is wound around Invoice state changes. The Inbox UI
+    surface is a workflow view on top of this table.
+
+    Idempotency: ``unique_together (invoice, reason)`` so a flapping
+    condition doesn't create duplicate rows. A re-flap on a previously
+    resolved row reopens it (back to ``status=open``) and clears the
+    resolved_* fields.
+    """
+
+    class Reason(models.TextChoices):
+        VALIDATION_FAILURE = "validation_failure", "Validation failure"
+        STRUCTURING_SKIPPED = "structuring_skipped", "Structuring skipped"
+        LOW_CONFIDENCE_EXTRACTION = (
+            "low_confidence_extraction",
+            "Low-confidence extraction",
+        )
+        LHDN_REJECTION = "lhdn_rejection", "Rejected by LHDN"
+        MANUAL_REVIEW_REQUESTED = (
+            "manual_review_requested",
+            "Manual review requested",
+        )
+
+    class Priority(models.TextChoices):
+        NORMAL = "normal", "Normal"
+        URGENT = "urgent", "Urgent"
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        RESOLVED = "resolved", "Resolved"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    invoice = models.ForeignKey(
+        Invoice, on_delete=models.CASCADE, related_name="inbox_items"
+    )
+
+    reason = models.CharField(max_length=32, choices=Reason.choices, db_index=True)
+    priority = models.CharField(
+        max_length=8, choices=Priority.choices, default=Priority.NORMAL
+    )
+    status = models.CharField(
+        max_length=12,
+        choices=Status.choices,
+        default=Status.OPEN,
+        db_index=True,
+    )
+
+    # Free-text context the rule layer can attach (e.g. "3 errors:
+    # required.invoice_number, required.supplier_tin, ..."). Never carries PII;
+    # codes only.
+    detail = models.JSONField(default=dict, blank=True)
+
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by_user_id = models.UUIDField(null=True, blank=True)
+    resolution_note = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        db_table = "exception_inbox_item"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["invoice", "reason"],
+                name="uniq_inbox_item_per_invoice_reason",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "status", "-created_at"]),
+            models.Index(fields=["organization", "reason", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.reason} on {self.invoice_id} ({self.status})"

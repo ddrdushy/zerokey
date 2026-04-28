@@ -28,7 +28,7 @@ from django.utils import timezone
 from apps.audit.models import AuditEvent
 from apps.audit.services import record_event
 
-from .models import Invoice, LineItem
+from .models import ExceptionInboxItem, Invoice, LineItem
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,8 @@ def apply_structured_fields(
     from apps.validation.services import validate_invoice
 
     enrich_invoice(invoice.id)
-    validate_invoice(invoice.id)
+    validation_result = validate_invoice(invoice.id)
+    _sync_validation_inbox(invoice, validation_result)
 
     return StructuringResult(
         invoice=invoice,
@@ -358,7 +359,19 @@ def finalize_invoice_without_structuring(
     from apps.validation.services import validate_invoice
 
     enrich_invoice(invoice.id)
-    validate_invoice(invoice.id)
+    validation_result = validate_invoice(invoice.id)
+    _sync_validation_inbox(invoice, validation_result)
+    # Structuring was skipped — the user should know. Open an inbox item
+    # against this invoice for the "structuring_skipped" reason. The
+    # detail carries the reason string so support can see why without
+    # leaking PII.
+    from .inbox import ensure_open
+
+    ensure_open(
+        invoice=invoice,
+        reason=ExceptionInboxItem.Reason.STRUCTURING_SKIPPED,
+        detail={"reason": reason[:255]},
+    )
 
     return StructuringResult(invoice=invoice, line_count=0, overall_confidence=0.0, engine="")
 
@@ -559,7 +572,8 @@ def update_invoice(
     from apps.validation.services import validate_invoice
 
     enrich_invoice(invoice.id)
-    validate_invoice(invoice.id)
+    validation_result = validate_invoice(invoice.id)
+    _sync_validation_inbox(invoice, validation_result, actor_user_id=actor_user_id)
 
     invoice.refresh_from_db()
     return InvoiceUpdateResult(
@@ -850,6 +864,49 @@ def _propagate_line_corrections_to_item_master(
                 continue
             setattr(master, master_field, new_value)
         master.save()
+
+
+def _sync_validation_inbox(
+    invoice: Invoice,
+    validation_result: Any,
+    *,
+    actor_user_id: UUID | str | None = None,
+) -> None:
+    """Open / resolve the validation_failure inbox item per the result.
+
+    Called from every code path that runs validation: the auto-pipeline
+    after structuring, the no-structuring fallback, and the post-edit
+    re-validate. The inbox row stays at most one per
+    (invoice, validation_failure) reason — `ensure_open` handles the
+    open-or-reopen logic; `resolve_for_reason` clears the row when the
+    invoice goes clean.
+
+    Detail payload carries codes only (no message text — codes are the
+    audit-safe handle, same convention as the audit chain).
+    """
+    from .inbox import ensure_open, resolve_for_reason
+
+    if validation_result.has_blocking_errors:
+        ensure_open(
+            invoice=invoice,
+            reason=ExceptionInboxItem.Reason.VALIDATION_FAILURE,
+            priority=ExceptionInboxItem.Priority.NORMAL,
+            detail={
+                "errors": validation_result.error_count,
+                "warnings": validation_result.warning_count,
+            },
+        )
+    else:
+        resolve_for_reason(
+            invoice=invoice,
+            reason=ExceptionInboxItem.Reason.VALIDATION_FAILURE,
+            note=(
+                "auto-resolved on user re-validate"
+                if actor_user_id
+                else "auto-resolved on pipeline re-validate"
+            ),
+            actor_user_id=actor_user_id,
+        )
 
 
 def list_invoices_for_organization(
