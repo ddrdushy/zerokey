@@ -60,7 +60,7 @@ def _make_valid_invoice(org: Organization) -> Invoice:
         supplier_msic_code="62010",
         buyer_legal_name="Customer Sdn Bhd",
         buyer_tin="C20880050010",
-        buyer_msic_code="46900",
+        buyer_msic_code="47190",  # both supplier + buyer codes from the seed
         buyer_country_code="MY",
         subtotal=Decimal("200.00"),
         total_tax=Decimal("12.00"),
@@ -346,6 +346,88 @@ class TestSstConsistency:
             line.save()
         invoice.refresh_from_db()
         assert rules.rule_sst_consistency(invoice) == []
+
+
+@pytest.mark.django_db
+class TestCatalogMatching:
+    """Validation rules that consult the LHDN reference catalogs (Slice 18).
+
+    Format failures stay ERRORs; catalog misses are WARNINGs while our
+    seed catalog is incomplete. Once the monthly LHDN refresh wires in,
+    the misses promote to ERROR. The two-tier severity is the contract
+    every consumer relies on.
+    """
+
+    def test_known_msic_passes(self, org) -> None:
+        """A code from the seed migration validates clean."""
+        invoice = _make_valid_invoice(org)
+        invoice.supplier_msic_code = "62010"  # in the seed
+        invoice.save()
+        assert rules.rule_msic_format(invoice) == []
+
+    def test_unknown_but_valid_msic_format_is_warning(self, org) -> None:
+        invoice = _make_valid_invoice(org)
+        invoice.supplier_msic_code = "99999"  # right format, not in seed
+        invoice.save()
+        issues = rules.rule_msic_format(invoice)
+        assert _codes(issues) == {"supplier_msic_code.unknown"}
+        assert issues[0].severity == rules.SEVERITY_WARNING
+
+    def test_malformed_msic_still_errors(self, org) -> None:
+        """The format-then-catalog tier order matters: format wins."""
+        invoice = _make_valid_invoice(org)
+        invoice.supplier_msic_code = "ABC"  # format failure
+        invoice.save()
+        issues = rules.rule_msic_format(invoice)
+        codes = _codes(issues)
+        assert "supplier_msic_code.format" in codes
+        assert "supplier_msic_code.unknown" not in codes
+
+    def test_known_country_passes(self, org) -> None:
+        invoice = _make_valid_invoice(org)
+        invoice.buyer_country_code = "SG"
+        invoice.save()
+        assert rules.rule_buyer_country_code(invoice) == []
+
+    def test_unknown_country_is_warning(self, org) -> None:
+        invoice = _make_valid_invoice(org)
+        invoice.buyer_country_code = "ZZ"  # right format, not seeded
+        invoice.save()
+        issues = rules.rule_buyer_country_code(invoice)
+        assert _codes(issues) == {"buyer.country.unknown"}
+
+    def test_known_line_codes_pass(self, org) -> None:
+        invoice = _make_valid_invoice(org)
+        line = invoice.line_items.first()
+        line.classification_code = "022"  # "Others" — always seeded
+        line.tax_type_code = "01"
+        line.unit_of_measurement = "C62"
+        line.save()
+        assert rules.rule_line_item_catalogs(invoice) == []
+
+    def test_unknown_classification_is_warning(self, org) -> None:
+        invoice = _make_valid_invoice(org)
+        line = invoice.line_items.first()
+        line.classification_code = "ZZZ"
+        line.save()
+        issues = rules.rule_line_item_catalogs(invoice)
+        assert "line.classification.unknown" in _codes(issues)
+
+    def test_unknown_tax_type_is_warning(self, org) -> None:
+        invoice = _make_valid_invoice(org)
+        line = invoice.line_items.first()
+        line.tax_type_code = "99"
+        line.save()
+        issues = rules.rule_line_item_catalogs(invoice)
+        assert "line.tax_type.unknown" in _codes(issues)
+
+    def test_unknown_uom_is_warning(self, org) -> None:
+        invoice = _make_valid_invoice(org)
+        line = invoice.line_items.first()
+        line.unit_of_measurement = "GLORP"
+        line.save()
+        issues = rules.rule_line_item_catalogs(invoice)
+        assert "line.uom.unknown" in _codes(issues)
 
 
 @pytest.mark.django_db

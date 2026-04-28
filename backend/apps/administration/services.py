@@ -33,7 +33,14 @@ from django.db import transaction
 from apps.audit.models import AuditEvent
 from apps.audit.services import record_event
 
-from .models import SystemSetting
+from .models import (
+    ClassificationCode,
+    CountryCode,
+    MsicCode,
+    SystemSetting,
+    TaxTypeCode,
+    UnitOfMeasureCode,
+)
 
 
 class SettingNotConfigured(Exception):
@@ -139,3 +146,83 @@ def upsert_system_setting(
         },
     )
     return setting
+
+
+# --- Reference catalog lookups --------------------------------------------------
+#
+# Each ``is_valid_<catalog>(code)`` returns True if the code is in the
+# ACTIVE rows of the corresponding catalog. Inactive rows are kept around
+# (historical invoices may reference them) but do not pass new
+# validation. The validation rule layer is the one consumer; cross-context
+# callers go through these helpers, not the models.
+
+
+def is_valid_msic(code: str) -> bool:
+    if not code:
+        return False
+    return MsicCode.objects.filter(code=code, is_active=True).exists()
+
+
+def is_valid_classification(code: str) -> bool:
+    if not code:
+        return False
+    return ClassificationCode.objects.filter(code=code, is_active=True).exists()
+
+
+def is_valid_uom(code: str) -> bool:
+    if not code:
+        return False
+    return UnitOfMeasureCode.objects.filter(code=code, is_active=True).exists()
+
+
+def is_valid_tax_type(code: str) -> bool:
+    if not code:
+        return False
+    return TaxTypeCode.objects.filter(code=code, is_active=True).exists()
+
+
+def is_valid_country(code: str) -> bool:
+    if not code:
+        return False
+    return CountryCode.objects.filter(code=code, is_active=True).exists()
+
+
+# --- Reference catalog refresh stub ---------------------------------------------
+#
+# Placeholder for the monthly LHDN catalog refresh per LHDN_INTEGRATION.md
+# "reference data caching". Production implementation hits LHDN's published
+# catalog endpoints, diffs against the local rows, and:
+#   - Inserts new codes.
+#   - Updates descriptions on existing codes (LHDN occasionally clarifies).
+#   - Marks deprecated codes ``is_active=False`` (historical invoices that
+#     reference them still verify).
+#   - Updates ``last_refreshed_at`` on every row touched.
+#
+# Today this just stamps ``last_refreshed_at`` on every active row so the
+# Celery beat schedule is a no-op until the LHDN client wires in. The shape
+# is here so downstream consumers (super-admin console, ops dashboard)
+# can rely on the contract.
+
+
+def refresh_reference_catalogs() -> dict[str, int]:
+    """Stamp ``last_refreshed_at`` on every active reference row.
+
+    Returns per-catalog counts so the (future) operations dashboard can
+    report what the refresh touched. Real LHDN client lands when the
+    integration credentials in the ``lhdn`` SystemSetting are populated.
+    """
+    from django.utils import timezone as _tz
+
+    now = _tz.now()
+    counts: dict[str, int] = {}
+    for label, model in (
+        ("msic", MsicCode),
+        ("classification", ClassificationCode),
+        ("uom", UnitOfMeasureCode),
+        ("tax_type", TaxTypeCode),
+        ("country", CountryCode),
+    ):
+        counts[label] = model.objects.filter(is_active=True).update(
+            last_refreshed_at=now
+        )
+    return counts

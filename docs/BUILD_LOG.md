@@ -1317,6 +1317,134 @@ What's deferred:
   spreadsheet). Click-to-edit is enough for v1; refine when we
   see actual usage.
 
+### Slice 18 — Cached LHDN reference catalogs
+
+Closes the largest validation-quality gap available without KMS or
+LHDN sandbox creds. The format-only catalog rules from Slice 11
+(MSIC, classification code, tax type, UOM, country) now consult cached
+LHDN reference data rather than just regex-matching the format. Per
+LHDN_INTEGRATION.md "reference data caching", the catalogs live
+locally and refresh monthly from the LHDN published source.
+
+What landed:
+
+- **5 reference-catalog models** in `apps.administration`:
+  `MsicCode`, `ClassificationCode`, `UnitOfMeasureCode`,
+  `TaxTypeCode`, `CountryCode`. All platform-wide (NOT tenant-scoped)
+  — every customer's validation rules read from the same tables.
+  Each row carries `is_active` (deprecated codes stay around so
+  historical invoices stay verifiable) and `last_refreshed_at` (the
+  audit reader can see which version of the LHDN published catalog
+  the row was reconciled against).
+- **Seed migration** ships a representative subset:
+  - **32 MSIC codes** — common SME categories (retail, software,
+    services, hospitality, F&B, professional, finance, real estate,
+    education, health). Full ~700-row catalog lands when the LHDN
+    refresh integration wires in.
+  - **45 classification codes** — the LHDN-published e-invoice
+    Category list (1–45) in full, including the catch-all "022 Others".
+  - **20 UOM codes** — the UN/CEFACT subset LHDN accepts in practice
+    (C62 / KGM / LTR / MTR / EA / PCE / HUR / DAY / etc.).
+  - **7 tax type codes** — the COMPLETE LHDN published list
+    (01/02/03/04/05/06/E), with `applies_to_sst_registered` for the
+    SST consistency rule.
+  - **56 country codes** — Malaysia + ASEAN + East/South Asia +
+    GCC + Americas + EU + Oceania + key African + Russia /
+    Ukraine. Full ISO 3166-1 alpha-2 (250 codes) lands with the
+    refresh integration.
+- **Service helpers** in `apps.administration.services`:
+  `is_valid_msic` / `is_valid_classification` / `is_valid_uom` /
+  `is_valid_tax_type` / `is_valid_country`. Each returns `False` for
+  blank input, unknown codes, and inactive rows — the caller doesn't
+  need to special-case any of those.
+- **Validation rules upgraded to two-tier**:
+  - `_check_msic` and `rule_buyer_country_code`: format failure stays
+    `ERROR`, catalog miss is `WARNING`. The two-tier severity is
+    deliberate — promoting catalog misses to `ERROR` while the seed
+    catalog is incomplete would create false rejections during the
+    pre-LHDN-refresh window. Once the refresh wires in and the
+    catalogs are authoritative, the misses promote to `ERROR`.
+  - **New `rule_line_item_catalogs`** validates per-line
+    `classification_code` / `tax_type_code` / `unit_of_measurement`
+    against their respective catalogs, all `WARNING` for now. New
+    issue codes: `line.classification.unknown`, `line.tax_type.unknown`,
+    `line.uom.unknown`.
+- **Refresh stub** at `apps.administration.tasks.refresh_reference_catalogs`
+  + service-level `refresh_reference_catalogs()`. Today it just
+  stamps `last_refreshed_at` on every active row; the production
+  implementation will hit LHDN's published catalog endpoints, diff
+  against local rows, and upsert. The shape and Celery wiring are
+  here so the LHDN client lands in one place.
+- **Django admin** registers all five catalog models (read-mostly:
+  search, filter on `is_active`). Inline editing is emergency-only
+  (toggle a code's `is_active` if it needs to be deprecated before
+  the next monthly refresh).
+
+Tests: 20 new (214 passing total).
+- 5 seed-presence tests pin the migration's expected codes (so a
+  future seed change doesn't silently break validation).
+- 5 lookup-helper tests cover known/unknown/blank/inactive
+  per catalog.
+- 2 refresh-stub tests confirm `last_refreshed_at` stamps the
+  active set and skips inactive rows.
+- 8 new validation-rule tests cover the two-tier severity (known
+  codes pass, unknown formats fail with `ERROR`, unknown codes that
+  match format fail with `WARNING`) for MSIC, country, and the
+  three line-item catalogs.
+
+Verified live: applied both new migrations on the running stack;
+catalog counts confirmed (32 / 45 / 20 / 7 / 56); positive +
+negative lookups returned the expected booleans; the refresh stub
+stamped every active row with the current timestamp.
+
+Durable design decisions:
+
+- **Two-tier severity (format ERROR + catalog WARNING)** during
+  the seed-only window. Promoting catalog misses to ERROR before
+  the LHDN refresh is wired would block submission on codes LHDN
+  itself accepts but our seed doesn't have. The promotion path is
+  documented inline so the change is one rule severity flip when
+  the refresh ships.
+- **`is_active` not delete** for deprecated codes. Historical
+  invoices that reference a now-deprecated code remain auditable
+  against the version of the catalog active at their issue date.
+  LHDN explicitly publishes deprecation rather than removal; we
+  match.
+- **Reference catalogs are platform-wide, not tenant-scoped.**
+  Every customer reads the same rows. Tenant-specific overrides
+  (Custom-tier customers with non-standard tax treatments) belong
+  in a separate "tenant override" table that points at base
+  catalog rows; not needed in any current scope.
+- **Lookup helpers are the cross-context boundary**, not the
+  models. Validation rules call `is_valid_msic` etc.; the
+  validation context never imports `apps.administration.models`
+  directly. Same pattern as every other service-only crossing.
+- **Seed ships a representative subset, not the whole catalog.**
+  The migration is small, fast, easy to audit; the real LHDN
+  catalogs land via the (eventually wired) refresh task. The
+  alternative (shipping ~700 MSIC rows in a migration) makes the
+  migration painful and the file noisy without making the
+  validation more correct in the seed-only window.
+
+What's deferred:
+
+- **Real LHDN catalog refresh** — the task fetches from LHDN's
+  published endpoints, diffs, upserts. Credentials are already in
+  the `lhdn` SystemSetting (Slice 10); the implementation is a
+  hundred lines of HTTP client + JSON parsing.
+- **Celery beat schedule** for the refresh — `zerokey.celery`
+  needs a beat schedule entry pointing at
+  `administration.refresh_reference_catalogs` on a monthly cron.
+  Add when the real refresh implementation lands.
+- **MSIC parent_code population** — the catalog is hierarchical
+  (5-digit codes roll up to 4-digit categories). Seed leaves
+  `parent_code` blank; the refresh task populates it from the
+  LHDN-published hierarchy.
+- **Severity promotion** of catalog misses from WARNING to ERROR
+  once the refresh integration ships. One-line change in
+  `_check_msic` / `rule_buyer_country_code` /
+  `rule_line_item_catalogs`.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -1400,7 +1528,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 194 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 214 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -1472,6 +1600,12 @@ Coverage:
   unit_price), allowlist rejects unknown line_number / unknown
   per-line fields / malformed payload shapes, true no-op when
   submitted values match current.
+- Reference catalogs — seed migration presence (MSIC / classification
+  / UOM / tax-type / country); lookup helpers return True for known,
+  False for unknown / blank / inactive; refresh stub stamps active
+  rows + skips deprecated; validation rules' two-tier severity
+  (format ERROR + catalog WARNING) tested per-catalog with positive
+  + negative cases.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -1485,9 +1619,11 @@ Ordered roughly by Phase 2/3 priority:
    TIN"; the API confirms the TIN actually exists. Updates
    `CustomerMaster.tin_verification_state` (Slice 14). Wires through
    the LHDN `SystemSetting` credentials (Slice 10).
-2. **MSIC / classification / UOM catalog matching** — format rules
-   exist; full catalog matching needs cached LHDN catalogs (separate
-   slice that fetches + refreshes monthly).
+2. **Live LHDN catalog refresh task** — the local catalogs (Slice 18)
+   ship as a representative seed; the production refresh task hits
+   LHDN's published endpoints monthly and upserts. Once it ships,
+   the catalog-miss severity in the validation rules promotes from
+   WARNING to ERROR.
 3. **Signing service** — placeholder Celery task on the dedicated
    `signing` queue exists. KMS-backed envelope encryption + Ed25519
    signature over `chain_hash` lands when KMS is provisioned.

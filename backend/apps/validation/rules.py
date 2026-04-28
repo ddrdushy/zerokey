@@ -285,6 +285,18 @@ def rule_currency_decimal_precision(invoice: Invoice) -> list[Issue]:
 
 
 def _check_msic(value: str, field_path: str, label: str) -> list[Issue]:
+    """Two-tier check: format ERROR first, then catalog WARNING.
+
+    Format failures block submission (can't be a valid MSIC code in any
+    iteration of the LHDN catalog). Catalog misses are WARNINGS today
+    because our seed catalog ships a representative subset only — once
+    the monthly LHDN refresh wires in, the catalog becomes authoritative
+    and unknown codes promote to ERROR. Promoting too early would
+    create false rejections during the seed-only window.
+    """
+    # Lazy import to avoid validation -> administration cycle at module load.
+    from apps.administration.services import is_valid_msic
+
     if _is_blank(value):
         return []
     if not MSIC_PATTERN.match(value):
@@ -300,6 +312,20 @@ def _check_msic(value: str, field_path: str, label: str) -> list[Issue]:
                 detail={"value": value},
             )
         ]
+    if not is_valid_msic(value):
+        return [
+            Issue(
+                code=f"{field_path}.unknown",
+                severity=SEVERITY_WARNING,
+                field_path=field_path,
+                message=(
+                    f"{label} MSIC code {value!r} is not in our cached LHDN "
+                    "catalog. Submission may still succeed; verify against the "
+                    "current LHDN list if unsure."
+                ),
+                detail={"value": value},
+            )
+        ]
     return []
 
 
@@ -311,6 +337,14 @@ def rule_msic_format(invoice: Invoice) -> list[Issue]:
 
 
 def rule_buyer_country_code(invoice: Invoice) -> list[Issue]:
+    """Two-tier: format ERROR; catalog WARNING for now.
+
+    LHDN accepts the full ISO 3166-1 alpha-2 set; our seed only has the
+    common trade partners. Catalog miss stays a WARNING until the
+    refresh task pulls the full LHDN-published list.
+    """
+    from apps.administration.services import is_valid_country
+
     if _is_blank(invoice.buyer_country_code):
         return []
     code = invoice.buyer_country_code.upper()
@@ -324,7 +358,84 @@ def rule_buyer_country_code(invoice: Invoice) -> list[Issue]:
                 detail={"value": invoice.buyer_country_code},
             )
         ]
+    if not is_valid_country(code):
+        return [
+            Issue(
+                code="buyer.country.unknown",
+                severity=SEVERITY_WARNING,
+                field_path="buyer_country_code",
+                message=(
+                    f"Buyer country code {code!r} is not in our cached ISO catalog. "
+                    "Submission may still succeed; verify the code is current."
+                ),
+                detail={"value": code},
+            )
+        ]
     return []
+
+
+# --- Line-item catalog rules ---------------------------------------------------
+
+
+def rule_line_item_catalogs(invoice: Invoice) -> list[Issue]:
+    """Match per-line ``classification_code`` / ``tax_type_code`` /
+    ``unit_of_measurement`` against the cached LHDN catalogs.
+
+    All three are WARNING-severity catalog misses (same rationale as the
+    MSIC + country rules above: seed is incomplete during the pre-LHDN-
+    integration window). Format checks are minimal — the catalogs
+    themselves are the format authority.
+    """
+    from apps.administration.services import (
+        is_valid_classification,
+        is_valid_tax_type,
+        is_valid_uom,
+    )
+
+    issues: list[Issue] = []
+    for line in _line_items(invoice):
+        if line.classification_code and not is_valid_classification(line.classification_code):
+            issues.append(
+                Issue(
+                    code="line.classification.unknown",
+                    severity=SEVERITY_WARNING,
+                    field_path=f"line_items[{line.line_number}].classification_code",
+                    message=(
+                        f"Line {line.line_number}: classification code "
+                        f"{line.classification_code!r} is not in our cached "
+                        "LHDN catalog."
+                    ),
+                    detail={"value": line.classification_code},
+                )
+            )
+        if line.tax_type_code and not is_valid_tax_type(line.tax_type_code):
+            issues.append(
+                Issue(
+                    code="line.tax_type.unknown",
+                    severity=SEVERITY_WARNING,
+                    field_path=f"line_items[{line.line_number}].tax_type_code",
+                    message=(
+                        f"Line {line.line_number}: tax type code "
+                        f"{line.tax_type_code!r} is not in the LHDN published list."
+                    ),
+                    detail={"value": line.tax_type_code},
+                )
+            )
+        if line.unit_of_measurement and not is_valid_uom(line.unit_of_measurement):
+            issues.append(
+                Issue(
+                    code="line.uom.unknown",
+                    severity=SEVERITY_WARNING,
+                    field_path=f"line_items[{line.line_number}].unit_of_measurement",
+                    message=(
+                        f"Line {line.line_number}: unit of measurement "
+                        f"{line.unit_of_measurement!r} is not in the UN/CEFACT "
+                        "subset LHDN accepts."
+                    ),
+                    detail={"value": line.unit_of_measurement},
+                )
+            )
+    return issues
 
 
 # --- Dates ---------------------------------------------------------------------
@@ -675,6 +786,7 @@ RULES: list[RuleFn] = [
     rule_currency_decimal_precision,
     rule_msic_format,
     rule_buyer_country_code,
+    rule_line_item_catalogs,
     rule_invoice_dates,
     rule_line_item_arithmetic,
     rule_invoice_total_arithmetic,
