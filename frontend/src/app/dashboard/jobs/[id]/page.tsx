@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 
 import { api, ApiError, type IngestionJob, type Invoice } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { AppShell } from "@/components/shell/AppShell";
 
 const TERMINAL = new Set(["validated", "rejected", "cancelled", "error", "ready_for_review"]);
 
@@ -66,7 +67,8 @@ export default function JobDetailPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-8 px-4 py-12 md:px-8">
+    <AppShell>
+    <div className="mx-auto flex max-w-4xl flex-col gap-8">
       <div className="flex items-center justify-between">
         <div>
           <Button variant="ghost" size="sm" onClick={() => router.push("/dashboard")}>
@@ -139,15 +141,16 @@ export default function JobDetailPage() {
           </a>
         </section>
       )}
-    </main>
+    </div>
+    </AppShell>
   );
 }
 
 function Pad({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl items-center justify-center px-4">
-      <p className="text-slate-400">{children}</p>
-    </main>
+    <AppShell>
+      <div className="grid place-items-center py-24 text-slate-400">{children}</div>
+    </AppShell>
   );
 }
 
