@@ -3264,6 +3264,124 @@ What's deferred:
 
 ---
 
+### Slice 34 — Super-admin platform audit log
+
+The first page that does cross-tenant work — every audit event
+across every tenant in one view, filterable by action type and
+tenant ID. Distinct from the customer audit page (Slice 20)
+which is RLS-scoped to one organization. The cross-tenant reads
+themselves are audited so the chain records who looked at what
+and with which filters.
+
+Backend:
+
+- **`apps.administration.services.list_platform_events`** —
+  cross-tenant audit list. Elevates to `super_admin_context`
+  for the duration of the query so RLS lets it read every
+  org's rows, then drops elevation and emits an
+  `admin.platform_audit_listed` system-level audit event with
+  the filter parameters (but never the underlying event
+  payloads — those are the *thing being audited*; recursive
+  inclusion would be noise). Returns AuditEvent rows
+  newest-first, sequence-cursor pagination.
+- **`list_platform_action_types`** + **`count_platform_events`**
+  follow the same pattern. Action-type listing audits itself
+  (`admin.platform_action_types_listed`); count doesn't (it
+  fires on every page load and would drown the chain in
+  noise — the count is a header KPI, not an investigation
+  surface).
+- **`apps.administration.serializers.PlatformAuditEventSerializer`**
+  is distinct from the customer-facing audit serializer. It
+  exposes `organization_id` on every row (the whole point of
+  cross-tenant aggregation) and otherwise mirrors the
+  customer shape. The customer serializer never returns
+  organization_id by design — every event a customer sees is
+  their own org by construction.
+- **Endpoints**:
+  - `GET /api/v1/admin/audit/events/?action_type=…&organization_id=…&limit=&before_sequence=`
+  - `GET /api/v1/admin/audit/action-types/`
+  Both gated by `IsPlatformStaff`.
+
+Frontend:
+
+- **`/admin/audit/page.tsx`** — operator surface mirroring the
+  customer audit page (Slice 20) but with the cross-tenant
+  affordances:
+  - **Tenant column** on every row showing the organization
+    UUID prefix; clicking it filters the list to that tenant.
+  - **Tenant filter input** at the top accepting a full UUID
+    paste — for chasing a specific incident.
+  - **System events** (`organization_id=NULL`) get a
+    "system" badge instead of a UUID.
+  - **Header note** "Listing this page is itself audited."
+    so the operator knows the meta-loop is in play.
+- The shell's "Platform audit" nav item drops its `soon`
+  badge — the page is live.
+- `api.adminListPlatformAuditEvents` + `adminListPlatformActionTypes`
+  client methods + `PlatformAuditEvent` type.
+
+Tests: 9 new (350 passing total, was 341). Unauthenticated →
+401/403. Customer 403. Staff sees rows from all tenants. Filter
+by `organization_id` returns only that tenant. Filter by
+`action_type` is exact-match. Invalid `limit` → 400. The act
+of listing fires `admin.platform_audit_listed` with the
+filters in the payload. Action-types endpoint returns the
+distinct set across all tenants; second call sees the first
+call's audit event in its result.
+
+Verified live with Playwright on `admin@symprio.com`: signed
+in, navigated to `/admin/audit`. Page rendered 50 events from
+multiple tenants (different UUID prefixes visible in the
+Tenant column), with the dropdown showing 16 distinct action
+types from across the platform, and a "Load more" button
+beneath the table. Filtering by clicking a tenant's UUID
+narrows the view to that org's events.
+
+Durable design decisions:
+
+- **Two serializers, not one with a `?include=` flag.** The
+  customer-facing serializer never exposes organization_id;
+  the platform serializer always does. Trying to merge them
+  with a query-param toggle would make per-call introspection
+  the load-bearing security check. Keeping them separate
+  pushes the audience boundary into a static type/import
+  graph: importing `PlatformAuditEventSerializer` is a clear
+  "this is admin-side" signal in code review.
+- **Cross-tenant reads emit their own audit event.** This is
+  the "who watches the watchmen" loop: a staff user reading
+  every tenant's data is itself an event the chain should
+  record. The audit is per-call (one event per page load),
+  with the filters in the payload and the result count for
+  context — but never the underlying event payloads (those
+  are the thing being audited, including them would explode
+  the chain volume).
+- **The count endpoint is not audited.** Header KPIs fire on
+  every page load and aren't investigatory — the count is
+  for orientation, not for chasing a specific event. The
+  list / action-types endpoints ARE audited because they
+  produce information that drives further investigation.
+- **Tenant filter is a UUID input, not a tenant-name search.**
+  Looking up tenants by name belongs on the (upcoming)
+  tenant list page (Slice 35) where the operator can pick
+  and click through. The audit page assumes the operator
+  arrived with a specific tenant in mind — chasing a known
+  incident.
+
+What's deferred:
+
+- **Tenant name resolution.** Today the Tenant column shows
+  a UUID prefix. Resolving it to a legal name requires a
+  second query per row (or a denormalized join). When the
+  tenant list page lands (Slice 35) with a tenant lookup
+  service, this page can render names instead of UUIDs.
+- **Date-range filter.** Customers don't typically need it
+  but operators investigating incidents do. Cheap to add
+  later; the indexes already support it.
+- **Export.** A "download as CSV" button for compliance
+  audits. Phase 5 polish.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -3345,7 +3463,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 341 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 350 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

@@ -35,7 +35,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { href: "/admin", label: "Overview", icon: ShieldCheck },
-  { href: "/admin/audit", label: "Platform audit", icon: ScrollText, soon: true },
+  { href: "/admin/audit", label: "Platform audit", icon: ScrollText },
   { href: "/admin/tenants", label: "Tenants", icon: Users, soon: true },
   { href: "/admin/engines", label: "Engines", icon: Settings, soon: true },
 ];

@@ -12,11 +12,14 @@ with the elevation reason recorded in the audit log per call.
 
 from __future__ import annotations
 
+from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from . import services
 from .permissions import IsPlatformStaff
+from .serializers import PlatformAuditEventSerializer
 
 
 @api_view(["GET"])
@@ -35,5 +38,69 @@ def admin_me(request: Request) -> Response:
             "email": user.email,
             "is_staff": True,
             "is_superuser": bool(getattr(user, "is_superuser", False)),
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
+def platform_audit_events(request: Request) -> Response:
+    """Cross-tenant audit list. Uses sequence-cursor pagination (same as the
+    customer-facing audit page).
+
+    Query params:
+        ?action_type=auth.login_success       (exact match, optional)
+        ?organization_id=<uuid>               (filter to one tenant, optional)
+        ?limit=50                             (1-200, default 50)
+        ?before_sequence=12345                (pagination cursor, optional)
+    """
+    action_type = request.query_params.get("action_type") or None
+    organization_id = request.query_params.get("organization_id") or None
+
+    try:
+        limit = int(request.query_params.get("limit", "50"))
+    except ValueError:
+        return Response(
+            {"detail": "limit must be an integer."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    limit = max(1, min(limit, 200))
+
+    before_sequence: int | None = None
+    raw_before = request.query_params.get("before_sequence")
+    if raw_before:
+        try:
+            before_sequence = int(raw_before)
+        except ValueError:
+            return Response(
+                {"detail": "before_sequence must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    events = services.list_platform_events(
+        actor_user_id=request.user.id,
+        action_type=action_type,
+        organization_id=organization_id,
+        limit=limit,
+        before_sequence=before_sequence,
+    )
+    total = services.count_platform_events(actor_user_id=request.user.id)
+    return Response(
+        {
+            "results": PlatformAuditEventSerializer(events, many=True).data,
+            "total": total,
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
+def platform_action_types(request: Request) -> Response:
+    """Distinct action_type values across the entire chain (cross-tenant)."""
+    return Response(
+        {
+            "results": services.list_platform_action_types(
+                actor_user_id=request.user.id,
+            ),
         }
     )

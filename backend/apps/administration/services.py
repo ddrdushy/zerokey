@@ -204,6 +204,126 @@ def is_valid_country(code: str) -> bool:
 # can rely on the contract.
 
 
+# --- Platform-wide audit (Slice 34) -----------------------------------------------
+#
+# These functions list audit events across ALL tenants for the super-admin
+# surface. They elevate via ``super_admin_context`` so RLS lets them read
+# rows belonging to other organizations. Every elevation records its reason
+# in code; the audit log itself records the resulting query because every
+# Read of an audit row that crosses a tenant boundary is itself a
+# noteworthy operational fact (you can grep for "admin.platform_audit_listed"
+# events to see who looked at what).
+
+
+def list_platform_events(
+    *,
+    actor_user_id: UUID | str,
+    action_type: str | None = None,
+    organization_id: UUID | str | None = None,
+    limit: int = 50,
+    before_sequence: int | None = None,
+) -> list[Any]:
+    """Cross-tenant audit list for platform-staff readers.
+
+    Distinct from ``audit.services.list_events_for_organization`` (which
+    is tenant-scoped under the regular RLS policy). This function
+    elevates briefly to super-admin context so the query reads every
+    org's events, then records its own elevation as an audit event so
+    the read of cross-tenant rows is itself in the audit chain.
+
+    ``organization_id`` filter (optional) lets the operator narrow to
+    one tenant from the same surface — saves a separate "tenants list →
+    drill in" gesture when you're chasing a specific incident.
+
+    Returns AuditEvent rows newest-first; the cursor is sequence number
+    same as the customer-facing list.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="admin.platform_audit:cross_tenant_read"):
+        qs = AuditEvent.objects.all()
+        if action_type:
+            qs = qs.filter(action_type=action_type)
+        if organization_id:
+            qs = qs.filter(organization_id=organization_id)
+        if before_sequence is not None:
+            qs = qs.filter(sequence__lt=before_sequence)
+        events = list(qs.order_by("-sequence")[:limit])
+
+    # Audit the read itself. The actor is the staff user; we don't scope
+    # the event to any tenant (organization_id=NULL because it crosses
+    # tenants by definition). Record the filter parameters but never
+    # event payloads — those are the THING being audited, recursive
+    # inclusion would be noise.
+    record_event(
+        action_type="admin.platform_audit_listed",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=None,
+        affected_entity_type="AuditEvent",
+        affected_entity_id="",
+        payload={
+            "filters": {
+                "action_type": action_type or "",
+                "organization_id": str(organization_id) if organization_id else "",
+                "limit": int(limit),
+                "before_sequence": int(before_sequence)
+                if before_sequence is not None
+                else 0,
+            },
+            "result_count": len(events),
+        },
+    )
+    return events
+
+
+def list_platform_action_types(*, actor_user_id: UUID | str) -> list[str]:
+    """Distinct action types across the entire chain.
+
+    Powers the filter dropdown on the platform audit page. Cross-tenant
+    so the dropdown reflects EVERY action that's ever been recorded,
+    not just the ones in the operator's own tenant (which would be
+    misleading — a staff user typically has no own-org events).
+
+    Same elevation pattern as ``list_platform_events``; recorded as
+    ``admin.platform_action_types_listed``.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="admin.platform_audit:list_action_types"):
+        types = sorted(
+            AuditEvent.objects.order_by()
+            .values_list("action_type", flat=True)
+            .distinct()
+        )
+
+    record_event(
+        action_type="admin.platform_action_types_listed",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=None,
+        affected_entity_type="AuditEvent",
+        affected_entity_id="",
+        payload={"distinct_count": len(types)},
+    )
+    return types
+
+
+def count_platform_events(*, actor_user_id: UUID | str) -> int:
+    """Total event count across the chain. Used as the "events on chain" KPI."""
+    from apps.audit.models import AuditEvent
+    from apps.identity.tenancy import super_admin_context
+
+    # No audit on the count itself — it's a header KPI that fires on
+    # every page load and shouldn't drown the chain in noise.
+    with super_admin_context(reason="admin.platform_audit:count"):
+        return AuditEvent.objects.count()
+
+
 def refresh_reference_catalogs() -> dict[str, int]:
     """Stamp ``last_refreshed_at`` on every active reference row.
 

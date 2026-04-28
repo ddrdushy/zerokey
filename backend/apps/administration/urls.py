@@ -17,4 +17,10 @@ app_name = "administration"
 
 urlpatterns = [
     path("me/", views.admin_me, name="me"),
+    path("audit/events/", views.platform_audit_events, name="platform-audit-events"),
+    path(
+        "audit/action-types/",
+        views.platform_action_types,
+        name="platform-action-types",
+    ),
 ]

@@ -189,6 +189,22 @@ export type AdminMe = {
   is_superuser: boolean;
 };
 
+export type PlatformAuditEvent = {
+  id: string;
+  sequence: number;
+  timestamp: string;
+  organization_id: string | null;
+  actor_type: string;
+  actor_id: string;
+  action_type: string;
+  affected_entity_type: string;
+  affected_entity_id: string;
+  payload: Record<string, unknown>;
+  payload_schema_version: number;
+  content_hash: string;
+  chain_hash: string;
+};
+
 export type LatestVerification = {
   status: "ok" | "tampered" | "error";
   ok: boolean;
@@ -436,6 +452,27 @@ export const api = {
     ),
   adminMe: () =>
     request<AdminMe>("/admin/me/"),
+  adminListPlatformAuditEvents: (params?: {
+    actionType?: string;
+    organizationId?: string;
+    limit?: number;
+    beforeSequence?: number;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.actionType) search.set("action_type", params.actionType);
+    if (params?.organizationId) search.set("organization_id", params.organizationId);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.beforeSequence !== undefined)
+      search.set("before_sequence", String(params.beforeSequence));
+    const qs = search.toString();
+    return request<{ results: PlatformAuditEvent[]; total: number }>(
+      `/admin/audit/events/${qs ? `?${qs}` : ""}`,
+    );
+  },
+  adminListPlatformActionTypes: () =>
+    request<{ results: string[] }>("/admin/audit/action-types/").then(
+      (r) => r.results,
+    ),
   getOrganization: () =>
     request<OrganizationDetail>("/identity/organization/"),
   updateOrganization: (updates: Partial<Record<keyof OrganizationDetail, string>>) =>
