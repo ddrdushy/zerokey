@@ -152,6 +152,25 @@ export type Throughput = {
   };
 };
 
+export type Customer = {
+  id: string;
+  legal_name: string;
+  aliases: string[];
+  tin: string;
+  tin_verification_state: "unverified" | "verified" | "failed";
+  tin_last_verified_at: string | null;
+  registration_number: string;
+  msic_code: string;
+  address: string;
+  phone: string;
+  sst_number: string;
+  country_code: string;
+  usage_count: number;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type IngestionJob = {
   id: string;
   source_channel: string;
@@ -221,6 +240,14 @@ export const api = {
   throughput: (days = 7) => request<Throughput>(`/ingestion/throughput/?days=${days}`),
   updateInvoice: (id: string, updates: Record<string, string | null>) =>
     request<Invoice>(`/invoices/${id}/`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    }),
+  listCustomers: () =>
+    request<{ results: Customer[] }>("/customers/").then((r) => r.results),
+  getCustomer: (id: string) => request<Customer>(`/customers/${id}/`),
+  updateCustomer: (id: string, updates: Partial<Record<keyof Customer, string>>) =>
+    request<Customer>(`/customers/${id}/`, {
       method: "PATCH",
       body: JSON.stringify(updates),
     }),

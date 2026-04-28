@@ -322,3 +322,117 @@ def _learn_item_alias(master: ItemMaster, description: str) -> None:
     if description in master.aliases:
         return
     master.aliases = [*master.aliases, description]
+
+
+# --- Read + edit surface for the Customers UI -------------------------------
+
+
+# Editable fields on CustomerMaster. The user can correct identifiers the LLM
+# got wrong, but ``aliases`` (auto-managed) and ``usage_count`` /
+# ``last_used_at`` / ``tin_verification_state`` (system-managed) are not in
+# this set — direct edits would corrupt the accumulation logic.
+EDITABLE_CUSTOMER_FIELDS: frozenset[str] = frozenset(
+    {
+        "legal_name",
+        "tin",
+        "registration_number",
+        "msic_code",
+        "address",
+        "phone",
+        "sst_number",
+        "country_code",
+    }
+)
+
+
+class CustomerUpdateError(Exception):
+    """Raised when an update violates the editable-fields allowlist."""
+
+
+def list_customer_masters(
+    *, organization_id: UUID | str, limit: int | None = 200
+) -> list[CustomerMaster]:
+    """Most-used buyers first. Tenant-scoped — RLS belt-and-suspenders.
+
+    A 200-row default keeps the list page snappy while showing every
+    realistic SME's full customer table; an explicit ``limit=None``
+    returns everything for export use cases.
+    """
+    qs = CustomerMaster.objects.filter(organization_id=organization_id).order_by(
+        "-usage_count", "legal_name"
+    )
+    if limit is not None:
+        qs = qs[:limit]
+    return list(qs)
+
+
+def get_customer_master(
+    *, organization_id: UUID | str, customer_id: UUID | str
+) -> CustomerMaster | None:
+    return (
+        CustomerMaster.objects.filter(
+            organization_id=organization_id, id=customer_id
+        ).first()
+    )
+
+
+@transaction.atomic
+def update_customer_master(
+    *,
+    organization_id: UUID | str,
+    customer_id: UUID | str,
+    updates: dict[str, str],
+    actor_user_id: UUID | str,
+) -> CustomerMaster:
+    """Apply staff/user edits to a CustomerMaster row, audit-logged.
+
+    Renaming the master files the previous canonical name as an alias —
+    same shape as the ``update_invoice`` master propagation path. The
+    audit event records WHICH fields changed (no values: PII).
+    """
+    unknown = set(updates.keys()) - EDITABLE_CUSTOMER_FIELDS
+    if unknown:
+        raise CustomerUpdateError(
+            f"Cannot edit non-editable fields: {sorted(unknown)}. "
+            f"Editable: {sorted(EDITABLE_CUSTOMER_FIELDS)}"
+        )
+
+    master = CustomerMaster.objects.get(
+        organization_id=organization_id, id=customer_id
+    )
+
+    changed: list[str] = []
+    rename_old_name: str | None = None
+    for field_name, raw_value in updates.items():
+        new_value = "" if raw_value is None else str(raw_value)
+        if field_name == "legal_name" and not new_value.strip():
+            raise CustomerUpdateError("legal_name cannot be empty.")
+        previous = getattr(master, field_name) or ""
+        if previous == new_value:
+            continue
+        if field_name == "legal_name":
+            rename_old_name = previous
+        setattr(master, field_name, new_value)
+        changed.append(field_name)
+
+    if not changed:
+        return master
+
+    if rename_old_name and rename_old_name not in master.aliases:
+        master.aliases = [*master.aliases, rename_old_name]
+
+    master.save()
+
+    record_event(
+        action_type="customer_master.updated",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=str(organization_id),
+        affected_entity_type="CustomerMaster",
+        affected_entity_id=str(master.id),
+        payload={
+            # Field names only — values are PII.
+            "changed_fields": sorted(changed),
+        },
+    )
+    return master

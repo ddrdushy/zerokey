@@ -1091,6 +1091,114 @@ What's deferred:
   reference this buyer's TIN"). Useful operator surface, but
   premature without volume.
 
+### Slice 16 — Customers route (frequent buyers + master editor)
+
+The sidebar's "Customers · soon" item finally has a screen behind it.
+Puts the master data accumulated by Slices 14 + 15 to actual use:
+the user can see every buyer ZeroKey has learned, sorted by usage,
+and edit any master directly to fix wrong defaults that would
+otherwise pollute auto-fill on every future invoice for that buyer.
+
+Backend:
+
+- **`GET /api/v1/customers/`** — list, scoped to active org, sorted
+  ``-usage_count, legal_name`` (most-used first matches the
+  dashboard's "frequent customers" framing). Default limit 200 keeps
+  the page snappy; ``limit=None`` available for export use cases.
+- **`GET /api/v1/customers/<id>/`** — detail. Cross-tenant access
+  returns 404 (RLS belt-and-suspenders).
+- **`PATCH /api/v1/customers/<id>/`** — direct edits to a
+  CustomerMaster. Strict allowlist (``EDITABLE_CUSTOMER_FIELDS``):
+  legal_name / tin / registration_number / msic_code / address /
+  phone / sst_number / country_code. **Excludes** auto-managed
+  fields (``aliases``, ``usage_count``, ``last_used_at``,
+  ``tin_verification_state``) — direct edits would corrupt the
+  accumulation logic. Same shape as ``update_invoice`` from Slice 15:
+  rename files the previous canonical name as an alias, single
+  ``customer_master.updated`` audit event with field NAMES (no
+  values, PII).
+- **`apps.enrichment.services`** gained
+  ``list_customer_masters`` / ``get_customer_master`` /
+  ``update_customer_master`` plus a ``CustomerUpdateError``
+  exception. Cross-context callers go through these, not the
+  models.
+
+Frontend:
+
+- **`/dashboard/customers`** — table view sorted by usage. Each row
+  shows legal name (with "also known as" alias hint when present),
+  TIN, MSIC code, invoice count, last-seen date, and a
+  verification badge (success / error / muted "Unverified" — the
+  third state stays default until live LHDN TIN verify lands).
+  Empty state per UX_PRINCIPLES principle 7: speaks in opportunity
+  ("Customers appear here automatically as you submit invoices...")
+  and links back to the dashboard upload zone.
+- **`/dashboard/customers/[id]`** — detail with the same edit-
+  draft + SaveBar pattern as the invoice review screen (Slice 15).
+  Two-column layout: identity + contact field rows on the left;
+  usage stats / alias history / verification card on the right.
+  All eight allowlisted fields are editable in place; the
+  ``FieldRow`` component is reused unchanged. Save runs the PATCH
+  and replaces the local state with the response.
+- **Sidebar**: ``Customers`` item drops the ``soon`` badge and
+  becomes a real link.
+- **Frontend types**: ``Customer`` shape mirrors the serializer.
+  ``api.listCustomers()`` / ``getCustomer(id)`` /
+  ``updateCustomer(id, updates)`` wrap the new endpoints.
+
+Tests: 11 new (185 passing total). List sorts by usage_count desc
++ name asc; list filters by active org (cross-tenant rows excluded);
+unauth rejected. Detail returns the expected fields; cross-tenant
+detail 404. PATCH corrects MSIC + audits with field-names-not-values
+payload; rename files old name as alias; allowlist rejects
+``aliases`` / ``usage_count`` / ``tin_verification_state`` /
+random unknown keys; blank legal_name rejected; no-op when nothing
+changed (no audit event); cross-tenant PATCH 404.
+
+Verified live with Playwright: signed up fresh, /dashboard/customers
+showed the empty-state copy. Uploaded a PDF, edited the buyer
+identity on the review screen and saved — the new master appeared
+in the customers list ("Important Buyer Sdn Bhd / C30000000099").
+Clicked into detail, edited the MSIC code to "62010", saved,
+reloaded the page — the value persisted.
+
+Durable design decisions:
+
+- **Allowlist over denylist for editable customer fields.** Same
+  rationale as the invoice update path (Slice 15): set is small,
+  explicit, tested; new editable fields opt in deliberately.
+  ``aliases`` / ``usage_count`` etc. are out because they're
+  auto-managed; surfacing them as edits would corrupt the
+  accumulation logic.
+- **Reuse the FieldRow + SaveBar pattern**, don't invent a new
+  editor. The visual language ("Edited" dirty marker, sticky save
+  bar, helper copy under the count) is the same in
+  ``/dashboard/jobs/[id]`` and ``/dashboard/customers/[id]``;
+  reviewers move between the two without re-learning anything.
+- **Verification badge stays "Unverified" until live LHDN check.**
+  We have a verified state in the model schema but no integration
+  to populate it; the badge says so honestly rather than showing
+  an empty placeholder.
+- **Sidebar "soon" badges are temporary.** Each route ships
+  removes its badge; the visible inventory of "what's coming"
+  shrinks as the build progresses, which is the framing
+  UX_PRINCIPLES principle 6 ("the first ten minutes determine
+  retention") wants.
+
+What's deferred:
+
+- **Per-customer invoice list.** "Show me every invoice from this
+  buyer" is the obvious next drill-down. Cheap once the invoice
+  list endpoint supports a ``buyer_tin`` filter.
+- **Search + filter** on the list. List is ordered by usage so the
+  top-of-list is what the user usually wants; search waits until
+  list size makes it worthwhile.
+- **Item master surface.** Same shape, different table. Lower
+  immediate value than customers; ships when the line-item
+  editing slice lands and surfaces the masters as a side effect.
+- **Bulk re-enrich** (apply current master to historical invoices
+  whose fields don't match). Useful operator surface, premature.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -1174,7 +1282,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 174 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 185 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -1231,6 +1339,13 @@ Coverage:
   invariants. Endpoint-level: 200 happy path, 400 on unknown field,
   401/403 unauth, 404 cross-tenant. Static allowlist invariant pins
   submission-lifecycle field omissions.
+- Customers API — list sorted by usage_count + name with active-org
+  filter, unauth rejected; detail returns full master shape, 404
+  cross-tenant; PATCH corrects allowlisted fields + audits with
+  PII-redacted payload, rename files old name as alias, allowlist
+  rejects auto-managed fields (aliases / usage_count /
+  tin_verification_state) and unknown keys, no-op when nothing
+  changed, cross-tenant PATCH 404.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -1261,7 +1376,8 @@ Ordered roughly by Phase 2/3 priority:
    `contact_phone`, `registered_address` are plain text in dev. Same
    KMS dependency as the runtime-config encryption (Slice 10).
 8. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
-   Invoices, Customers, Audit log, Engine activity, Settings.
+   Invoices, Audit log, Engine activity, Settings. (Customers
+   shipped in Slice 16.)
 9. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
    can wrap the existing `make test` + frontend lint/build.
 

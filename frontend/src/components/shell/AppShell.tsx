@@ -45,7 +45,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Inbox", href: "/dashboard/inbox", icon: Inbox, disabled: true },
       { label: "Invoices", href: "/dashboard/invoices", icon: FileText, disabled: true },
-      { label: "Customers", href: "/dashboard/customers", icon: Users, disabled: true },
+      { label: "Customers", href: "/dashboard/customers", icon: Users },
     ],
   },
   {
