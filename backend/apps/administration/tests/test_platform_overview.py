@@ -118,6 +118,27 @@ class TestPlatformOverview:
         assert "active" in body["engines"]
         assert isinstance(body["engines"]["calls_last_7d"], list)
 
+    def test_overview_includes_14_day_sparklines(
+        self, staff_user, populated_platform
+    ) -> None:
+        """KPIs the operator wants to eyeball trends on each carry a 14-day series."""
+        client = Client()
+        client.force_login(staff_user)
+        response = client.get("/api/v1/admin/overview/")
+        body = response.json()
+        for block in ("ingestion", "invoices", "audit", "inbox"):
+            spark = body[block]["sparkline"]
+            assert isinstance(spark, list)
+            assert len(spark) == 14
+            # Gap-filled — every entry has a date + count even on zero days.
+            for entry in spark:
+                assert "date" in entry
+                assert "count" in entry
+                assert isinstance(entry["count"], int)
+            # Days are oldest -> newest.
+            dates = [entry["date"] for entry in spark]
+            assert dates == sorted(dates)
+
     def test_overview_load_emits_audit_event(
         self, staff_user, populated_platform
     ) -> None:

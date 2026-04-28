@@ -21,8 +21,9 @@ import {
   Users,
 } from "lucide-react";
 
-import { api, ApiError, type PlatformOverview } from "@/lib/api";
+import { api, ApiError, type PlatformOverview, type SparklinePoint } from "@/lib/api";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { Sparkline } from "@/components/admin/Sparkline";
 import { cn } from "@/lib/utils";
 
 export default function AdminOverviewPage() {
@@ -108,6 +109,7 @@ function KPIGrid({ overview }: { overview: PlatformOverview }) {
         icon={FileText}
         primary={overview.ingestion.total}
         secondary={`${overview.ingestion.last_24h} in last 24h · ${overview.ingestion.last_7d} in last 7d`}
+        sparkline={overview.ingestion.sparkline}
       />
       <KPICard
         href="/admin/audit?action_type=invoice.created"
@@ -115,6 +117,7 @@ function KPIGrid({ overview }: { overview: PlatformOverview }) {
         icon={CircleCheck}
         primary={overview.invoices.total}
         secondary={`${overview.invoices.pending_review} pending review`}
+        sparkline={overview.invoices.sparkline}
       />
       <KPICard
         href="/admin/audit?action_type=inbox.item_opened"
@@ -127,6 +130,7 @@ function KPIGrid({ overview }: { overview: PlatformOverview }) {
             : "Everything resolved across the platform"
         }
         tone={inboxAlert ? "warning" : "success"}
+        sparkline={overview.inbox.sparkline}
       />
       <KPICard
         href="/admin/audit"
@@ -134,6 +138,7 @@ function KPIGrid({ overview }: { overview: PlatformOverview }) {
         icon={ScrollText}
         primary={overview.audit.total}
         secondary={`${overview.audit.last_24h} events in last 24h`}
+        sparkline={overview.audit.sparkline}
       />
       <KPICard
         href="/admin/engines"
@@ -165,6 +170,7 @@ function KPICard({
   primary,
   secondary,
   tone,
+  sparkline,
 }: {
   href: string;
   label: string;
@@ -172,6 +178,7 @@ function KPICard({
   primary: number;
   secondary: string;
   tone?: "success" | "warning";
+  sparkline?: SparklinePoint[];
 }) {
   const toneCls =
     tone === "warning"
@@ -202,6 +209,19 @@ function KPICard({
       <div className="font-display text-3xl font-bold tracking-tight text-ink">
         {primary.toLocaleString()}
       </div>
+      {sparkline && sparkline.length > 0 && (
+        <Sparkline
+          points={sparkline}
+          barClass={
+            tone === "warning"
+              ? "fill-warning/70"
+              : tone === "success"
+                ? "fill-success/70"
+                : "fill-slate-400"
+          }
+          height={24}
+        />
+      )}
       <div className="text-2xs text-slate-500">{secondary}</div>
     </Link>
   );

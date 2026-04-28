@@ -190,13 +190,25 @@ export type AdminMe = {
   is_superuser: boolean;
 };
 
+export type SparklinePoint = { date: string; count: number };
+
 export type PlatformOverview = {
   tenants: { total: number; active_last_7d: number };
   users: { total: number };
-  ingestion: { total: number; last_7d: number; last_24h: number };
-  invoices: { total: number; last_7d: number; pending_review: number };
-  inbox: { open: number };
-  audit: { total: number; last_24h: number };
+  ingestion: {
+    total: number;
+    last_7d: number;
+    last_24h: number;
+    sparkline: SparklinePoint[];
+  };
+  invoices: {
+    total: number;
+    last_7d: number;
+    pending_review: number;
+    sparkline: SparklinePoint[];
+  };
+  inbox: { open: number; sparkline: SparklinePoint[] };
+  audit: { total: number; last_24h: number; sparkline: SparklinePoint[] };
   engines: {
     total: number;
     active: number;
@@ -272,6 +284,7 @@ export type TenantDetail = {
     audit_events: number;
   };
   inbox_open_by_reason: Record<string, number>;
+  ingestion_sparkline: SparklinePoint[];
   members: Array<{
     id: string;
     user_id: string;

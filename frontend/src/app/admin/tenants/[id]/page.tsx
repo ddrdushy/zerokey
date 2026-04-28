@@ -27,6 +27,7 @@ import {
 
 import { api, ApiError, type TenantDetail } from "@/lib/api";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { Sparkline } from "@/components/admin/Sparkline";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -431,6 +432,7 @@ function KPIGrid({ detail }: { detail: TenantDetail }) {
         primary={detail.stats.ingestion_jobs_total}
         secondary={`${detail.stats.ingestion_jobs_recent_7d} in last 7d`}
         icon={FileText}
+        sparkline={detail.ingestion_sparkline}
       />
       <Stat
         label="Invoices"
@@ -466,12 +468,14 @@ function Stat({
   secondary,
   icon: Icon,
   tone,
+  sparkline,
 }: {
   label: string;
   primary: number;
   secondary?: string;
   icon: React.ComponentType<{ className?: string }>;
   tone?: "success" | "warning";
+  sparkline?: TenantDetail["ingestion_sparkline"];
 }) {
   const toneCls =
     tone === "warning"
@@ -496,6 +500,19 @@ function Stat({
       <div className="font-display text-3xl font-bold tracking-tight text-ink">
         {primary.toLocaleString()}
       </div>
+      {sparkline && sparkline.length > 0 && (
+        <Sparkline
+          points={sparkline}
+          barClass={
+            tone === "warning"
+              ? "fill-warning/70"
+              : tone === "success"
+                ? "fill-success/70"
+                : "fill-slate-400"
+          }
+          height={20}
+        />
+      )}
       {secondary && <div className="text-2xs text-slate-500">{secondary}</div>}
     </div>
   );

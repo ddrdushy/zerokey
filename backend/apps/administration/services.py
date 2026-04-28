@@ -324,6 +324,48 @@ def count_platform_events(*, actor_user_id: UUID | str) -> int:
         return AuditEvent.objects.count()
 
 
+# --- Shared sparkline helper -----------------------------------------------------
+
+
+def _daily_count_sparkline(
+    queryset: Any,
+    *,
+    date_field: str,
+    days: int = 14,
+) -> list[dict[str, Any]]:
+    """Bucket a queryset by day for the last ``days`` days. Gap-filled.
+
+    Returns a list of length ``days`` (oldest first) with shape
+    ``[{date: "2026-04-29", count: 3}, ...]``. Same shape the customer
+    audit-stats sparkline uses (``apps.audit.services._daily_sparkline``)
+    so the React side can reuse one sparkline component for both.
+    """
+    from datetime import timedelta
+
+    from django.db.models import Count
+    from django.db.models.functions import TruncDate
+    from django.utils import timezone
+
+    today = timezone.localdate(timezone.now())
+    start = today - timedelta(days=days - 1)
+
+    rows = (
+        queryset.filter(**{f"{date_field}__date__gte": start})
+        .annotate(day=TruncDate(date_field))
+        .values("day")
+        .annotate(count=Count("id"))
+    )
+    by_day = {row["day"].isoformat(): int(row["count"]) for row in rows}
+
+    series: list[dict[str, Any]] = []
+    for offset in range(days):
+        day = start + timedelta(days=offset)
+        series.append(
+            {"date": day.isoformat(), "count": by_day.get(day.isoformat(), 0)}
+        )
+    return series
+
+
 # --- Platform overview KPIs (Slice 37) -------------------------------------------
 
 
@@ -415,6 +457,29 @@ def platform_overview(*, actor_user_id: UUID | str) -> dict[str, Any]:
             .order_by("-total")[:8]
         )
 
+    # 14-day daily sparklines for the four KPIs the operator most wants to
+    # eyeball trends on. Gap-filled so the front-end always renders 14 bars.
+    ingestion_sparkline = _daily_count_sparkline(
+        IngestionJob.objects.all(),
+        date_field="created_at",
+        days=14,
+    )
+    invoices_sparkline = _daily_count_sparkline(
+        Invoice.objects.all(),
+        date_field="created_at",
+        days=14,
+    )
+    audit_sparkline = _daily_count_sparkline(
+        AuditEvent.objects.all(),
+        date_field="timestamp",
+        days=14,
+    )
+    inbox_sparkline = _daily_count_sparkline(
+        ExceptionInboxItem.objects.all(),
+        date_field="created_at",
+        days=14,
+    )
+
     overview = {
         "tenants": {
             "total": tenants_total,
@@ -425,14 +490,20 @@ def platform_overview(*, actor_user_id: UUID | str) -> dict[str, Any]:
             "total": jobs_total,
             "last_7d": jobs_7d,
             "last_24h": jobs_24h,
+            "sparkline": ingestion_sparkline,
         },
         "invoices": {
             "total": invoices_total,
             "last_7d": invoices_7d,
             "pending_review": invoices_pending,
+            "sparkline": invoices_sparkline,
         },
-        "inbox": {"open": inbox_open},
-        "audit": {"total": audit_total, "last_24h": audit_24h},
+        "inbox": {"open": inbox_open, "sparkline": inbox_sparkline},
+        "audit": {
+            "total": audit_total,
+            "last_24h": audit_24h,
+            "sparkline": audit_sparkline,
+        },
         "engines": {
             "total": engines_total,
             "active": int(engine_breakdown.get("active", 0)),
@@ -677,6 +748,14 @@ def tenant_detail(
             .annotate(c=Count("id"))
         )
 
+        # 14-day per-tenant ingestion sparkline so the operator can spot a
+        # tenant whose volume just dropped (or spiked) at a glance.
+        ingestion_sparkline = _daily_count_sparkline(
+            IngestionJob.objects.filter(organization_id=org.id),
+            date_field="created_at",
+            days=14,
+        )
+
     detail = {
         "id": str(org.id),
         "legal_name": org.legal_name,
@@ -703,6 +782,7 @@ def tenant_detail(
         "inbox_open_by_reason": {
             str(reason): int(count) for reason, count in inbox_by_reason.items()
         },
+        "ingestion_sparkline": ingestion_sparkline,
         "members": [
             {
                 "id": str(m.id),

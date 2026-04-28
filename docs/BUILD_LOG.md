@@ -4042,6 +4042,105 @@ What's deferred:
 
 ---
 
+### Slice 42 — 14-day sparklines on admin KPI cards
+
+KPI cards used to be point-in-time counts. Now they each
+carry a 14-day daily sparkline below the primary number so
+the operator can spot a rising/falling trend at a glance —
+"open inbox is growing day-over-day" or "ingestion volume
+just collapsed for tenant X".
+
+Backend:
+
+- **`_daily_count_sparkline(queryset, date_field, days)`** —
+  shared helper in `apps.administration.services` that buckets
+  any queryset by day, gap-fills missing days with zero, and
+  returns a list of `{date, count}` dicts oldest-first. Same
+  shape `audit.services._daily_sparkline` already returns for
+  the customer audit-stats KPI tile so the React side reuses
+  one component.
+- **`platform_overview` adds 4 sparklines** — ingestion,
+  invoices, audit, inbox. Tenants/users/engines stay
+  point-in-time (their interesting numbers are state, not
+  flow).
+- **`tenant_detail` adds an `ingestion_sparkline`** so a
+  per-tenant volume drop is visible without leaving the
+  detail page.
+
+Frontend:
+
+- **`<Sparkline>` component** in `components/admin/` —
+  inline SVG bars (4px wide, 2px gap), accepts a points
+  array + optional max + tone-coloured `barClass`. We use
+  bars not a line because the typical platform-admin
+  signal is "uneven daily volume" and bars communicate
+  gaps more honestly than a line that interpolates through
+  missing days.
+- **KPI cards on `/admin` and `/admin/tenants/[id]`** render
+  the sparkline between the primary number and the
+  secondary text. Tone-coloured: `fill-warning/70` on the
+  warning-tinted Open Inbox card, `fill-success/70` on
+  success-tinted cards, `fill-slate-400` otherwise.
+
+Tests: 1 new (407 passing total, was 406). Asserts each of
+the four overview-level sparklines has 14 entries with
+`date` + `count` in oldest-first order, gap-filled (zero
+days included).
+
+Verified live (`admin@symprio.com`): 4 sparklines visible on
+`/admin` overview (ingestion, invoices, inbox, audit), 1 on
+`/admin/tenants/<id>` (ingestion). The audit chain card
+shows the bar sticking up on the most recent day, reflecting
+the dev DB activity from today vs zero on prior days —
+exactly the trend signal the operator wants to spot.
+
+Durable design decisions:
+
+- **Bars, not a line.** A line interpolates through missing
+  days, suggesting smooth activity that didn't actually
+  happen. Bars show gaps as gaps. For platform metrics
+  where "we did nothing on Sunday" is a real fact, this
+  matters.
+- **14-day window, not 7 or 30.** Seven days of bars at 4px
+  apiece is too narrow to be readable. Thirty days
+  visualises a longer trend but pushes the bars below 3px
+  wide, where the colour fights for visibility against the
+  card background. 14 days hits the sweet spot — wide
+  enough to see daily detail, short enough to fit cleanly
+  in a card.
+- **Sparklines on flow metrics only, not state metrics.**
+  Tenant count and user count are state — "how many
+  exist?" — not flow — "how many happened today?" A
+  sparkline on tenant count would show a step function
+  upward most days, which doesn't communicate anything
+  useful. Flow metrics (jobs, invoices, audit events,
+  inbox openings) ARE bursty and benefit from the trend
+  view.
+- **Tone colour from the card.** The sparkline inherits
+  the card's tone (warning / success / neutral) so a
+  warning-tinted Open Inbox card has warning-coloured
+  bars, reinforcing the signal without adding visual
+  noise.
+
+What's deferred:
+
+- **Per-engine sparklines on the engine activity table.**
+  The overview's engine table is already informative with
+  the success-rate column; sparklines would help operators
+  see "this engine started failing yesterday" but the
+  data shape (per-engine + per-day + per-outcome) is
+  three-dimensional and doesn't fit a 4px-bar layout.
+- **Rolling-week vs calendar-week.** Today the sparkline
+  shows 14 *calendar* days ending today; an alternative is
+  a rolling 14×24h window. Calendar days match the
+  customer audit-stats convention, which is the right
+  default.
+- **Sparkline on the engine credentials page.** Could show
+  per-engine call volume next to the "Edit" button. Not in
+  scope.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -4123,7 +4222,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 406 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 407 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
