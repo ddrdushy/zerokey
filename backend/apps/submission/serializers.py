@@ -1,8 +1,16 @@
-"""DRF serializers for submission (Invoice / LineItem)."""
+"""DRF serializers for submission (Invoice / LineItem).
+
+The Invoice response carries the validation-issue list so the review UI
+gets the structured fields + the findings in a single round-trip. Cross-
+context import of ``apps.validation.services`` is allowed (services-only,
+never models — see ARCHITECTURE.md).
+"""
 
 from __future__ import annotations
 
 from rest_framework import serializers
+
+from apps.validation.services import issues_for_invoice
 
 from .models import Invoice, LineItem
 
@@ -30,8 +38,25 @@ class LineItemSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class ValidationIssueSerializer(serializers.Serializer):
+    """Mirror of validation.ValidationIssue for embedding in the Invoice payload.
+
+    Defined here rather than in apps.validation.serializers because the
+    consumer is the Invoice review UI, and keeping the response shape
+    co-located with InvoiceSerializer keeps the API surface obvious.
+    """
+
+    code = serializers.CharField()
+    severity = serializers.CharField()
+    field_path = serializers.CharField()
+    message = serializers.CharField()
+    detail = serializers.JSONField()
+
+
 class InvoiceSerializer(serializers.ModelSerializer):
     line_items = LineItemSerializer(many=True, read_only=True)
+    validation_issues = serializers.SerializerMethodField()
+    validation_summary = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
@@ -77,7 +102,30 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "cancellation_timestamp",
             "error_message",
             "line_items",
+            "validation_issues",
+            "validation_summary",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+
+    def get_validation_issues(self, invoice: Invoice) -> list[dict]:
+        rows = issues_for_invoice(
+            organization_id=invoice.organization_id, invoice_id=invoice.id
+        )
+        return ValidationIssueSerializer(rows, many=True).data
+
+    def get_validation_summary(self, invoice: Invoice) -> dict:
+        rows = issues_for_invoice(
+            organization_id=invoice.organization_id, invoice_id=invoice.id
+        )
+        summary = {"errors": 0, "warnings": 0, "infos": 0}
+        for row in rows:
+            if row.severity == "error":
+                summary["errors"] += 1
+            elif row.severity == "warning":
+                summary["warnings"] += 1
+            elif row.severity == "info":
+                summary["infos"] += 1
+        summary["has_blocking_errors"] = summary["errors"] > 0
+        return summary

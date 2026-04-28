@@ -84,6 +84,21 @@ export type LineItem = {
   classification_code: string;
 };
 
+export type ValidationIssue = {
+  code: string;
+  severity: "error" | "warning" | "info";
+  field_path: string;
+  message: string;
+  detail: Record<string, unknown>;
+};
+
+export type ValidationSummary = {
+  errors: number;
+  warnings: number;
+  infos: number;
+  has_blocking_errors: boolean;
+};
+
 export type Invoice = {
   id: string;
   ingestion_job_id: string;
@@ -106,6 +121,8 @@ export type Invoice = {
   structuring_engine: string;
   error_message: string;
   line_items: LineItem[];
+  validation_issues: ValidationIssue[];
+  validation_summary: ValidationSummary;
   created_at: string;
   updated_at: string;
 };

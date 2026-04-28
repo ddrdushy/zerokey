@@ -239,6 +239,15 @@ def apply_structured_fields(
         },
     )
 
+    # Run pre-flight validation now that the Invoice + LineItems are
+    # populated. Cross-context import of services (not models) is allowed.
+    # Inline rather than queued: the rule set is regex/arithmetic and runs
+    # in milliseconds, and the review UI needs the issue list on the same
+    # page-load that shows the structured fields.
+    from apps.validation.services import validate_invoice
+
+    validate_invoice(invoice.id)
+
     return StructuringResult(
         invoice=invoice,
         line_count=line_count,
@@ -326,6 +335,13 @@ def _finalize_without_structuring(invoice: Invoice, *, reason: str) -> Structuri
         affected_entity_id=str(invoice.id),
         payload={"reason": reason[:255]},
     )
+    # Even with no structured fields the user still benefits from running
+    # validation — the required-fields rule will flag the empty header so
+    # the UI is honest about what's missing.
+    from apps.validation.services import validate_invoice
+
+    validate_invoice(invoice.id)
+
     return StructuringResult(invoice=invoice, line_count=0, overall_confidence=0.0, engine="")
 
 

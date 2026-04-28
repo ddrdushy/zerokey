@@ -532,6 +532,152 @@ Durable design decisions:
   anticipates BFSI customers wanting separate accounts per use case;
   this preserves that future without forcing it today.
 
+### Slice 11 — Validation engine (Phase 3 entry)
+
+Closes the Phase 3 entrance criterion's first half — pre-flight LHDN
+rules running on every structured Invoice before signing/submission.
+This is the "we caught it before LHDN did" UX promise from
+`PRODUCT_VISION.md` finally on the chain. Per
+`LHDN_INTEGRATION.md` the validation engine is the gate between
+extraction/structuring and signing; this slice puts that gate in
+place, with 15 rules covering the categories that don't need
+external API calls.
+
+What landed:
+
+- **`apps.validation.ValidationIssue`** — one row per finding.
+  Severity (`error` / `warning` / `info`), stable `code`, `field_path`
+  (e.g. `supplier_tin`, `totals.grand_total`, `line_items[2].quantity`),
+  plain-language `message`, and a `detail` JSONField for the
+  expandable "technical details" the UI shows on demand. Tenant-scoped
+  with the standard per-table CREATE POLICY pattern; defensive
+  `organization` FK so a JOIN-bug can't leak issue text across
+  tenants.
+- **`apps.validation.rules`** — pure-function rule registry. Each
+  rule takes a hydrated Invoice (line items prefetched) and returns
+  zero or more `Issue` records. 15 rules in this slice:
+
+  Required-fields rules — `required.invoice_number`, `required.issue_date`,
+  `required.currency_code`, `required.supplier_legal_name`,
+  `required.supplier_tin`, `required.buyer_legal_name`,
+  `required.line_items`, `buyer.tin.missing` (warning, not error —
+  B2C uses an LHDN placeholder).
+
+  Format rules — `supplier.tin.format`, `buyer.tin.format` (loose
+  pattern match for individual / corporate TIN; live LHDN
+  verification is a follow-up that needs the LHDN client),
+  `currency.format` / `currency.unsupported` (ISO 4217),
+  `currency.precision` (JPY/KRW/VND/IDR are zero-decimal; others
+  two-decimal), `supplier_msic_code.format` /
+  `buyer_msic_code.format` (5-digit; catalog match is a follow-up),
+  `buyer.country.format` (ISO 3166-1 alpha-2).
+
+  Date rules — `dates.issue_in_future`, `dates.due_before_issue`
+  (errors); `dates.due_in_past` (warning).
+
+  Arithmetic rules — `line.subtotal.mismatch`, `line.total.mismatch`
+  (1-cent tolerance per LHDN spec); `totals.subtotal.mismatch`,
+  `totals.tax.mismatch`, `totals.grand_total.mismatch` (1-ringgit
+  tolerance per invoice).
+
+  Threshold rule — `rm10k.invoice_threshold`, `rm10k.line_threshold`
+  (info, not error — the rule changes consolidation eligibility,
+  doesn't block submission). MYR-only for now; foreign-currency
+  thresholds wait for BNM exchange-rate wiring.
+
+  Consistency rules — `sst.no_tax_on_registered_supplier`
+  (warning), `invoice_number.duplicate` (error, scoped within the
+  supplier's namespace per LHDN's "unique within supplier sequence"
+  spec).
+
+- **`apps.validation.services.validate_invoice(invoice_id)`** — the
+  one entry point. Replaces the prior issue set atomically (re-runs
+  don't accumulate duplicates), emits exactly one
+  `invoice.validated` audit event whose payload reports counts and
+  fired-rule codes but **never message text** (messages can carry
+  user-visible field values; codes are safe). Returns a
+  `ValidationResult` summary with per-severity counts so callers can
+  decide whether to proceed.
+
+- **Pipeline hook**: `apps.submission.services.apply_structured_fields`
+  now runs `validate_invoice` inline after writing the Invoice +
+  LineItems. Inline rather than queued because the rule set is
+  pure regex/arithmetic running in milliseconds, and the review UI
+  needs the issue list on the same response that shows the
+  structured fields. The graceful-degrade path
+  (`_finalize_without_structuring`) also runs validation so a
+  fresh empty invoice still surfaces the required-field errors
+  honestly.
+
+- **API surface**: the Invoice serializer gained `validation_issues`
+  (full list) and `validation_summary` (`{errors, warnings, infos,
+  has_blocking_errors}`) method fields. One round-trip serves the
+  review UI; no separate "fetch issues" call needed. Cross-context
+  service-only import (`apps.validation.services` from
+  `apps.submission.serializers`) per ARCHITECTURE.md.
+
+- **Frontend**: `ValidationIssue` and `ValidationSummary` types
+  added to `frontend/src/lib/api.ts` so the future review UI
+  (Slice D) can render them without further wiring. The detail
+  page already fetches the Invoice; issues now arrive on the same
+  payload.
+
+Tests: 50 new (45 per-rule unit tests + 5 dispatcher integration
+tests). The per-rule tests assemble a fully-clean baseline invoice,
+mutate one field per test, and assert that the right code fires (and
+the noise stays quiet). Tolerance edges are tested explicitly —
+1-cent line wobble doesn't trip; 1-ringgit invoice wobble doesn't
+trip; anything outside does. Service tests cover atomic replacement
+on re-run, audit payload contents (codes yes, messages no), and
+cross-tenant isolation. Suite is now 143 passing / 4 skipped.
+
+Verified live: applied both validation migrations; created a
+deliberately-broken invoice (bad TIN + arithmetic mismatch);
+`validate_invoice` returned 2 errors, 0 warnings, 0 infos with the
+expected codes (`supplier.tin.format`, `totals.grand_total.mismatch`)
+and the audit chain picked up the `invoice.validated` event.
+
+Durable design decisions:
+
+- **One-rule-one-function with a flat list registry.** Rules are
+  pure, side-effect-free, easy to test in isolation. Adding a rule
+  is "write a function, append to RULES, write tests" — the
+  contract is mechanically obvious.
+- **Severity levels match LHDN's posture, not ours.** ERROR =
+  blocks submission; WARNING = advisory; INFO = awareness only.
+  A rule's severity reflects what LHDN does with the violation,
+  not how we feel about it.
+- **Codes are stable; messages are not.** The audit log keeps
+  codes (and counts), the front-end translation layer keys off
+  codes. Rule messages are English copy that gets edited freely
+  without breaking anything.
+- **Re-run idempotency via delete-then-bulk-create.** Simpler than
+  a diff/upsert, and validation is fast enough that the wasted I/O
+  doesn't matter. If the invoice list grows, we revisit.
+- **Inline validation in the structuring path, not a separate
+  task.** Fast rules + UI needs the data on the next paint. We'll
+  promote to a queued task only when external-API rules
+  (live LHDN TIN verify, BNM exchange rates) make the call slow.
+- **Audit log carries codes, never message text.** Messages can
+  carry user-visible PII (TIN values, addresses). Codes never can.
+  This is the "don't put credentials in audit logs" principle
+  applied to validation findings.
+
+What's deferred (and should be obvious next moves):
+
+- **Live LHDN TIN verification** — the format rule passes "looks
+  like a TIN"; the API confirms the TIN actually exists. Same
+  shape, just routed through `apps.administration` for the LHDN
+  credentials.
+- **MSIC / classification / UOM catalog matching** — needs the
+  cached LHDN catalogs landed (a separate slice that fetches and
+  refreshes them monthly).
+- **Foreign-supplier / self-billed / consolidated B2C** — the
+  rule plumbing here will host the special-case rules when the
+  scenarios get explicit pipeline support.
+- **MYR-equivalent threshold** for foreign-currency invoices —
+  needs BNM exchange-rate wiring.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -615,7 +761,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 98 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 143 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -652,6 +798,13 @@ Coverage:
   `SettingNotConfigured` on missing required values; upsert audit
   payload lists keys not values; Claude adapter regression test pins
   the DB-first resolution at the call site.
+- Validation rules — 15 pre-flight rules (required fields, TIN format,
+  currency, MSIC / country, dates, line + invoice arithmetic with
+  tolerance, RM 10K threshold, SST consistency, invoice-number
+  uniqueness within tenant) tested per-rule with focused mutations
+  on a clean baseline. Service-level tests cover atomic re-run
+  replacement, audit-payload contents (codes yes, messages no), and
+  cross-tenant isolation.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -661,31 +814,36 @@ Coverage:
 
 Ordered roughly by Phase 2/3 priority:
 
-1. **Validation engine** — pre-flight checks against LHDN's 55-field rules.
-   The `Invoice.status = "validating"` state exists; the actual validators
-   don't.
-2. **Side-by-side invoice review UI** — current detail page is functional
+1. **Side-by-side invoice review UI** — current detail page is functional
    but the polished review screen with PDF viewer + field-level confidence
-   highlighting hasn't landed.
-3. **Customer master / item master** — `apps.enrichment` is empty. Per
+   highlighting + per-field validation-issue badges hasn't landed.
+   Validation issues now flow through the API (Slice 11), so the UI just
+   needs to render them.
+2. **Customer master / item master** — `apps.enrichment` is empty. Per
    DATA_MODEL.md these accumulate buyer/item patterns and drive auto-fill
    on subsequent invoices.
-4. **Signing service** — placeholder Celery task on the dedicated `signing`
-   queue exists. KMS-backed envelope encryption + Ed25519 signature over
-   `chain_hash` lands when KMS is provisioned.
-5. **MyInvois submission** — placeholder Celery task exists. Real LHDN API
-   client + UUID/QR retrieval + cancellation within 72-hour window.
-6. **Email / WhatsApp / API ingestion channels** — only `web_upload` is
+3. **Live LHDN TIN verification** — the format rule passes "looks like a
+   TIN"; the API confirms the TIN actually exists. Wires through the
+   LHDN SystemSetting credentials (Slice 10).
+4. **MSIC / classification / UOM catalog matching** — format rules
+   exist; full catalog matching needs cached LHDN catalogs (separate
+   slice that fetches + refreshes monthly).
+5. **Signing service** — placeholder Celery task on the dedicated
+   `signing` queue exists. KMS-backed envelope encryption + Ed25519
+   signature over `chain_hash` lands when KMS is provisioned.
+6. **MyInvois submission** — placeholder Celery task exists. Real LHDN
+   API client + UUID/QR retrieval + cancellation within 72-hour window.
+7. **Email / WhatsApp / API ingestion channels** — only `web_upload` is
    wired. Web-upload is the most visible path; the others share the
    `IngestionJob` model and just need their adapters.
-7. **Billing + Stripe + FPX** — `apps.billing` is empty; the plan/tier
+8. **Billing + Stripe + FPX** — `apps.billing` is empty; the plan/tier
    catalog from BUSINESS_MODEL.md isn't seeded.
-8. **PII field-level encryption** — `Organization.contact_email`,
-   `contact_phone`, `registered_address` are plain text in dev. The
-   encrypted column type swaps in when KMS lands.
-9. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
-   Invoices, Customers, Audit log, Engine activity, Settings.
-10. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
+9. **PII field-level encryption** — `Organization.contact_email`,
+   `contact_phone`, `registered_address` are plain text in dev. Same
+   KMS dependency as the runtime-config encryption (Slice 10).
+10. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
+    Invoices, Customers, Audit log, Engine activity, Settings.
+11. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
     can wrap the existing `make test` + frontend lint/build.
 
 ---
