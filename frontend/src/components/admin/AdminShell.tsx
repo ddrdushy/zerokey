@@ -206,13 +206,6 @@ function AdminTopbar({ me, onLogout }: { me: AdminMe; onLogout: () => void }) {
           </button>
           {menuOpen && (
             <div className="absolute right-0 top-full mt-2 w-56 rounded-md border border-slate-100 bg-white p-1 shadow-md">
-              <Link
-                href="/dashboard"
-                onClick={() => setMenuOpen(false)}
-                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-ink hover:bg-slate-50"
-              >
-                Switch to customer view
-              </Link>
               <button
                 type="button"
                 onClick={onLogout}

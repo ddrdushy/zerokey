@@ -84,6 +84,7 @@ class UserSerializer(serializers.ModelSerializer):
             "preferred_language",
             "preferred_timezone",
             "two_factor_enabled",
+            "is_staff",
             "memberships",
             "active_organization_id",
         ]

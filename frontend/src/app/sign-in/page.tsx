@@ -23,8 +23,12 @@ export default function SignInPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await api.login(email, password);
-      router.push("/dashboard");
+      const me = await api.login(email, password);
+      // Platform staff are operator-only — they don't have or need an
+      // active org context, so we route them straight to /admin and
+      // skip the customer dashboard entirely. Customers continue to
+      // land on /dashboard.
+      router.push(me.is_staff ? "/admin" : "/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");
     } finally {

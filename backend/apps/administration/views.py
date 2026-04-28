@@ -44,6 +44,15 @@ def admin_me(request: Request) -> Response:
 
 @api_view(["GET"])
 @permission_classes([IsPlatformStaff])
+def platform_overview(request: Request) -> Response:
+    """Cross-tenant KPI snapshot for the admin landing page."""
+    return Response(
+        services.platform_overview(actor_user_id=request.user.id)
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
 def platform_audit_events(request: Request) -> Response:
     """Cross-tenant audit list. Uses sequence-cursor pagination (same as the
     customer-facing audit page).

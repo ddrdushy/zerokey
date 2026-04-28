@@ -65,6 +65,7 @@ export type Me = {
   preferred_language: string;
   preferred_timezone: string;
   two_factor_enabled: boolean;
+  is_staff: boolean;
   memberships: Membership[];
   active_organization_id: string | null;
 };
@@ -187,6 +188,28 @@ export type AdminMe = {
   email: string;
   is_staff: boolean;
   is_superuser: boolean;
+};
+
+export type PlatformOverview = {
+  tenants: { total: number; active_last_7d: number };
+  users: { total: number };
+  ingestion: { total: number; last_7d: number; last_24h: number };
+  invoices: { total: number; last_7d: number; pending_review: number };
+  inbox: { open: number };
+  audit: { total: number; last_24h: number };
+  engines: {
+    total: number;
+    active: number;
+    degraded: number;
+    archived: number;
+    calls_last_7d: Array<{
+      engine: string;
+      total: number;
+      success: number;
+      failure: number;
+      unavailable: number;
+    }>;
+  };
 };
 
 export type AdminEngine = {
@@ -482,6 +505,8 @@ export const api = {
     ),
   adminMe: () =>
     request<AdminMe>("/admin/me/"),
+  adminOverview: () =>
+    request<PlatformOverview>("/admin/overview/"),
   adminListPlatformAuditEvents: (params?: {
     actionType?: string;
     organizationId?: string;

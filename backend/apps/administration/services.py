@@ -324,6 +324,151 @@ def count_platform_events(*, actor_user_id: UUID | str) -> int:
         return AuditEvent.objects.count()
 
 
+# --- Platform overview KPIs (Slice 37) -------------------------------------------
+
+
+def platform_overview(*, actor_user_id: UUID | str) -> dict[str, Any]:
+    """Cross-tenant snapshot for the admin overview page.
+
+    Returns counts the operator looks at first when opening the console:
+
+      - tenants: total + active-in-last-7d (active = at least one
+        ingestion job in the window).
+      - users: total platform user accounts.
+      - ingestion: total ingestion jobs + last-7d count + last-24h count.
+      - invoices: total invoices + last-7d count + how many are still
+        "ready_for_review" (i.e. unsubmitted and unresolved).
+      - inbox: open exception items across every tenant.
+      - audit: total events on the chain + last-24h.
+      - engines: total registered + active count + degraded count.
+
+    Audited as ``admin.platform_overview_viewed`` so the dashboard load
+    appears on the chain. Lightweight payload (counts only) so the
+    audit volume stays sane on a frequently-loaded page.
+    """
+    from datetime import timedelta
+
+    from django.db.models import Count, Q
+    from django.utils import timezone
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.extraction.models import Engine
+    from apps.identity.models import Organization, User
+    from apps.identity.tenancy import super_admin_context
+    from apps.ingestion.models import IngestionJob
+    from apps.submission.models import ExceptionInboxItem, Invoice
+
+    now = timezone.now()
+    seven_days_ago = now - timedelta(days=7)
+    one_day_ago = now - timedelta(hours=24)
+
+    with super_admin_context(reason="admin.platform_overview:read"):
+        tenants_total = Organization.objects.count()
+        tenants_active_7d = (
+            IngestionJob.objects.filter(created_at__gte=seven_days_ago)
+            .values("organization_id")
+            .distinct()
+            .count()
+        )
+        users_total = User.objects.count()
+
+        jobs_total = IngestionJob.objects.count()
+        jobs_7d = IngestionJob.objects.filter(created_at__gte=seven_days_ago).count()
+        jobs_24h = IngestionJob.objects.filter(created_at__gte=one_day_ago).count()
+
+        invoices_total = Invoice.objects.count()
+        invoices_7d = Invoice.objects.filter(created_at__gte=seven_days_ago).count()
+        invoices_pending = Invoice.objects.filter(
+            status=Invoice.Status.READY_FOR_REVIEW
+        ).count()
+
+        inbox_open = ExceptionInboxItem.objects.filter(
+            status=ExceptionInboxItem.Status.OPEN
+        ).count()
+
+        audit_total = AuditEvent.objects.count()
+        audit_24h = AuditEvent.objects.filter(timestamp__gte=one_day_ago).count()
+
+        engine_breakdown = {
+            row["status"]: int(row["c"])
+            for row in Engine.objects.values("status").annotate(c=Count("id"))
+        }
+        engines_total = sum(engine_breakdown.values())
+
+        # Per-engine 7-day call success rate so the operator can spot a
+        # silently-failing engine before tenants do. Gathered as a small
+        # list rather than expanding the count blob.
+        from apps.extraction.models import EngineCall
+
+        engine_calls = list(
+            EngineCall.objects.filter(started_at__gte=seven_days_ago)
+            .values("engine__name")
+            .annotate(
+                total=Count("id"),
+                success=Count("id", filter=Q(outcome=EngineCall.Outcome.SUCCESS)),
+                failure=Count("id", filter=Q(outcome=EngineCall.Outcome.FAILURE)),
+                unavailable=Count(
+                    "id", filter=Q(outcome=EngineCall.Outcome.UNAVAILABLE)
+                ),
+            )
+            .order_by("-total")[:8]
+        )
+
+    overview = {
+        "tenants": {
+            "total": tenants_total,
+            "active_last_7d": tenants_active_7d,
+        },
+        "users": {"total": users_total},
+        "ingestion": {
+            "total": jobs_total,
+            "last_7d": jobs_7d,
+            "last_24h": jobs_24h,
+        },
+        "invoices": {
+            "total": invoices_total,
+            "last_7d": invoices_7d,
+            "pending_review": invoices_pending,
+        },
+        "inbox": {"open": inbox_open},
+        "audit": {"total": audit_total, "last_24h": audit_24h},
+        "engines": {
+            "total": engines_total,
+            "active": int(engine_breakdown.get("active", 0)),
+            "degraded": int(engine_breakdown.get("degraded", 0)),
+            "archived": int(engine_breakdown.get("archived", 0)),
+            "calls_last_7d": [
+                {
+                    "engine": row["engine__name"],
+                    "total": int(row["total"]),
+                    "success": int(row["success"]),
+                    "failure": int(row["failure"]),
+                    "unavailable": int(row["unavailable"]),
+                }
+                for row in engine_calls
+            ],
+        },
+    }
+
+    record_event(
+        action_type="admin.platform_overview_viewed",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=None,
+        affected_entity_type="Platform",
+        affected_entity_id="",
+        payload={
+            "counters": {
+                "tenants_total": tenants_total,
+                "invoices_total": invoices_total,
+                "inbox_open": inbox_open,
+            },
+        },
+    )
+    return overview
+
+
 # --- Tenant directory (Slice 35) -------------------------------------------------
 
 

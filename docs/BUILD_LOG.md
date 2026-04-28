@@ -3630,6 +3630,130 @@ What's deferred:
 
 ---
 
+### Slice 37 — Admin overview KPIs + operator-only sign-in routing
+
+The super-admin overview was a placeholder ("you're signed in
+as platform staff" + coming-next cards). This slice fills it
+with real cross-tenant KPIs the operator looks at first when
+opening the console, and removes the customer-view dependency
+from the staff sign-in flow — staff users go straight to
+`/admin`, not via `/dashboard`.
+
+Backend:
+
+- **`apps.administration.services.platform_overview`** —
+  cross-tenant KPI aggregator. Counts tenants (total + active-
+  in-last-7d), users, ingestion jobs (total / 7d / 24h),
+  invoices (total / 7d / pending review), open inbox items,
+  audit events (total / last 24h), and engines (total + status
+  breakdown). Plus a per-engine 7-day call breakdown
+  (success / failure / unavailable) for the engine-health
+  table. All under `super_admin_context` elevation, audited as
+  `admin.platform_overview_viewed` with a counter snapshot but
+  no PII. Light payload so the audit volume stays sane on a
+  frequently-loaded page.
+- **`GET /api/v1/admin/overview/`** — staff-only endpoint
+  returning the dict above.
+- **`UserSerializer` now exposes `is_staff`** so the frontend
+  knows where to route the user post-login.
+
+Frontend:
+
+- **`/admin/page.tsx`** rewritten — real KPIs in a 4-column
+  responsive grid, each card linking to the relevant detail
+  page (`Tenants → /admin/tenants`, `Open inbox → /admin/audit?action_type=inbox.item_opened`, etc.). The
+  `Open inbox` card goes warning-tinted when count > 0;
+  `Engines` card goes warning-tinted when any are degraded.
+  Below the grid: an engine-health table (last 7 days, top 8
+  engines by call volume) showing per-engine success rate
+  with health colour (success ≥ 80% green, < 80% red, 0
+  failures = green 100%).
+- **`/sign-in` routes by `is_staff`** — the login response
+  now carries `is_staff`, and the post-login redirect goes
+  to `/admin` for staff and `/dashboard` for customers.
+  Staff sign-in skips the customer dashboard entirely; they
+  don't have or need an active org context.
+- **AdminShell drops the "Switch to customer view" link.**
+  Platform staff are operator-only by intent; the avatar
+  menu is now just "Sign out". (Staff who really need to
+  verify a customer flow can sign out and sign in as a
+  customer; we don't make that gesture easy on purpose,
+  because mixing roles in one session was the source of
+  several routing edge-cases in previous slices.)
+- **`api.adminOverview()`** + `PlatformOverview` type added.
+
+Tests: 4 new (373 passing total, was 369). Auth gate (401/403/
+customer-403). Staff sees the full KPI block with non-zero
+counts. Loading the overview emits an audit event with the
+counter snapshot in the payload.
+
+Verified live (`admin@symprio.com`): signed in, landed on
+`/admin` directly (not `/dashboard`). Overview rendered with
+25 tenants / 34 ingestion jobs / 27 invoices / 21 open inbox
+(warning-tinted) / 115 audit events / 5 engines / 27 users.
+Engine activity table showed pdfplumber + ollama + easyocr at
+100% success and the two anthropic engines at 0% (correct —
+no Anthropic API key is configured, so every call fails fast
+with `EngineUnavailable`). Avatar menu confirmed "Switch to
+customer view" is gone.
+
+Durable design decisions:
+
+- **Staff sign-in skips `/dashboard` entirely.** Earlier
+  slices treated staff users as "regular customer who also
+  has admin powers". That model leaks (sessions need an
+  active_organization_id, navigation has to thread two
+  shells, sign-out has to reason about which shell you came
+  from). Treating staff as "operator only, no customer
+  context" eliminates the cross-shell ambiguity. Customers
+  who get promoted to staff still sign in cleanly — they
+  just need to sign out and back in if they want to test
+  customer flows, which is the right friction.
+- **The KPI payload is small but the queries aren't trivial.**
+  Eight separate aggregates (counts + status breakdown +
+  per-engine call rollup) run on every overview load. We
+  pay for it because the operator looks at this page
+  multiple times a day, and putting these on a 30-second
+  client poll would multiply the chain noise from
+  `admin.platform_overview_viewed` events. Better to fetch
+  once on mount and reload manually.
+- **Each KPI card is a deep link, not just a number.** The
+  overview is the site map for the admin namespace —
+  clicking "Open inbox 21" takes you to the audit log
+  pre-filtered to `inbox.item_opened` events; clicking
+  "Tenants 25" takes you to the tenant directory. No need
+  for a separate nav-with-counts pattern.
+- **Engine health colour by success rate, not raw failure
+  count.** A 1000-call engine with 50 failures (95%
+  success) is healthier than a 10-call engine with 5
+  failures (50% success); the colour reflects rate, not
+  count.
+- **"Switch to customer view" was a footgun, not a feature.**
+  The avatar menu had it in Slice 33 because staff at the
+  time were customer-shaped users who happened to be
+  flagged. Now that sign-in routes them away from
+  `/dashboard`, the back-door doesn't fit; removing it
+  matches the new mental model.
+
+What's deferred:
+
+- **Tenant detail page.** The Tenants card links to the
+  list; a per-tenant drilldown (recent invoices, member
+  list, raw timeline, impersonation button) is the natural
+  next slice. The audit page partial-filter does the
+  minimum job for now.
+- **Time-series charts.** The KPIs are point-in-time
+  counts; trends would help the operator spot a
+  rising-failure-rate engine before it hits the 80%
+  cutoff. Phase 5 polish; the underlying data is on the
+  EngineCall rows.
+- **Auto-refresh.** The overview fetches once on mount.
+  Polling it every 30s would surface real-time changes
+  but multiply the audit chain entries from the
+  `admin.platform_overview_viewed` event.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -3711,7 +3835,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 369 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 373 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
