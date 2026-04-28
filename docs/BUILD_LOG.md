@@ -793,6 +793,63 @@ What's deferred (UI-only, the data is there):
 - **Approve & submit** primary action — gated on the signing
   service landing.
 
+### Slice 13 — Login-after-register RLS fix
+
+A real bug surfaced by the side-by-side review work: existing dev
+credentials (`fresh@example.com`, `slice8@example.com`,
+`sliceA@example.com`) couldn't log in and view their own data.
+`/me` returned `memberships: []` and `active_organization_id: null`,
+leaving the dashboard stuck on "No active organization".
+
+**Root cause** — `apps.identity.services.memberships_for(user)` is a
+fundamentally cross-tenant query: its job is to answer "which
+tenants can this user act for?", which is exactly the question we
+ask *before* a tenant context is set (during login, during /me when
+the session has no active org yet, during organization-switch). The
+RLS policy on `identity_membership` filters every row out when
+`app.current_tenant_id` is empty, so the lookup returned zero rows.
+Registration worked because `register_owner` runs in
+`super_admin_context`; login didn't, because the helper ran with
+no tenant on the connection.
+
+The unit tests passed because the test backend is SQLite
+(no RLS); only Postgres-backed dev / prod manifested the bug.
+
+Fix: both `memberships_for` and `can_user_act_for_organization`
+(the access check used by `switch_organization`) now wrap their
+queries in `super_admin_context`. The elevation is narrowly scoped
+to the read query and never leaks to the caller; the docstrings
+explain *why* this is the right level of authority for those
+specific lookups (cross-tenant by design, not by accident).
+
+Tests: 1 new Postgres-only regression test in
+`apps/identity/tests/test_tenancy.py` that simulates the login
+moment — clears the tenant variable, calls `memberships_for`, and
+asserts it returns the user's memberships. Also covers
+`can_user_act_for_organization` (positive + negative cases).
+Suite still 144 passing on SQLite; the 5 Postgres-only tests
+require `DJANGO_SETTINGS_MODULE=zerokey.settings.dev`.
+
+Verified live against the running stack: logged in as
+`sliceA@example.com`, `/me` returned the membership and
+`active_organization_id`, `/api/v1/ingestion/jobs/` returned the
+existing jobs. Previously these all returned empty.
+
+Durable design decisions:
+
+- **Cross-tenant lookups belong in `super_admin_context`.** The
+  rule of thumb: if the question is "which tenant should I be
+  scoped to?", the lookup that answers it cannot itself be tenant-
+  scoped. Same principle that registration relied on; just hadn't
+  been applied to the login path.
+- **Postgres-only tests run under `settings.dev`, not the default
+  test settings.** Adding a Postgres-fixture to the default test
+  config would slow the suite for no benefit on the SQLite path.
+  The tradeoff: bugs that only manifest on Postgres need
+  conscious effort to catch. The fix here is to write a
+  Postgres-gated test — they accumulate, and CI eventually runs
+  them as a separate matrix entry.
+
 ---
 
 ## Architectural decisions worth preserving

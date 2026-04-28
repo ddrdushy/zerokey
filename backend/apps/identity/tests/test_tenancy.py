@@ -64,3 +64,38 @@ class TestTenantIsolation:
     ) -> None:
         with super_admin_context(reason="cross-tenant verification job"):
             assert OrganizationMembership.objects.count() == 2
+
+    def test_memberships_for_returns_user_memberships_without_tenant_set(
+        self, two_tenants: tuple[Organization, Organization, Role]
+    ) -> None:
+        """Regression: memberships_for must work when no tenant variable is set.
+
+        This is the login-flow case — between authenticate() and the session
+        getting an organization_id, no tenant is on the connection, and a
+        naive query against ``identity_membership`` is filtered to zero rows
+        by RLS. The service wraps the lookup in ``super_admin_context``
+        because answering "which tenants does this user belong to?" is
+        fundamentally cross-tenant.
+        """
+        from apps.identity.services import (
+            can_user_act_for_organization,
+            memberships_for,
+        )
+
+        a, _b, _role = two_tenants
+        u_a = User.objects.get(email="a@example.com")
+
+        clear_tenant()  # belt: simulate the no-active-tenant login moment
+        memberships = memberships_for(u_a)
+        assert len(memberships) == 1
+        assert memberships[0].organization_id == a.id
+
+        # Same for the access-check helper.
+        assert can_user_act_for_organization(u_a, a.id) is True
+        # And it correctly says NO for an org the user doesn't belong to.
+        b_org_id = next(
+            org.id
+            for org in Organization.objects.all()
+            if org.id != a.id
+        )
+        assert can_user_act_for_organization(u_a, b_org_id) is False

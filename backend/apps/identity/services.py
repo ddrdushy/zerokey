@@ -19,7 +19,7 @@ from apps.audit.models import AuditEvent
 from apps.audit.services import record_event
 
 from .models import Organization, OrganizationMembership, Role, User
-from .tenancy import set_tenant
+from .tenancy import set_tenant, super_admin_context
 
 
 class RegistrationError(Exception):
@@ -120,18 +120,38 @@ def register_owner(
 
 
 def memberships_for(user: User) -> list[OrganizationMembership]:
-    """Active memberships for ``user``, eager-loaded with organization + role."""
-    return list(
-        OrganizationMembership.objects.filter(user=user, is_active=True)
-        .select_related("organization", "role")
-        .order_by("organization__legal_name")
-    )
+    """Active memberships for ``user``, eager-loaded with organization + role.
+
+    This query is *fundamentally cross-tenant* — its job is to answer "which
+    tenants can this user act for?", which is exactly the question we ask
+    *before* a tenant context is set (during login, during /me when the
+    session has no active org yet, during organization-switch). RLS on
+    ``identity_membership`` would otherwise filter every row out because
+    ``app.current_tenant_id`` is unset, leaving the user unable to see
+    their own memberships.
+
+    The super-admin elevation here is narrowly scoped to one read query —
+    the caller never receives a connection in elevated state.
+    """
+    with super_admin_context(reason="identity.memberships_for:user_org_lookup"):
+        return list(
+            OrganizationMembership.objects.filter(user=user, is_active=True)
+            .select_related("organization", "role")
+            .order_by("organization__legal_name")
+        )
 
 
 def can_user_act_for_organization(user: User, organization_id: uuid.UUID | str) -> bool:
-    """True if ``user`` has an active membership in ``organization_id``."""
-    return OrganizationMembership.objects.filter(
-        user=user,
-        organization_id=organization_id,
-        is_active=True,
-    ).exists()
+    """True if ``user`` has an active membership in ``organization_id``.
+
+    Same cross-tenant rationale as ``memberships_for``: this is the access
+    check we run *before* switching the tenant variable, so RLS on
+    ``identity_membership`` would block it. Wrapped in the same super-admin
+    elevation; the elevation does not leak to the caller.
+    """
+    with super_admin_context(reason="identity.can_user_act_for_organization:access_check"):
+        return OrganizationMembership.objects.filter(
+            user=user,
+            organization_id=organization_id,
+            is_active=True,
+        ).exists()
