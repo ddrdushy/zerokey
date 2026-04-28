@@ -91,6 +91,13 @@ class IngestionJob(TenantScopedModel):
 
     error_message = models.TextField(blank=True)
 
+    # Extraction outputs — populated as the state machine advances. Phase 2
+    # stores raw text + the engine that produced it; structured fields live
+    # on the Invoice entity (next slice).
+    extracted_text = models.TextField(blank=True)
+    extraction_engine = models.CharField(max_length=128, blank=True)
+    extraction_confidence = models.FloatField(null=True, blank=True)
+
     upload_timestamp = models.DateTimeField(default=timezone.now, db_index=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 

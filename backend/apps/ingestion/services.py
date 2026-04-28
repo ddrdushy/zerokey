@@ -121,6 +121,14 @@ def upload_web_file(
         },
     )
 
+    # Kick off extraction asynchronously. on_commit so the task only runs after
+    # the row is durable — otherwise the worker can race the transaction.
+    from django.db import transaction as _txn
+
+    from apps.extraction.tasks import extract_invoice
+
+    _txn.on_commit(lambda: extract_invoice.delay(str(job.id)))
+
     return UploadResult(job=job)
 
 

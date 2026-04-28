@@ -22,6 +22,10 @@ class IngestionJobSerializer(serializers.ModelSerializer):
             "upload_timestamp",
             "completed_at",
             "error_message",
+            "extracted_text",
+            "extraction_engine",
+            "extraction_confidence",
+            "state_transitions",
             "download_url",
         ]
         read_only_fields = fields

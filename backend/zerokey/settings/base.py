@@ -208,9 +208,10 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_TASK_ACKS_LATE = True
-# Queues by priority (per ARCHITECTURE.md). The signing service runs on its own queue.
+# Queues by priority (per ARCHITECTURE.md). The signing service runs on its
+# own queue; Celery auto-creates queues from task definitions, so we don't
+# need to enumerate them here.
 CELERY_TASK_DEFAULT_QUEUE = "default"
-CELERY_TASK_QUEUES = ("high", "default", "low", "signing")
 
 # --- Logging --------------------------------------------------------------------------
 # Sensitive data is never logged (CLAUDE.md). Loggers must rely on field-level redaction

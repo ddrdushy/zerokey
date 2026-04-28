@@ -29,6 +29,18 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, [router]);
 
+  // Poll while any job is still in flight. Stops once everything is terminal.
+  useEffect(() => {
+    const TERMINAL = new Set(["validated", "rejected", "cancelled", "error", "ready_for_review"]);
+    const inFlight = jobs.some((j) => !TERMINAL.has(j.status));
+    if (!inFlight) return;
+    const handle = setInterval(async () => {
+      const list = await api.listJobs().catch(() => null);
+      if (list) setJobs(list);
+    }, 2000);
+    return () => clearInterval(handle);
+  }, [jobs]);
+
   function onUploaded(job: IngestionJob) {
     setJobs((prev) => [job, ...prev]);
   }
@@ -105,26 +117,32 @@ export default function DashboardPage() {
         ) : (
           <ul className="mt-4 divide-y divide-slate-100 border-y border-slate-100">
             {jobs.map((j) => (
-              <li key={j.id} className="flex items-center justify-between py-3">
-                <div>
-                  <div className="text-base font-medium">{j.original_filename}</div>
-                  <div className="text-2xs uppercase tracking-wider text-slate-400">
-                    {j.source_channel} · {(j.file_size / 1024).toFixed(1)} KB ·{" "}
-                    {new Date(j.upload_timestamp).toLocaleString()}
-                  </div>
-                </div>
-                <span
-                  className={[
-                    "rounded-full px-3 py-1 text-2xs font-medium",
-                    j.status === "validated"
-                      ? "bg-success/10 text-success"
-                      : j.status === "error" || j.status === "rejected"
-                        ? "bg-error/10 text-error"
-                        : "bg-slate-100 text-slate-600",
-                  ].join(" ")}
+              <li key={j.id}>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/dashboard/jobs/${j.id}`)}
+                  className="flex w-full items-center justify-between py-3 text-left hover:bg-slate-50"
                 >
-                  {j.status.replace(/_/g, " ")}
-                </span>
+                  <div>
+                    <div className="text-base font-medium">{j.original_filename}</div>
+                    <div className="text-2xs uppercase tracking-wider text-slate-400">
+                      {j.source_channel} · {(j.file_size / 1024).toFixed(1)} KB ·{" "}
+                      {new Date(j.upload_timestamp).toLocaleString()}
+                    </div>
+                  </div>
+                  <span
+                    className={[
+                      "rounded-full px-3 py-1 text-2xs font-medium",
+                      j.status === "validated" || j.status === "ready_for_review"
+                        ? "bg-success/10 text-success"
+                        : j.status === "error" || j.status === "rejected"
+                          ? "bg-error/10 text-error"
+                          : "bg-slate-100 text-slate-600",
+                    ].join(" ")}
+                  >
+                    {j.status.replace(/_/g, " ")}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>

@@ -79,6 +79,10 @@ export type IngestionJob = {
   upload_timestamp: string;
   completed_at: string | null;
   error_message: string;
+  extracted_text?: string;
+  extraction_engine?: string;
+  extraction_confidence?: number | null;
+  state_transitions?: Array<{ status: string; at: string }>;
   download_url: string | null;
 };
 
@@ -128,5 +132,6 @@ export const api = {
     }),
   listJobs: () =>
     request<{ results: IngestionJob[] }>("/ingestion/jobs/").then((r) => r.results),
+  getJob: (id: string) => request<IngestionJob>(`/ingestion/jobs/${id}/`),
   uploadFile,
 };

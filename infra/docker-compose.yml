@@ -16,6 +16,36 @@
 
 name: zerokey
 
+# Shared environment for every service that runs the Django backend image.
+# Workers and the API tier all need the same DB / Redis / S3 credentials —
+# divergence here was the source of "the API works but the worker doesn't"
+# during early development.
+x-backend-env: &backend-env
+  DJANGO_SETTINGS_MODULE: zerokey.settings.dev
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-key-change-me}
+  DJANGO_DEBUG: "true"
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-zerokey}
+  POSTGRES_USER: ${POSTGRES_USER:-zerokey}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zerokey_dev}
+  POSTGRES_APP_USER: ${POSTGRES_APP_USER:-zerokey_app}
+  POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-zerokey_app_dev}
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  QDRANT_URL: http://qdrant:6333
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_REGION: ${AWS_REGION:-ap-southeast-5}
+  S3_ACCESS_KEY: ${MINIO_ROOT_USER:-zerokey_minio}
+  S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-zerokey_minio_dev}
+  S3_BUCKET_UPLOADS: zerokey-uploads
+  S3_BUCKET_SIGNED: zerokey-signed
+  S3_BUCKET_EXPORTS: zerokey-exports
+  S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -103,32 +133,7 @@ services:
       dockerfile: Dockerfile.dev
     restart: unless-stopped
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
-    environment:
-      DJANGO_SETTINGS_MODULE: zerokey.settings.dev
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-key-change-me}
-      DJANGO_DEBUG: "true"
-      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: ${POSTGRES_DB:-zerokey}
-      POSTGRES_USER: ${POSTGRES_USER:-zerokey}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zerokey_dev}
-      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-zerokey_app}
-      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-zerokey_app_dev}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      QDRANT_URL: http://qdrant:6333
-      # S3-compatible storage (MinIO in dev, AWS S3 in prod).
-      S3_ENDPOINT_URL: http://minio:9000
-      S3_REGION: ${AWS_REGION:-ap-southeast-5}
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-zerokey_minio}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-zerokey_minio_dev}
-      S3_BUCKET_UPLOADS: zerokey-uploads
-      S3_BUCKET_SIGNED: zerokey-signed
-      S3_BUCKET_EXPORTS: zerokey-exports
-      # Pre-signed URLs are surfaced to browsers via http://localhost:9000.
-      S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+    environment: *backend-env
     ports:
       - "8000:8000"
     volumes:
@@ -159,25 +164,15 @@ services:
         "-n",
         "worker@%h",
       ]
-    environment:
-      DJANGO_SETTINGS_MODULE: zerokey.settings.dev
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-key-change-me}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: ${POSTGRES_DB:-zerokey}
-      POSTGRES_USER: ${POSTGRES_USER:-zerokey}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zerokey_dev}
-      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-zerokey_app}
-      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-zerokey_app_dev}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    environment: *backend-env
     volumes:
       - ../backend:/app
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
 
   # Signing-service worker — dedicated to the signing queue only.
@@ -202,21 +197,13 @@ services:
         "signer@%h",
         "--concurrency=2",
       ]
-    environment:
-      DJANGO_SETTINGS_MODULE: zerokey.settings.dev
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-key-change-me}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: ${POSTGRES_DB:-zerokey}
-      POSTGRES_USER: ${POSTGRES_USER:-zerokey}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zerokey_dev}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    environment: *backend-env
     volumes:
       - ../backend:/app
     depends_on:
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
 
   frontend:
