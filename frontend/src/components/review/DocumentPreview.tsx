@@ -43,10 +43,16 @@ export function DocumentPreview({ filename, mimeType, downloadUrl }: Props) {
           <Empty message="The download link expired. Refresh to get a new one." />
         ) : kind === "pdf" ? (
           <iframe
-            // sandbox without `allow-scripts` keeps the embedded PDF from
-            // running anything weird; LHDN-shape PDFs are static documents,
-            // there's no good reason to grant scripting to the embed.
-            sandbox="allow-same-origin"
+            // No sandbox attribute: Chromium's built-in PDF viewer is itself
+            // a scripted application — sandboxing without `allow-scripts`
+            // makes it refuse to render with "This page has been blocked
+            // by Chromium". The presigned URL is short-lived (5 min TTL)
+            // and points at a customer-uploaded document on our own
+            // storage, so cross-origin boundary + presigned-URL TTL are
+            // doing the security work here, not the iframe sandbox.
+            // PDF-embedded JS is disabled by Chromium's PDF viewer at the
+            // renderer level, so dropping the sandbox doesn't open that
+            // attack surface.
             src={`${downloadUrl}#toolbar=0&navpanes=0`}
             title={`Source: ${filename}`}
             className="h-full w-full border-0 bg-white"
