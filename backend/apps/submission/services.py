@@ -183,7 +183,7 @@ def structure_invoice(invoice_id: UUID | str) -> StructuringResult:
         diagnostics=result.diagnostics,
     )
 
-    return _apply_structured_fields(
+    return apply_structured_fields(
         invoice=invoice,
         engine_name=decision.engine.name,
         fields=result.fields,
@@ -193,7 +193,7 @@ def structure_invoice(invoice_id: UUID | str) -> StructuringResult:
 
 
 @transaction.atomic
-def _apply_structured_fields(
+def apply_structured_fields(
     *,
     invoice: Invoice,
     engine_name: str,
@@ -201,6 +201,14 @@ def _apply_structured_fields(
     per_field_confidence: dict[str, float],
     overall_confidence: float,
 ) -> StructuringResult:
+    """Populate an Invoice from a StructuredExtractResult-shaped payload.
+
+    Used both by ``structure_invoice`` (FieldStructure path: text → fields)
+    and by the extraction context's vision-escalation path (vision adapter
+    returns fields directly, skipping FieldStructure). The two paths
+    converge here so the resulting Invoice + LineItem rows look identical
+    regardless of which engine produced them.
+    """
     for header in INVOICE_HEADER_FIELDS:
         value = fields.get(header, "")
         if not value:

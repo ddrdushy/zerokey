@@ -16,13 +16,16 @@ import pytest
 from apps.audit.models import AuditEvent
 from apps.extraction.capabilities import (
     EngineUnavailable,
+    StructuredExtractResult,
     TextExtractEngine,
     TextExtractResult,
+    VisionExtractEngine,
 )
 from apps.extraction.models import Engine, EngineCall, EngineRoutingRule
 from apps.extraction.services import run_extraction
 from apps.identity.models import Organization, OrganizationMembership, Role, User
 from apps.ingestion.models import IngestionJob
+from apps.submission.models import Invoice
 
 
 @pytest.fixture
@@ -60,6 +63,26 @@ def pdf_engine_and_rule(db) -> Engine:
     return engine
 
 
+@pytest.fixture
+def vision_engine_and_rule(db) -> Engine:
+    """Register a vision engine + routing rule that matches PDFs.
+
+    Slice A (vision escalation) uses this when a low-confidence text-extract
+    triggers a re-route through a VisionExtractEngine on the same bytes.
+    """
+    engine, _ = Engine.objects.update_or_create(
+        name="anthropic-claude-sonnet-vision",
+        defaults={"vendor": "anthropic", "capability": "vision_extract"},
+    )
+    EngineRoutingRule.objects.update_or_create(
+        capability="vision_extract",
+        priority=100,
+        engine=engine,
+        defaults={"match_mime_types": "application/pdf,image/png", "is_active": True},
+    )
+    return engine
+
+
 def _make_job(org: Organization) -> IngestionJob:
     return IngestionJob.objects.create(
         organization=org,
@@ -80,6 +103,54 @@ class _FakeAdapter(TextExtractEngine):
 
     def extract_text(self, *, body: bytes, mime_type: str) -> TextExtractResult:
         return self._result
+
+
+class _FakeVisionAdapter(VisionExtractEngine):
+    name = "anthropic-claude-sonnet-vision"
+
+    def __init__(
+        self,
+        result: StructuredExtractResult | None = None,
+        raises: Exception | None = None,
+    ) -> None:
+        self._result = result or StructuredExtractResult(
+            fields={
+                "invoice_number": "INV-001",
+                "supplier_legal_name": "Vision Supplies",
+                "grand_total": "1234.56",
+            },
+            per_field_confidence={
+                "invoice_number": 0.92,
+                "supplier_legal_name": 0.88,
+                "grand_total": 0.90,
+            },
+            overall_confidence=0.90,
+            cost_micros=8_000,
+            diagnostics={"model": "fake"},
+        )
+        self._raises = raises
+        self.calls: list[tuple[bytes, str]] = []
+
+    def extract_vision(
+        self, *, body: bytes, mime_type: str, target_schema: list[str]
+    ) -> StructuredExtractResult:
+        self.calls.append((body, mime_type))
+        if self._raises is not None:
+            raise self._raises
+        return self._result
+
+
+def _adapter_dispatcher(text_adapter, vision_adapter):
+    """Return a stand-in for ``get_adapter`` that routes by adapter name."""
+
+    def _resolve(name: str):
+        if text_adapter is not None and name == text_adapter.name:
+            return text_adapter
+        if vision_adapter is not None and name == vision_adapter.name:
+            return vision_adapter
+        raise KeyError(name)
+
+    return _resolve
 
 
 @pytest.mark.django_db
@@ -182,3 +253,197 @@ class TestPdfplumberAdapterUnit:
 
         with pytest.raises(EngineUnavailable):
             PdfplumberAdapter().extract_text(body=b"x", mime_type="image/png")
+
+
+@pytest.mark.django_db
+class TestVisionEscalation:
+    """Low-confidence text extracts re-route through VisionExtract.
+
+    Per ENGINE_REGISTRY.md: native PDFs go to pdfplumber; if pdfplumber's
+    confidence is below the escalation threshold (default 0.5), the bytes
+    are re-routed through a VisionExtract engine which returns structured
+    fields directly. The Invoice is populated from the vision result; the
+    FieldStructure path is short-circuited.
+    """
+
+    def _low_text_result(self) -> TextExtractResult:
+        # pdfplumber synthesizes 0.10 when it can't pull any text out — this
+        # mirrors the scanned-PDF case where the bytes are basically images.
+        return TextExtractResult(text="", confidence=0.10, page_count=1)
+
+    def test_low_confidence_triggers_vision_and_skips_field_structure(
+        self, org_and_user, pdf_engine_and_rule, vision_engine_and_rule
+    ) -> None:
+        org, _ = org_and_user
+        job = _make_job(org)
+
+        text_adapter = _FakeAdapter(self._low_text_result())
+        vision_adapter = _FakeVisionAdapter()
+
+        with (
+            patch("apps.extraction.services._read_object", return_value=b"%PDF fake"),
+            patch(
+                "apps.extraction.services.get_adapter",
+                side_effect=_adapter_dispatcher(text_adapter, vision_adapter),
+            ),
+            patch("apps.extraction.tasks.structure_invoice.delay") as structure_task,
+        ):
+            run_extraction(job.id)
+
+        # Vision was called with the original bytes + mime, not just text.
+        assert len(vision_adapter.calls) == 1
+        call_body, call_mime = vision_adapter.calls[0]
+        assert call_body == b"%PDF fake"
+        assert call_mime == "application/pdf"
+
+        # FieldStructure task NOT queued — vision short-circuited it.
+        assert not structure_task.called
+
+        # Job records the combined engine path so the audit trail is honest.
+        job.refresh_from_db()
+        assert job.status == IngestionJob.Status.READY_FOR_REVIEW
+        assert job.extraction_engine == "pdfplumber+anthropic-claude-sonnet-vision"
+        assert job.extraction_confidence == pytest.approx(0.90)
+
+        # Invoice was populated from vision result, not left empty.
+        invoice = Invoice.objects.get(ingestion_job_id=job.id)
+        assert invoice.invoice_number == "INV-001"
+        assert invoice.supplier_legal_name == "Vision Supplies"
+        assert invoice.structuring_engine == "anthropic-claude-sonnet-vision"
+        assert invoice.status == Invoice.Status.READY_FOR_REVIEW
+
+        # Two engine calls — the text extract + the vision pass — both success.
+        outcomes = list(EngineCall.objects.values_list("outcome", flat=True))
+        assert outcomes.count(EngineCall.Outcome.SUCCESS) == 2
+
+        # Audit chain has the escalation start + the final extracted event.
+        actions = set(AuditEvent.objects.values_list("action_type", flat=True))
+        assert "ingestion.job.vision_escalation_started" in actions
+        assert "ingestion.job.extracted" in actions
+
+    def test_high_confidence_does_not_escalate(
+        self, org_and_user, pdf_engine_and_rule, vision_engine_and_rule
+    ) -> None:
+        """Above-threshold confidence keeps the regular text → FieldStructure path."""
+        org, _ = org_and_user
+        job = _make_job(org)
+
+        text_adapter = _FakeAdapter(
+            TextExtractResult(text="Lots of native text", confidence=0.95, page_count=1)
+        )
+        vision_adapter = _FakeVisionAdapter()
+
+        with (
+            patch("apps.extraction.services._read_object", return_value=b"%PDF fake"),
+            patch(
+                "apps.extraction.services.get_adapter",
+                side_effect=_adapter_dispatcher(text_adapter, vision_adapter),
+            ),
+            patch("apps.extraction.tasks.structure_invoice.delay"),
+        ):
+            run_extraction(job.id)
+
+        assert len(vision_adapter.calls) == 0
+
+        job.refresh_from_db()
+        assert job.extraction_engine == "pdfplumber"
+        # No escalation events at all on the audit chain.
+        actions = set(AuditEvent.objects.values_list("action_type", flat=True))
+        assert "ingestion.job.vision_escalation_started" not in actions
+        assert "ingestion.job.vision_escalation_skipped" not in actions
+
+    def test_escalation_records_skip_when_no_vision_route(
+        self, org_and_user, pdf_engine_and_rule
+    ) -> None:
+        """No active vision routing rule → audit a skip and fall back to FieldStructure."""
+        org, _ = org_and_user
+        job = _make_job(org)
+
+        text_adapter = _FakeAdapter(self._low_text_result())
+
+        with (
+            patch("apps.extraction.services._read_object", return_value=b"%PDF fake"),
+            patch(
+                "apps.extraction.services.get_adapter",
+                side_effect=_adapter_dispatcher(text_adapter, None),
+            ),
+            patch("apps.extraction.tasks.structure_invoice.delay"),
+        ):
+            # No vision_engine_and_rule fixture → pick_engine raises NoRouteFound
+            # → escalation records a skip and the regular path proceeds.
+            run_extraction(job.id)
+
+        actions = list(AuditEvent.objects.values_list("action_type", flat=True))
+        assert "ingestion.job.vision_escalation_started" in actions
+        assert "ingestion.job.vision_escalation_skipped" in actions
+        # Job still completes; engine name is the original because vision
+        # didn't apply.
+        job.refresh_from_db()
+        assert job.extraction_engine == "pdfplumber"
+
+    def test_escalation_records_skip_when_vision_unavailable(
+        self, org_and_user, pdf_engine_and_rule, vision_engine_and_rule
+    ) -> None:
+        """Vision adapter raising EngineUnavailable falls back gracefully."""
+        org, _ = org_and_user
+        job = _make_job(org)
+
+        text_adapter = _FakeAdapter(self._low_text_result())
+        vision_adapter = _FakeVisionAdapter(raises=EngineUnavailable("no api key"))
+
+        with (
+            patch("apps.extraction.services._read_object", return_value=b"%PDF fake"),
+            patch(
+                "apps.extraction.services.get_adapter",
+                side_effect=_adapter_dispatcher(text_adapter, vision_adapter),
+            ),
+            patch("apps.extraction.tasks.structure_invoice.delay"),
+        ):
+            run_extraction(job.id)
+
+        actions = list(AuditEvent.objects.values_list("action_type", flat=True))
+        assert "ingestion.job.vision_escalation_skipped" in actions
+
+        # Vision call recorded as UNAVAILABLE (graceful), not FAILURE.
+        unavailable = EngineCall.objects.filter(outcome=EngineCall.Outcome.UNAVAILABLE).count()
+        assert unavailable == 1
+
+        # Final job state: regular text engine, NOT the escalation combo —
+        # the FieldStructure queue handles structuring on the regular path.
+        job.refresh_from_db()
+        assert job.status == IngestionJob.Status.READY_FOR_REVIEW
+        assert job.extraction_engine == "pdfplumber"
+        # Invoice is left in EXTRACTING state for the FieldStructure task to
+        # finish; vision did NOT short-circuit structuring.
+        invoice = Invoice.objects.get(ingestion_job_id=job.id)
+        assert invoice.status == Invoice.Status.EXTRACTING
+
+
+class TestClaudeVisionAdapterMimeDispatch:
+    """Vision adapter handles both image and PDF inputs.
+
+    The PDF path is needed for the Slice A escalation: when pdfplumber
+    confidence is low, the same PDF bytes are re-sent to vision; the adapter
+    must know to wrap them in a Claude ``document`` content block, not the
+    image block it uses for image/* inputs.
+    """
+
+    def test_pdf_yields_document_content_block(self) -> None:
+        from apps.extraction.adapters.claude_adapter import _document_block
+
+        block = _document_block(body=b"%PDF-1.4 fake", mime_type="application/pdf")
+        assert block["type"] == "document"
+        assert block["source"]["media_type"] == "application/pdf"
+
+    def test_image_yields_image_content_block(self) -> None:
+        from apps.extraction.adapters.claude_adapter import _document_block
+
+        block = _document_block(body=b"\x89PNG", mime_type="image/png")
+        assert block["type"] == "image"
+        assert block["source"]["media_type"] == "image/png"
+
+    def test_unsupported_mime_raises_unavailable(self) -> None:
+        from apps.extraction.adapters.claude_adapter import _document_block
+
+        with pytest.raises(EngineUnavailable):
+            _document_block(body=b"...", mime_type="application/zip")

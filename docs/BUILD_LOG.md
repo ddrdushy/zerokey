@@ -356,6 +356,88 @@ confirmed both endpoints return the expected shape; the audit stats
 report 4 events for the registration flow on today's bucket and the
 throughput series renders an empty 7-day window correctly.
 
+### Slice 9 — Vision escalation on low pdfplumber confidence
+
+Closes the Phase 2 exit criterion gap from
+[ROADMAP.md](ROADMAP.md): "reasonable extraction quality on a scanned
+PDF". Per [ENGINE_REGISTRY.md](ENGINE_REGISTRY.md) line 91 — "scanned
+PDFs and images go to … a confidence threshold below which the result
+is escalated to vision" — the router now enacts that contract.
+
+Backend:
+
+- **Vision adapter handles PDFs natively.** `ClaudeVisionAdapter` now
+  dispatches its content block by mime: `application/pdf` becomes a
+  Claude `document` block, `image/*` keeps the existing `image` block,
+  anything else raises `EngineUnavailable`. The adapter still satisfies
+  exactly one capability (`VisionExtract`); the change is just "what
+  shape of input do we accept". Logic isolated in
+  `_document_block(body, mime_type)` so the dispatch is unit-testable
+  without standing up the full Anthropic client.
+- **`run_extraction` adds a post-extract escalation step.** After the
+  primary text engine succeeds, if its confidence is below
+  `EXTRACTION_VISION_THRESHOLD` (default 0.5, configurable via
+  settings), the pipeline picks a `VISION_EXTRACT` engine for the same
+  mime type and re-sends the original bytes. On vision success, the
+  `StructuredExtractResult` is written straight to the Invoice via
+  the newly-public `apps.submission.services.apply_structured_fields`
+  — the FieldStructure step is short-circuited because vision already
+  returned the same shape of fields.
+- **Three audit events frame the escalation.**
+  `ingestion.job.vision_escalation_started` records the trigger
+  (primary engine, primary confidence, threshold);
+  `ingestion.job.vision_escalation_skipped` records every non-fatal
+  miss (no route, adapter missing, EngineUnavailable, vendor failure);
+  the existing `ingestion.job.extracted` event is enriched with
+  `primary_text_engine` / `primary_text_confidence` / `vision_engine`
+  when vision applied, so the audit trail makes the escalation
+  honest rather than hiding it behind the combined engine name.
+- **Job's `extraction_engine` becomes `pdfplumber+anthropic-claude-sonnet-vision`**
+  when escalation applies, and `extraction_confidence` carries the
+  vision overall confidence (which is the more meaningful signal once
+  vision has applied). When escalation is skipped, the row looks
+  identical to the pre-slice path.
+- **`_apply_structured_fields` was renamed to `apply_structured_fields`**
+  and given a docstring. It's the convergence point that both the
+  FieldStructure path and the vision path now flow through, so the
+  Invoice + LineItem rows look identical regardless of which engine
+  produced them.
+
+Tests: 7 new (4 escalation behaviors + 3 mime-dispatch cases). The
+graceful-degrade contract is exercised explicitly: low confidence →
+no vision route → audit-logged skip; low confidence → vision raises
+`EngineUnavailable` → audit-logged skip + `EngineCall` row with
+`unavailable` outcome + Invoice left in `EXTRACTING` for the regular
+FieldStructure task to finish. Suite is now 81 passing / 4 skipped.
+
+Verified live: uploaded a text-layer-free PDF (the scanned-PDF
+trigger). pdfplumber returned 0.1 confidence; the escalation fired
+and the vision adapter raised `EngineUnavailable` (no
+`ANTHROPIC_API_KEY` in dev). Audit chain shows the
+`vision_escalation_started` and `vision_escalation_skipped` events
+linked into the chain; `EngineCall` row recorded with `unavailable`
+outcome and the right diagnostic; the job still reached
+`ready_for_review` cleanly. Setting the API key is the only remaining
+step to see the full vision-applied path.
+
+Deferred (worth flagging):
+
+- **Threshold is global.** ENGINE_REGISTRY.md anticipates per-tenant
+  and per-document-class thresholds; this slice ships one number.
+  When per-customer routing rules land, the threshold migrates onto
+  the rule alongside the engine choice.
+- **No PDF page rendering.** We pass the original PDF bytes straight
+  to Claude (which handles them natively). For very-large or
+  multi-page invoices we may want to render selected pages to images
+  instead — measurable once we have real cost data.
+- **No vision retries.** `EngineCall` outcomes record the fail mode;
+  a retry budget alongside the existing fallback chain is the next
+  improvement, paired with the cost-aware routing flagged in
+  ENGINE_REGISTRY.md.
+- **Calibration.** ENGINE_REGISTRY.md spec calls for per-engine
+  confidence calibration; we still trust raw vendor confidences.
+  Calibration tables are a Phase 3 follow-up.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -439,7 +521,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 74 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 81 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -464,6 +546,11 @@ Coverage:
   isolation, system-event exclusion, endpoint auth + active-org guard.
 - Ingestion throughput — status bucketing, window filtering, per-day series
   reconciles with totals, `days` query-param clamp.
+- Vision escalation — low-confidence text extracts re-route through the
+  vision adapter; vision result short-circuits FieldStructure; graceful
+  degrade on no-route / adapter-unavailable / vendor-failure with audit
+  events recorded at every branch. Adapter mime dispatch (PDF document
+  block vs image block) covered separately.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -479,28 +566,25 @@ Ordered roughly by Phase 2/3 priority:
 2. **Side-by-side invoice review UI** — current detail page is functional
    but the polished review screen with PDF viewer + field-level confidence
    highlighting hasn't landed.
-3. **Vision escalation on low pdfplumber confidence** — router primitive
-   exists; the escalation logic that re-routes a low-confidence text
-   extract through `vision_extract` doesn't.
-4. **Customer master / item master** — `apps.enrichment` is empty. Per
+3. **Customer master / item master** — `apps.enrichment` is empty. Per
    DATA_MODEL.md these accumulate buyer/item patterns and drive auto-fill
    on subsequent invoices.
-5. **Signing service** — placeholder Celery task on the dedicated `signing`
+4. **Signing service** — placeholder Celery task on the dedicated `signing`
    queue exists. KMS-backed envelope encryption + Ed25519 signature over
    `chain_hash` lands when KMS is provisioned.
-6. **MyInvois submission** — placeholder Celery task exists. Real LHDN API
+5. **MyInvois submission** — placeholder Celery task exists. Real LHDN API
    client + UUID/QR retrieval + cancellation within 72-hour window.
-7. **Email / WhatsApp / API ingestion channels** — only `web_upload` is
+6. **Email / WhatsApp / API ingestion channels** — only `web_upload` is
    wired. Web-upload is the most visible path; the others share the
    `IngestionJob` model and just need their adapters.
-8. **Billing + Stripe + FPX** — `apps.billing` is empty; the plan/tier
+7. **Billing + Stripe + FPX** — `apps.billing` is empty; the plan/tier
    catalog from BUSINESS_MODEL.md isn't seeded.
-9. **PII field-level encryption** — `Organization.contact_email`,
+8. **PII field-level encryption** — `Organization.contact_email`,
    `contact_phone`, `registered_address` are plain text in dev. The
    encrypted column type swaps in when KMS lands.
-10. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
-    Invoices, Customers, Audit log, Engine activity, Settings.
-11. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
+9. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
+   Invoices, Customers, Audit log, Engine activity, Settings.
+10. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
     can wrap the existing `make test` + frontend lint/build.
 
 ---

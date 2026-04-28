@@ -34,7 +34,12 @@ from django.utils import timezone
 
 from apps.audit.models import AuditEvent
 from apps.audit.services import record_event
-from apps.extraction.capabilities import EngineUnavailable, TextExtractEngine
+from apps.extraction.capabilities import (
+    EngineUnavailable,
+    StructuredExtractResult,
+    TextExtractEngine,
+    VisionExtractEngine,
+)
 from apps.extraction.models import Engine, EngineCall
 from apps.extraction.registry import get_adapter
 from apps.extraction.router import NoRouteFound, pick_engine
@@ -42,6 +47,14 @@ from apps.identity.tenancy import set_tenant, super_admin_context
 from apps.ingestion.models import IngestionJob
 
 logger = logging.getLogger(__name__)
+
+
+# Below this confidence the text-extract result is suspect (the document was
+# probably scanned, not native), so the pipeline escalates the original bytes
+# through a VisionExtract engine and uses its structured output directly.
+# Configurable via ``settings.EXTRACTION_VISION_THRESHOLD``; tunable per-tenant
+# in a later slice once we have data on what works for which document mix.
+DEFAULT_VISION_ESCALATION_THRESHOLD = 0.5
 
 
 @dataclass(frozen=True)
@@ -168,12 +181,20 @@ def run_extraction(job_id: UUID | str) -> ExtractionResult:
         diagnostics=result.diagnostics,
     )
 
+    vision_outcome = _maybe_escalate_to_vision(
+        job=job,
+        primary_engine=decision.engine,
+        primary_confidence=result.confidence,
+        body=body,
+    )
+
     _complete(
         job,
         engine_name=decision.engine.name,
         text=result.text,
         confidence=result.confidence,
         page_count=result.page_count,
+        vision_outcome=vision_outcome,
     )
 
     return ExtractionResult(
@@ -181,6 +202,182 @@ def run_extraction(job_id: UUID | str) -> ExtractionResult:
         engine_name=decision.engine.name,
         confidence=result.confidence,
         text_length=len(result.text),
+    )
+
+
+# --- vision escalation --------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class VisionEscalationOutcome:
+    """Result of the optional vision pass after a low-confidence text extract.
+
+    ``applied`` is true only when the vision adapter ran and returned a
+    structured result that was applied to the Invoice. ``False`` means the
+    pipeline either didn't escalate (confidence above threshold) or escalated
+    but couldn't apply (no route, adapter unavailable, vendor failure). In
+    the unsuccessful cases, ``reason`` carries the explanation for the audit
+    log; the regular FieldStructure path then runs as the fallback.
+    """
+
+    attempted: bool
+    applied: bool
+    engine_name: str
+    fields: dict[str, str]
+    per_field_confidence: dict[str, float]
+    overall_confidence: float
+    reason: str = ""
+
+
+def _vision_threshold() -> float:
+    return float(
+        getattr(settings, "EXTRACTION_VISION_THRESHOLD", DEFAULT_VISION_ESCALATION_THRESHOLD)
+    )
+
+
+def _maybe_escalate_to_vision(
+    *,
+    job: IngestionJob,
+    primary_engine: Engine,
+    primary_confidence: float,
+    body: bytes,
+) -> VisionEscalationOutcome:
+    """Run a vision pass when the primary text-extract returned low confidence.
+
+    Failure modes are graceful — every "no, we can't" branch records the
+    reason on the audit log and returns ``applied=False`` so the caller
+    falls through to the regular text-then-FieldStructure path.
+    """
+    threshold = _vision_threshold()
+    not_applied = VisionEscalationOutcome(
+        attempted=False,
+        applied=False,
+        engine_name="",
+        fields={},
+        per_field_confidence={},
+        overall_confidence=0.0,
+    )
+    if primary_confidence >= threshold:
+        return not_applied
+
+    record_event(
+        action_type="ingestion.job.vision_escalation_started",
+        actor_type=AuditEvent.ActorType.SERVICE,
+        actor_id="extraction.pipeline",
+        organization_id=str(job.organization_id),
+        affected_entity_type="IngestionJob",
+        affected_entity_id=str(job.id),
+        payload={
+            "primary_engine": primary_engine.name,
+            "primary_confidence": str(primary_confidence),
+            "threshold": str(threshold),
+        },
+    )
+
+    try:
+        decision = pick_engine(
+            capability=Engine.Capability.VISION_EXTRACT,
+            mime_type=job.file_mime_type,
+        )
+    except NoRouteFound as exc:
+        return _record_escalation_failure(job, reason=f"no vision route: {exc}")
+
+    try:
+        adapter = get_adapter(decision.engine.name)
+    except KeyError as exc:
+        return _record_escalation_failure(job, reason=f"vision adapter missing: {exc}")
+
+    if not isinstance(adapter, VisionExtractEngine):
+        return _record_escalation_failure(
+            job,
+            reason=(
+                f"adapter {decision.engine.name!r} is registered for "
+                f"{decision.engine.capability} but isn't a VisionExtractEngine"
+            ),
+        )
+
+    # Lazy import — avoids a circular extraction → submission → extraction
+    # at module load. Cross-context service calls only.
+    from apps.submission.services import INVOICE_HEADER_FIELDS, LINE_ITEMS_KEY
+
+    target_schema = [*INVOICE_HEADER_FIELDS, LINE_ITEMS_KEY]
+
+    started_at = timezone.now()
+    started_perf = time.perf_counter()
+    try:
+        vision_result: StructuredExtractResult = adapter.extract_vision(
+            body=body, mime_type=job.file_mime_type, target_schema=target_schema
+        )
+    except EngineUnavailable as exc:
+        _record_call(
+            engine=decision.engine,
+            job=job,
+            started_at=started_at,
+            duration_ms=int((time.perf_counter() - started_perf) * 1000),
+            outcome=EngineCall.Outcome.UNAVAILABLE,
+            error_class=type(exc).__name__,
+            cost_micros=0,
+            confidence=None,
+            diagnostics={"detail": str(exc)},
+        )
+        return _record_escalation_failure(job, reason=f"vision unavailable: {exc}")
+    except Exception as exc:  # adapter failures are graceful — escalation never breaks the pipeline
+        _record_call(
+            engine=decision.engine,
+            job=job,
+            started_at=started_at,
+            duration_ms=int((time.perf_counter() - started_perf) * 1000),
+            outcome=EngineCall.Outcome.FAILURE,
+            error_class=type(exc).__name__,
+            cost_micros=0,
+            confidence=None,
+            diagnostics={"detail": str(exc)[:500]},
+        )
+        return _record_escalation_failure(
+            job, reason=f"vision failed: {type(exc).__name__}: {exc}"
+        )
+
+    _record_call(
+        engine=decision.engine,
+        job=job,
+        started_at=started_at,
+        duration_ms=int((time.perf_counter() - started_perf) * 1000),
+        outcome=EngineCall.Outcome.SUCCESS,
+        error_class="",
+        cost_micros=vision_result.cost_micros,
+        confidence=vision_result.overall_confidence,
+        diagnostics=vision_result.diagnostics,
+    )
+
+    return VisionEscalationOutcome(
+        attempted=True,
+        applied=True,
+        engine_name=decision.engine.name,
+        fields=dict(vision_result.fields),
+        per_field_confidence=dict(vision_result.per_field_confidence),
+        overall_confidence=vision_result.overall_confidence,
+    )
+
+
+def _record_escalation_failure(job: IngestionJob, *, reason: str) -> VisionEscalationOutcome:
+    """Audit a non-fatal vision escalation miss; caller falls back to text path."""
+    record_event(
+        action_type="ingestion.job.vision_escalation_skipped",
+        actor_type=AuditEvent.ActorType.SERVICE,
+        actor_id="extraction.pipeline",
+        organization_id=str(job.organization_id),
+        affected_entity_type="IngestionJob",
+        affected_entity_id=str(job.id),
+        payload={"reason": reason[:255]},
+    )
+    return VisionEscalationOutcome(
+        attempted=True,
+        applied=False,
+        engine_name="",
+        fields={},
+        per_field_confidence={},
+        overall_confidence=0.0,
+        reason=reason,
     )
 
 
@@ -219,10 +416,20 @@ def _complete(
     text: str,
     confidence: float,
     page_count: int,
+    vision_outcome: VisionEscalationOutcome | None = None,
 ) -> None:
+    # If vision escalation succeeded, the recorded extraction_engine reflects
+    # the combined path so the audit trail makes the escalation visible.
+    if vision_outcome and vision_outcome.applied:
+        recorded_engine = f"{engine_name}+{vision_outcome.engine_name}"
+        recorded_confidence = vision_outcome.overall_confidence
+    else:
+        recorded_engine = engine_name
+        recorded_confidence = confidence
+
     job.extracted_text = text
-    job.extraction_engine = engine_name
-    job.extraction_confidence = confidence
+    job.extraction_engine = recorded_engine
+    job.extraction_confidence = recorded_confidence
     job.completed_at = timezone.now()
     job.status = IngestionJob.Status.READY_FOR_REVIEW
     job.state_transitions = (job.state_transitions or []) + [
@@ -240,6 +447,16 @@ def _complete(
         ]
     )
 
+    extracted_payload: dict = {
+        "engine": recorded_engine,
+        "confidence": str(recorded_confidence),
+        "page_count": page_count,
+        "text_length": len(text),
+    }
+    if vision_outcome and vision_outcome.applied:
+        extracted_payload["primary_text_engine"] = engine_name
+        extracted_payload["primary_text_confidence"] = str(confidence)
+        extracted_payload["vision_engine"] = vision_outcome.engine_name
     record_event(
         action_type="ingestion.job.extracted",
         actor_type=AuditEvent.ActorType.SERVICE,
@@ -247,23 +464,35 @@ def _complete(
         organization_id=str(job.organization_id),
         affected_entity_type="IngestionJob",
         affected_entity_id=str(job.id),
-        payload={
-            "engine": engine_name,
-            "confidence": str(confidence),
-            "page_count": page_count,
-            "text_length": len(text),
-        },
+        payload=extracted_payload,
     )
 
     # Create the Invoice row + chain a structuring task. Cross-context import
     # of services (not models) is allowed.
-    from apps.submission.services import create_invoice_from_extraction
+    from apps.submission.services import (
+        apply_structured_fields,
+        create_invoice_from_extraction,
+    )
 
     invoice = create_invoice_from_extraction(
         organization_id=job.organization_id,
         ingestion_job_id=job.id,
         extracted_text=text,
     )
+
+    if vision_outcome and vision_outcome.applied:
+        # Vision already produced structured fields; write them straight to
+        # the Invoice and skip the FieldStructure step. Same shape as a
+        # successful FieldStructure pass, so the review UI sees no
+        # difference between the two paths.
+        apply_structured_fields(
+            invoice=invoice,
+            engine_name=vision_outcome.engine_name,
+            fields=vision_outcome.fields,
+            per_field_confidence=vision_outcome.per_field_confidence,
+            overall_confidence=vision_outcome.overall_confidence,
+        )
+        return
 
     # Queue the structuring task only if we have any text to structure on.
     if text.strip():

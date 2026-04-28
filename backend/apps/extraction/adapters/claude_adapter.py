@@ -72,6 +72,36 @@ def _parse_json_payload(text: str) -> dict[str, str]:
     return {}
 
 
+_IMAGE_MIME_PREFIX = "image/"
+_PDF_MIME = "application/pdf"
+
+
+def _document_block(*, body: bytes, mime_type: str) -> dict:
+    """Build the right Anthropic content block for the input mime type.
+
+    Claude accepts PDFs natively as a ``document`` block and images as an
+    ``image`` block. We dispatch on the mime so the same adapter can handle
+    both the image-first VisionExtract case and the PDF-escalation case
+    (low-confidence native-PDF text extraction routes the original PDF
+    here for a layout-aware second pass).
+    """
+    b64 = base64.b64encode(body).decode("ascii")
+    if mime_type == _PDF_MIME:
+        return {
+            "type": "document",
+            "source": {"type": "base64", "media_type": _PDF_MIME, "data": b64},
+        }
+    if mime_type.startswith(_IMAGE_MIME_PREFIX):
+        return {
+            "type": "image",
+            "source": {"type": "base64", "media_type": mime_type, "data": b64},
+        }
+    raise EngineUnavailable(
+        f"Claude vision adapter does not handle mime {mime_type!r} "
+        f"(supported: {_PDF_MIME}, image/*)"
+    )
+
+
 class ClaudeVisionAdapter(VisionExtractEngine):
     name = VISION_ADAPTER_NAME
 
@@ -80,7 +110,7 @@ class ClaudeVisionAdapter(VisionExtractEngine):
     ) -> StructuredExtractResult:
         client = _client()
 
-        b64 = base64.b64encode(body).decode("ascii")
+        document_block = _document_block(body=body, mime_type=mime_type)
         schema_list = "\n".join(f"- {f}" for f in target_schema)
 
         message = client.messages.create(
@@ -90,10 +120,7 @@ class ClaudeVisionAdapter(VisionExtractEngine):
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "image",
-                            "source": {"type": "base64", "media_type": mime_type, "data": b64},
-                        },
+                        document_block,
                         {
                             "type": "text",
                             "text": (
