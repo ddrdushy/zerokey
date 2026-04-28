@@ -417,6 +417,40 @@ _BUYER_TO_MASTER: tuple[tuple[str, str], ...] = (
     ("buyer_country_code", "country_code"),
 )
 
+# Line-item fields the user can correct. Same allowlist contract as the
+# header set: anything outside is rejected. ``line_number`` is the
+# stable identifier within an invoice; we never let the user renumber
+# (that would invalidate the ItemMaster matching key alongside the
+# invoice's audit history).
+EDITABLE_LINE_FIELDS: frozenset[str] = frozenset(
+    {
+        "description",
+        "unit_of_measurement",
+        "quantity",
+        "unit_price_excl_tax",
+        "line_subtotal_excl_tax",
+        "tax_type_code",
+        "tax_rate",
+        "tax_amount",
+        "line_total_incl_tax",
+        "classification_code",
+        "discount_amount",
+        "discount_reason_code",
+    }
+)
+
+# Line-item fields whose corrections propagate to the matched ItemMaster.
+# Map: LineItem attribute -> ItemMaster attribute. Same logic as the
+# buyer-master map: user corrections are the strongest evidence, so the
+# master learns from them. Quantity / price / tax_amount are NOT in this
+# map — they're per-invoice values, not per-item patterns.
+_LINE_TO_ITEM_MASTER: tuple[tuple[str, str], ...] = (
+    ("classification_code", "default_classification_code"),
+    ("tax_type_code", "default_tax_type_code"),
+    ("unit_of_measurement", "default_unit_of_measurement"),
+    ("unit_price_excl_tax", "default_unit_price_excl_tax"),
+)
+
 
 class InvoiceUpdateError(Exception):
     """Raised when an update can't be applied (unknown field, parse error)."""
@@ -426,6 +460,16 @@ class InvoiceUpdateError(Exception):
 class InvoiceUpdateResult:
     invoice: Invoice
     changed_fields: list[str]
+    changed_line_items: list[dict[str, Any]]
+
+
+# The PATCH payload accepts header fields + an optional ``line_items``
+# array. Each entry in the array MUST include ``line_number`` (the stable
+# identifier within the invoice) and any subset of EDITABLE_LINE_FIELDS.
+# We don't expose the database id of the LineItem to the front-end —
+# line_number is unique within an invoice and is the natural addressing
+# key in the UI.
+_LINE_ITEMS_KEY = "line_items"
 
 
 @transaction.atomic
@@ -436,57 +480,62 @@ def update_invoice(
     updates: dict[str, Any],
     actor_user_id: UUID | str,
 ) -> InvoiceUpdateResult:
-    """Apply user corrections to an Invoice, re-enrich + re-validate.
+    """Apply user corrections to an Invoice (header + line items), re-enrich + re-validate.
 
     Tenant-scoped: the invoice must belong to ``organization_id`` or this
-    raises ``Invoice.DoesNotExist``. Unknown / non-editable keys in
-    ``updates`` raise ``InvoiceUpdateError`` rather than being silently
-    ignored — surface the contract violation so the front-end fixes the
-    request.
+    raises ``Invoice.DoesNotExist``. Unknown / non-editable keys raise
+    ``InvoiceUpdateError`` rather than being silently ignored — surface
+    the contract violation so the front-end fixes the request.
 
     Side effects (in order):
-      1. Apply edits to the invoice.
-      2. ``per_field_confidence`` for each changed field flips to 1.0 —
-         the user has confirmed the value, the highest signal we have.
-      3. ``invoice.updated`` audit event records WHICH fields changed
-         (no values: those can be PII).
-      4. Master propagation: changed buyer_* fields update the matched
-         CustomerMaster's corresponding columns, with the previous
-         master canonical name added to ``aliases`` if the legal name
-         changed. The master learns from corrections, fulfilling the
-         "every correction makes the system smarter" promise.
-      5. Re-run ``enrich_invoice`` and ``validate_invoice`` so the
-         response carries fresh issues that reflect the new field set.
+      1. Apply edits to the invoice header.
+      2. Apply edits to addressed line items (keyed by line_number).
+      3. ``per_field_confidence`` for each changed header field flips to
+         1.0; ``LineItem.per_field_confidence`` likewise for changed
+         per-line cells.
+      4. One ``invoice.updated`` audit event records changed header
+         fields AND a per-line summary (line_number + changed field
+         names, no values).
+      5. Master propagation: changed buyer_* fields update the matched
+         CustomerMaster; changed line-item code fields update the
+         matched ItemMaster's defaults. The masters learn from
+         corrections.
+      6. Re-run ``enrich_invoice`` and ``validate_invoice`` so the
+         response carries fresh issues for the corrected invoice.
     """
+    line_items_payload = updates.pop(_LINE_ITEMS_KEY, None)
+
     unknown = set(updates.keys()) - EDITABLE_HEADER_FIELDS
     if unknown:
         raise InvoiceUpdateError(
             f"Cannot edit non-editable fields: {sorted(unknown)}. "
-            f"Editable: {sorted(EDITABLE_HEADER_FIELDS)}"
+            f"Editable: {sorted(EDITABLE_HEADER_FIELDS)} (plus line_items)"
         )
 
     invoice = Invoice.objects.get(organization_id=organization_id, id=invoice_id)
 
-    changed: list[str] = []
+    changed_header: list[str] = []
     for field_name, raw_value in updates.items():
         coerced = _coerce_field(invoice, field_name, raw_value)
         previous = getattr(invoice, field_name)
         if previous == coerced:
             continue
         setattr(invoice, field_name, coerced)
-        changed.append(field_name)
+        changed_header.append(field_name)
 
-    if not changed:
-        return InvoiceUpdateResult(invoice=invoice, changed_fields=[])
+    changed_lines = _apply_line_item_updates(invoice, line_items_payload)
 
-    # User-confirmed values get the highest confidence band. Same convention
-    # the master-autofill path uses, so the review UI's confidence dot is
-    # consistent across "from your master" and "from your correction".
-    confidence = dict(invoice.per_field_confidence or {})
-    for field_name in changed:
-        confidence[field_name] = 1.0
-    invoice.per_field_confidence = confidence
-    invoice.save()
+    if not changed_header and not changed_lines:
+        return InvoiceUpdateResult(
+            invoice=invoice, changed_fields=[], changed_line_items=[]
+        )
+
+    if changed_header:
+        confidence = dict(invoice.per_field_confidence or {})
+        for field_name in changed_header:
+            confidence[field_name] = 1.0
+        invoice.per_field_confidence = confidence
+        invoice.save()
 
     record_event(
         action_type="invoice.updated",
@@ -496,12 +545,13 @@ def update_invoice(
         affected_entity_type="Invoice",
         affected_entity_id=str(invoice.id),
         payload={
-            # Field names only — values can be PII (TIN, names, addresses).
-            "changed_fields": sorted(changed),
+            "changed_fields": sorted(changed_header),
+            "changed_line_items": changed_lines,
         },
     )
 
-    _propagate_corrections_to_master(invoice, changed)
+    _propagate_corrections_to_master(invoice, changed_header)
+    _propagate_line_corrections_to_item_master(invoice, changed_lines)
 
     # Re-enrich (master-fill any newly blanked fields, learn aliases),
     # then re-validate so the issue set reflects the corrected invoice.
@@ -512,7 +562,11 @@ def update_invoice(
     validate_invoice(invoice.id)
 
     invoice.refresh_from_db()
-    return InvoiceUpdateResult(invoice=invoice, changed_fields=sorted(changed))
+    return InvoiceUpdateResult(
+        invoice=invoice,
+        changed_fields=sorted(changed_header),
+        changed_line_items=changed_lines,
+    )
 
 
 def _coerce_field(invoice: Invoice, field_name: str, raw_value: Any) -> Any:
@@ -615,6 +669,187 @@ def _propagate_corrections_to_master(invoice: Invoice, changed: list[str]) -> No
         # master can be wrong, the user is the source of truth.
         setattr(master, master_field, new_value)
     master.save()
+
+
+def _apply_line_item_updates(
+    invoice: Invoice, payload: Any
+) -> list[dict[str, Any]]:
+    """Apply user edits to LineItems addressed by ``line_number``.
+
+    Returns a list of ``{line_number, changed_fields}`` records describing
+    what changed — the audit-payload shape (no values, only field names).
+
+    Validation rules:
+      - ``payload`` must be a list of dicts (or absent / None).
+      - Each dict must include an integer ``line_number``.
+      - Every other key must be in ``EDITABLE_LINE_FIELDS``.
+      - ``line_number`` must address an existing line on this invoice;
+        unknown line numbers raise (creating new lines from a PATCH is
+        out of scope until we have a real "add line" UI).
+    """
+    if payload is None:
+        return []
+    if not isinstance(payload, list):
+        raise InvoiceUpdateError(
+            "'line_items' must be an array of {line_number, ...} objects."
+        )
+
+    by_number: dict[int, LineItem] = {
+        line.line_number: line for line in invoice.line_items.all()
+    }
+    changed_summaries: list[dict[str, Any]] = []
+
+    for entry in payload:
+        if not isinstance(entry, dict):
+            raise InvoiceUpdateError(
+                "Each line_items entry must be an object with a line_number."
+            )
+        line_number = entry.get("line_number")
+        if not isinstance(line_number, int):
+            raise InvoiceUpdateError(
+                f"line_items entry missing integer line_number: {entry!r}"
+            )
+        if line_number not in by_number:
+            raise InvoiceUpdateError(
+                f"line_items[{line_number}] does not exist on this invoice."
+            )
+
+        unknown_keys = set(entry.keys()) - {"line_number"} - EDITABLE_LINE_FIELDS
+        if unknown_keys:
+            raise InvoiceUpdateError(
+                f"Cannot edit non-editable line fields: {sorted(unknown_keys)}. "
+                f"Editable: {sorted(EDITABLE_LINE_FIELDS)}"
+            )
+
+        line = by_number[line_number]
+        changed_for_line: list[str] = []
+        for field_name, raw_value in entry.items():
+            if field_name == "line_number":
+                continue
+            coerced = _coerce_line_field(line, field_name, raw_value)
+            previous = getattr(line, field_name)
+            if previous == coerced:
+                continue
+            setattr(line, field_name, coerced)
+            changed_for_line.append(field_name)
+
+        if not changed_for_line:
+            continue
+
+        # User-confirmed cells get the highest confidence band, same
+        # convention as the header path.
+        confidence = dict(line.per_field_confidence or {})
+        for field_name in changed_for_line:
+            confidence[field_name] = 1.0
+        line.per_field_confidence = confidence
+        line.save()
+
+        changed_summaries.append(
+            {
+                "line_number": line_number,
+                "changed_fields": sorted(changed_for_line),
+            }
+        )
+
+    return changed_summaries
+
+
+def _coerce_line_field(line: LineItem, field_name: str, raw_value: Any) -> Any:
+    """Convert JSON input to the LineItem's Python type."""
+    decimal_fields = {
+        "quantity",
+        "unit_price_excl_tax",
+        "line_subtotal_excl_tax",
+        "tax_rate",
+        "tax_amount",
+        "line_total_incl_tax",
+        "discount_amount",
+    }
+    if field_name in decimal_fields:
+        if raw_value in (None, ""):
+            return None
+        parsed = _parse_decimal(str(raw_value))
+        if parsed is None:
+            raise InvoiceUpdateError(
+                f"line_items[*].{field_name!r} must be a decimal value (got {raw_value!r})."
+            )
+        return parsed
+
+    # String-shaped fields: clip to max_length per the model so an
+    # over-long input fails in the API rather than silently truncating.
+    if raw_value is None:
+        return ""
+    value = str(raw_value)
+    field = line._meta.get_field(field_name)
+    max_length = getattr(field, "max_length", None)
+    if max_length is not None and len(value) > max_length:
+        raise InvoiceUpdateError(
+            f"line_items[*].{field_name!r} exceeds max length of {max_length} characters."
+        )
+    return value
+
+
+def _propagate_line_corrections_to_item_master(
+    invoice: Invoice, changed_lines: list[dict[str, Any]]
+) -> None:
+    """Push user corrections on a line item into its matched ItemMaster.
+
+    Same rule as the buyer-master path: user corrections OVERWRITE master
+    defaults. Quantity / per-line tax amounts / etc. don't propagate —
+    only the pattern-stable fields (classification / tax type / UOM /
+    advisory unit price). The match key is the line description; if the
+    description itself was edited we use the NEW description (the user
+    has effectively renamed the item, and the next ``enrich_invoice``
+    pass picks the right master and learns the alias).
+    """
+    if not changed_lines:
+        return
+
+    from apps.enrichment.models import ItemMaster
+
+    by_number: dict[int, LineItem] = {
+        line.line_number: line for line in invoice.line_items.all()
+    }
+
+    for summary in changed_lines:
+        changed_fields = set(summary["changed_fields"])
+        # Only run the master update when something pattern-stable
+        # changed. Quantity-only edits don't need a master write.
+        line_to_master = {
+            line_field: master_field
+            for line_field, master_field in _LINE_TO_ITEM_MASTER
+            if line_field in changed_fields
+        }
+        if not line_to_master and "description" not in changed_fields:
+            continue
+
+        line = by_number.get(summary["line_number"])
+        if line is None or not (line.description or "").strip():
+            continue
+
+        master = (
+            ItemMaster.objects.filter(
+                organization_id=invoice.organization_id,
+                canonical_name__iexact=line.description.strip(),
+            )
+            .first()
+        )
+        if master is None:
+            # No existing master for this description — the next
+            # enrich_invoice pass will create one with the corrected
+            # values, so there's nothing to do here.
+            continue
+
+        for line_field, master_field in line_to_master.items():
+            new_value = getattr(line, line_field)
+            # Don't overwrite a populated default with None / empty —
+            # "user cleared the cell" is treated the same as "user left
+            # it blank", and we already have a non-None default we know
+            # works for this item.
+            if new_value in (None, ""):
+                continue
+            setattr(master, master_field, new_value)
+        master.save()
 
 
 def get_invoice_for_job(*, organization_id: UUID, ingestion_job_id: UUID) -> Invoice | None:

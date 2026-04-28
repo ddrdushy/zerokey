@@ -1081,9 +1081,9 @@ Durable design decisions:
 
 What's deferred:
 
-- **Editable line items.** Tables with editable cells are fiddly
-  UI work; header-only edits ship the bulk of the value. Line-item
-  editing is the next-but-one slice on this surface.
+- **Adding / removing line items** through the UI. Editing existing
+  lines shipped in Slice 17; add/delete is the next slice on this
+  surface.
 - **Save-on-blur**, optimistic updates, undo within a session.
   Polish that becomes worth the complexity once the slice is in
   production use and we see the actual editing patterns.
@@ -1199,6 +1199,124 @@ What's deferred:
 - **Bulk re-enrich** (apply current master to historical invoices
   whose fields don't match). Useful operator surface, premature.
 
+### Slice 17 — Editable line items + ItemMaster propagation
+
+Slice 15 made the invoice header editable; this slice closes the
+remaining half by extending the same edit-save-revalidate-propagate
+pattern to line items. Now every cell on the review screen — header
+fields, party blocks, totals, AND every line-item cell — supports
+inline correction with the same visual language and the same
+post-save side effects.
+
+Backend:
+
+- **`update_invoice` accepts a ``line_items`` array** alongside the
+  existing header fields. Each entry addresses a specific line by
+  ``line_number`` (the stable identifier within an invoice; the DB
+  id stays internal). Allowlist of editable per-line fields:
+  description, unit_of_measurement, quantity, unit_price_excl_tax,
+  line_subtotal_excl_tax, tax_type_code, tax_rate, tax_amount,
+  line_total_incl_tax, classification_code, discount_amount,
+  discount_reason_code. Unknown line numbers, unknown fields, and
+  malformed payloads all raise ``InvoiceUpdateError`` rather than
+  silently being ignored.
+- **One audit event per save**, summarising both header changes and
+  per-line changes — payload includes ``changed_line_items: [
+  {line_number, changed_fields[]} ]``. Field NAMES only, no values
+  (PII redaction matches the header path).
+- **ItemMaster propagation**: a corrected ``classification_code`` /
+  ``tax_type_code`` / ``unit_of_measurement`` /
+  ``unit_price_excl_tax`` on a line item updates the matched
+  ItemMaster's defaults. Same rule as the buyer-master path: user
+  corrections OVERWRITE master values. Quantity / per-line tax
+  amounts / etc. don't propagate — those are per-invoice values,
+  not per-item patterns.
+- The ``description`` field can be edited but the master is keyed
+  off the new description; if the edit effectively renames the
+  item, the next ``enrich_invoice`` pass picks the right master and
+  records the alias. We don't attempt master re-keying inside the
+  update service — the enrich path is the single owner of master
+  matching.
+- Per-line ``per_field_confidence`` flips to 1.0 for changed cells,
+  matching the header-cell convention. The frontend's three-band
+  scheme renders edited cells as the highest-confidence green dot,
+  so "this came from your correction" is visually identical to
+  "this came from your master".
+
+Frontend:
+
+- **`LineItemsTable` is dual-mode** like `FieldRow`. Read mode
+  (no `onChangeCell` prop) keeps the existing static cells with
+  per-line issue rows; edit mode renders every cell as a
+  chrome-less input that looks like text until clicked. Each cell's
+  dirty state is keyed by `(line_number, field)`. Dirty cells get
+  a Signal-tinted ring and faint Signal/5 background — same
+  vocabulary as the header `FieldRow`'s "Edited" marker.
+- **Page state** tracks per-line drafts as
+  `Record<number, LineDraft>` alongside the existing header `Draft`.
+  The `dirtyCount` displayed in the SaveBar sums header drafts +
+  every per-line cell. Save submits both halves in one PATCH
+  payload; Discard clears both. The user's mental model
+  ("I'm correcting this invoice") collapses both edits into one
+  "save corrections" action — UX_PRINCIPLES principle 2 unchanged.
+
+Tests: 9 new (194 passing total). Description edit persists with
+confidence=1.0; decimal cell coerces "RM 250.50" → Decimal; one
+audit event covers header + line edits combined; unknown
+line_number rejected (`line_items[99]`); non-editable line field
+rejected (`id`, etc.); malformed payload rejected (non-array
+shape, missing line_number); ItemMaster propagation overwrites a
+prior wrong code; combined header + line update emits exactly one
+audit event; submitting current values is a true no-op (no event
+written).
+
+Verified live against the running stack: created an invoice with
+one line item ("Premium Widget"), let `enrich_invoice` create the
+matched ItemMaster, deliberately seeded the master with a wrong
+default classification (`999`). Called `update_invoice` with a
+line-items payload setting `classification_code="011"` +
+`unit_of_measurement="EA"`. Result: line item picked up the new
+codes, ItemMaster `default_classification_code` flipped from `999`
+to `011`, master `default_unit_of_measurement` learned `EA`. The
+correction overwrote the wrong master value, exactly as designed.
+
+Durable design decisions:
+
+- **`line_number` is the addressing key, not the database id.**
+  Stable within the invoice, unique by constraint, and matches how
+  the user thinks about line items. Exposing the DB id would
+  encourage downstream code to bypass the invoice-scoped query.
+- **One PATCH endpoint, header + lines together.** Two endpoints
+  would force the front-end to coordinate save order and the audit
+  log to interleave events. The user's mental model is "save my
+  corrections", singular.
+- **One audit event per save** mirrors the user's mental model.
+  The payload's `changed_line_items` summary is enough for an
+  audit reader to reconstruct what changed without leaking values.
+- **ItemMaster propagation skips quantity / amounts / per-line
+  tax.** Those are per-invoice values; making them master defaults
+  would cause auto-fill to overwrite different-but-correct values
+  on the next invoice. Pattern-stable fields only.
+- **Same FieldRow + cell visual language** across the whole
+  review surface. Header field → row card with "Edited" marker;
+  line cell → table cell with Signal-tinted ring. Reviewers see
+  the same mark for the same meaning anywhere on the screen.
+
+What's deferred:
+
+- **Adding / removing line items** through the UI. The "edit"
+  contract assumes the line set is fixed by extraction; if the
+  user needs to add a missing line they currently have to upload
+  a corrected document or use the API. The next slice on this
+  surface adds + delete.
+- **Cell-level validation feedback**. Today errors are line-level
+  (the issue row underneath); per-cell error decoration (red
+  border on the offending cell only) waits for the editable
+  experience to settle in production use.
+- **Keyboard navigation between cells** (tab / arrows like a
+  spreadsheet). Click-to-edit is enough for v1; refine when we
+  see actual usage.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -1282,7 +1400,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 185 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 194 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -1346,6 +1464,14 @@ Coverage:
   rejects auto-managed fields (aliases / usage_count /
   tin_verification_state) and unknown keys, no-op when nothing
   changed, cross-tenant PATCH 404.
+- Line-item updates (PATCH ``invoices/<id>/`` with line_items array)
+  — edits persist with confidence=1.0, decimal coercion handles
+  "RM 250.50", one audit event covers combined header + line
+  changes, ItemMaster propagation overwrites wrong defaults on
+  pattern-stable fields (classification / tax_type / UOM /
+  unit_price), allowlist rejects unknown line_number / unknown
+  per-line fields / malformed payload shapes, true no-op when
+  submitted values match current.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 

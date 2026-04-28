@@ -420,3 +420,211 @@ class TestEditableFieldAllowlist:
             "raw_extracted_text",
         }
         assert forbidden.isdisjoint(EDITABLE_HEADER_FIELDS)
+
+
+@pytest.mark.django_db
+class TestLineItemUpdates:
+    """Line items can be edited via the same PATCH endpoint.
+
+    Each line is addressed by ``line_number`` (stable within an invoice),
+    not by database id. Line-item edits go through the same allowlist
+    contract (EDITABLE_LINE_FIELDS), trigger the same revalidation pass,
+    and propagate corrections to the matched ItemMaster the same way
+    buyer corrections propagate to the CustomerMaster.
+    """
+
+    def test_edit_line_description_persists(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+
+        update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={
+                "line_items": [
+                    {"line_number": 1, "description": "Corrected widget"},
+                ],
+            },
+            actor_user_id=user.id,
+        )
+
+        line = invoice.line_items.get(line_number=1)
+        assert line.description == "Corrected widget"
+        assert line.per_field_confidence.get("description") == 1.0
+
+    def test_edit_line_decimal_field_coerces(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+
+        update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={
+                "line_items": [
+                    {"line_number": 1, "unit_price_excl_tax": "RM 250.50"},
+                ],
+            },
+            actor_user_id=user.id,
+        )
+        line = invoice.line_items.get(line_number=1)
+        assert line.unit_price_excl_tax == Decimal("250.50")
+
+    def test_audit_event_summarizes_line_changes_without_values(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+
+        update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={
+                "line_items": [
+                    {
+                        "line_number": 1,
+                        "description": "New description with PII potential",
+                        "classification_code": "011",
+                    },
+                    {"line_number": 2, "tax_type_code": "01"},
+                ],
+            },
+            actor_user_id=user.id,
+        )
+
+        event = AuditEvent.objects.filter(action_type="invoice.updated").get()
+        line_summaries = event.payload["changed_line_items"]
+        # Two lines edited, recorded by line_number not db id.
+        line_numbers = {entry["line_number"] for entry in line_summaries}
+        assert line_numbers == {1, 2}
+        # Field NAMES present, values absent.
+        serialized = str(event.payload)
+        assert "description" in serialized
+        assert "PII potential" not in serialized
+        assert "011" not in serialized
+
+    def test_unknown_line_number_is_rejected(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+
+        with pytest.raises(InvoiceUpdateError, match="line_items\\[99\\]"):
+            update_invoice(
+                organization_id=org.id,
+                invoice_id=invoice.id,
+                updates={
+                    "line_items": [
+                        {"line_number": 99, "description": "Phantom line"},
+                    ],
+                },
+                actor_user_id=user.id,
+            )
+
+    def test_non_editable_line_field_rejected(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+
+        with pytest.raises(InvoiceUpdateError, match="non-editable line fields"):
+            update_invoice(
+                organization_id=org.id,
+                invoice_id=invoice.id,
+                updates={
+                    "line_items": [
+                        {"line_number": 1, "id": "spoofed-uuid"},
+                    ],
+                },
+                actor_user_id=user.id,
+            )
+
+    def test_malformed_line_payload_rejected(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+
+        with pytest.raises(InvoiceUpdateError, match="must be an array"):
+            update_invoice(
+                organization_id=org.id,
+                invoice_id=invoice.id,
+                updates={"line_items": {"not": "a list"}},
+                actor_user_id=user.id,
+            )
+
+        with pytest.raises(InvoiceUpdateError, match="line_number"):
+            update_invoice(
+                organization_id=org.id,
+                invoice_id=invoice.id,
+                updates={"line_items": [{"description": "no line number"}]},
+                actor_user_id=user.id,
+            )
+
+    def test_correction_propagates_to_item_master(self, org_user) -> None:
+        """A user correction of a line code overwrites the matched master default."""
+        org, user = org_user
+        invoice = _make_invoice(org)
+
+        # Seed master state via the enrichment pipeline (creates ItemMaster
+        # for "Widget" / "Widget 2" with empty defaults).
+        from apps.enrichment.models import ItemMaster
+        from apps.enrichment.services import enrich_invoice
+
+        enrich_invoice(invoice.id)
+        master = ItemMaster.objects.get(
+            organization=org, canonical_name="Widget"
+        )
+        # Imagine the master picked up a wrong code from a previous LLM pass.
+        master.default_classification_code = "999"
+        master.save()
+
+        update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={
+                "line_items": [
+                    {"line_number": 1, "classification_code": "011"},
+                ],
+            },
+            actor_user_id=user.id,
+        )
+        master.refresh_from_db()
+        assert master.default_classification_code == "011"
+
+    def test_combined_header_and_line_update_emits_one_audit_event(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+
+        update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={
+                "buyer_msic_code": "62010",
+                "line_items": [
+                    {"line_number": 1, "classification_code": "011"},
+                ],
+            },
+            actor_user_id=user.id,
+        )
+
+        events = list(AuditEvent.objects.filter(action_type="invoice.updated"))
+        assert len(events) == 1
+        payload = events[0].payload
+        assert payload["changed_fields"] == ["buyer_msic_code"]
+        assert len(payload["changed_line_items"]) == 1
+        assert payload["changed_line_items"][0]["line_number"] == 1
+
+    def test_no_changes_returns_empty_summary(self, org_user) -> None:
+        """Submitting current values for both header + lines is a no-op."""
+        org, user = org_user
+        invoice = _make_invoice(org)
+
+        result = update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={
+                "buyer_msic_code": invoice.buyer_msic_code,
+                "line_items": [
+                    {
+                        "line_number": 1,
+                        "description": invoice.line_items.get(line_number=1).description,
+                    },
+                ],
+            },
+            actor_user_id=user.id,
+        )
+        assert result.changed_fields == []
+        assert result.changed_line_items == []
+        assert AuditEvent.objects.filter(action_type="invoice.updated").count() == 0

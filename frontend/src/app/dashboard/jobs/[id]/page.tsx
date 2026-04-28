@@ -32,7 +32,10 @@ import { AppShell } from "@/components/shell/AppShell";
 import { DocumentPreview } from "@/components/review/DocumentPreview";
 import { FieldRow } from "@/components/review/FieldRow";
 import { IssuePill } from "@/components/review/IssuePill";
-import { LineItemsTable } from "@/components/review/LineItemsTable";
+import {
+  LineItemsTable,
+  type LineDraft,
+} from "@/components/review/LineItemsTable";
 import { ValidationBanner } from "@/components/review/ValidationBanner";
 
 const TERMINAL = new Set(["validated", "rejected", "cancelled", "error", "ready_for_review"]);
@@ -59,6 +62,8 @@ type EditableField =
   | "grand_total";
 
 type Draft = Partial<Record<EditableField, string>>;
+// Line-item drafts: keyed by line_number -> { fieldName: newValue }.
+type LineDrafts = Record<number, LineDraft>;
 
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
@@ -66,6 +71,7 @@ export default function JobDetailPage() {
   const [job, setJob] = useState<IngestionJob | null>(null);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [draft, setDraft] = useState<Draft>({});
+  const [lineDrafts, setLineDrafts] = useState<LineDrafts>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,15 +119,40 @@ export default function JobDetailPage() {
     setDraft((prev) => ({ ...prev, [name as EditableField]: value }));
   }
 
+  function onChangeLineCell(lineNumber: number, field: string, value: string) {
+    setSaveError(null);
+    setLineDrafts((prev) => ({
+      ...prev,
+      [lineNumber]: { ...(prev[lineNumber] ?? {}), [field]: value },
+    }));
+  }
+
   async function onSave() {
     if (!invoice) return;
     setSaving(true);
     setSaveError(null);
     try {
-      // Empty strings clear the field; the backend coerces them per type.
-      const updated = await api.updateInvoice(invoice.id, draft);
+      // Build the PATCH payload combining header drafts and per-line drafts.
+      // Empty strings clear cells; the backend coerces them per type.
+      const payload: Record<string, unknown> = { ...draft };
+      const lineEntries = Object.entries(lineDrafts);
+      if (lineEntries.length > 0) {
+        payload.line_items = lineEntries.map(([num, fields]) => ({
+          line_number: Number(num),
+          ...fields,
+        }));
+      }
+      // The backend accepts arrays via JSON.stringify, but our typed
+      // client expects Record<string, string|null>. Cast via unknown to
+      // keep the strict client signature working without widening it
+      // for every call site.
+      const updated = await api.updateInvoice(
+        invoice.id,
+        payload as Record<string, string | null>,
+      );
       setInvoice(updated);
       setDraft({});
+      setLineDrafts({});
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Save failed.");
     } finally {
@@ -131,6 +162,7 @@ export default function JobDetailPage() {
 
   function onDiscard() {
     setDraft({});
+    setLineDrafts({});
     setSaveError(null);
   }
 
@@ -138,7 +170,9 @@ export default function JobDetailPage() {
   if (error) return <Pad>{error}</Pad>;
   if (!job) return <Pad>Not found.</Pad>;
 
-  const dirtyCount = Object.keys(draft).length;
+  const dirtyCount =
+    Object.keys(draft).length +
+    Object.values(lineDrafts).reduce((sum, d) => sum + Object.keys(d).length, 0);
 
   return (
     <AppShell>
@@ -159,7 +193,9 @@ export default function JobDetailPage() {
               <ReviewPanel
                 invoice={invoice}
                 draft={draft}
+                lineDrafts={lineDrafts}
                 onChangeField={onChangeField}
+                onChangeLineCell={onChangeLineCell}
               />
             ) : (
               <PendingPanel job={job} />
@@ -255,10 +291,18 @@ function PendingPanel({ job }: { job: IngestionJob }) {
 type ReviewPanelProps = {
   invoice: Invoice;
   draft: Draft;
+  lineDrafts: LineDrafts;
   onChangeField: (name: string, value: string) => void;
+  onChangeLineCell: (lineNumber: number, field: string, value: string) => void;
 };
 
-function ReviewPanel({ invoice, draft, onChangeField }: ReviewPanelProps) {
+function ReviewPanel({
+  invoice,
+  draft,
+  lineDrafts,
+  onChangeField,
+  onChangeLineCell,
+}: ReviewPanelProps) {
   const issuesByPath = useMemo(() => groupByPath(invoice.validation_issues), [
     invoice.validation_issues,
   ]);
@@ -403,6 +447,8 @@ function ReviewPanel({ invoice, draft, onChangeField }: ReviewPanelProps) {
           lineItems={invoice.line_items}
           issues={invoice.validation_issues}
           currency={invoice.currency_code}
+          drafts={lineDrafts}
+          onChangeCell={onChangeLineCell}
         />
       </section>
 
