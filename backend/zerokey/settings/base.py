@@ -185,6 +185,10 @@ REST_FRAMEWORK = {
     "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        # API-key auth runs first so a Bearer header short-circuits
+        # the session lookup. Session auth is the fallback for
+        # browser-based requests with a Django session cookie.
+        "apps.identity.api_key_auth.APIKeyAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
