@@ -122,6 +122,18 @@ AUTH_USER_MODEL = "identity.User"
 
 # --- Cache / sessions -----------------------------------------------------------------
 
+# --- Object storage (MinIO in dev, AWS S3 in prod) ------------------------------------
+# See apps.integrations.storage for the bucket/key conventions.
+
+S3_ENDPOINT_URL = env("S3_ENDPOINT_URL", default="")
+S3_PUBLIC_ENDPOINT_URL = env("S3_PUBLIC_ENDPOINT_URL", default="")
+S3_REGION = env("S3_REGION", default="ap-southeast-5")
+S3_ACCESS_KEY = env("S3_ACCESS_KEY", default="")
+S3_SECRET_KEY = env("S3_SECRET_KEY", default="")
+S3_BUCKET_UPLOADS = env("S3_BUCKET_UPLOADS", default="zerokey-uploads")
+S3_BUCKET_SIGNED = env("S3_BUCKET_SIGNED", default="zerokey-signed")
+S3_BUCKET_EXPORTS = env("S3_BUCKET_EXPORTS", default="zerokey-exports")
+
 REDIS_URL = env("REDIS_URL", default="redis://redis:6379/0")
 
 CACHES = {

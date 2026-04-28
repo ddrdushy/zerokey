@@ -69,6 +69,43 @@ export type Me = {
   active_organization_id: string | null;
 };
 
+export type IngestionJob = {
+  id: string;
+  source_channel: string;
+  original_filename: string;
+  file_size: number;
+  file_mime_type: string;
+  status: string;
+  upload_timestamp: string;
+  completed_at: string | null;
+  error_message: string;
+  download_url: string | null;
+};
+
+async function uploadFile(file: File): Promise<IngestionJob> {
+  const headers = new Headers();
+  const csrf = readCookie("csrftoken");
+  if (csrf) headers.set("X-CSRFToken", csrf);
+
+  const form = new FormData();
+  form.append("file", file);
+
+  const response = await fetch(`${API_BASE}/ingestion/jobs/upload/`, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: form,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      (body && typeof body === "object" && "detail" in body && String(body.detail)) ||
+      `HTTP ${response.status}`;
+    throw new ApiError(message, response.status, body);
+  }
+  return body as IngestionJob;
+}
+
 export const api = {
   ensureCsrf: () => request<{ detail: string }>("/identity/csrf/"),
   me: () => request<Me>("/identity/me/"),
@@ -89,4 +126,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  listJobs: () =>
+    request<{ results: IngestionJob[] }>("/ingestion/jobs/").then((r) => r.results),
+  uploadFile,
 };

@@ -3,27 +3,35 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { api, type Me, ApiError } from "@/lib/api";
+import { api, type Me, type IngestionJob, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { DropZone } from "@/components/DropZone";
 
 export default function DashboardPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
+  const [jobs, setJobs] = useState<IngestionJob[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api
       .me()
-      .then((data) => setMe(data))
+      .then(async (data) => {
+        setMe(data);
+        const list = await api.listJobs().catch(() => []);
+        setJobs(list);
+      })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 403) {
           router.replace("/sign-in");
-          return;
         }
-        // Other errors leave us on the page so the message is visible in the console.
       })
       .finally(() => setLoading(false));
   }, [router]);
+
+  function onUploaded(job: IngestionJob) {
+    setJobs((prev) => [job, ...prev]);
+  }
 
   async function onLogout() {
     await api.logout();
@@ -75,20 +83,52 @@ export default function DashboardPage() {
       </section>
 
       <section className="grid gap-4 md:grid-cols-3">
-        <Card label="Invoices this month" value="0" />
-        <Card label="Pending review" value="0" />
-        <Card label="Submitted to LHDN" value="0" />
+        <Card label="Total uploads" value={String(jobs.length)} />
+        <Card
+          label="Awaiting extraction"
+          value={String(jobs.filter((j) => j.status === "received").length)}
+        />
+        <Card
+          label="Submitted to LHDN"
+          value={String(jobs.filter((j) => j.status === "validated").length)}
+        />
       </section>
 
-      <section className="rounded-xl border border-slate-100 bg-white p-8">
-        <h2 className="text-xl font-semibold">Drop your first invoice</h2>
-        <p className="mt-2 max-w-2xl text-base text-slate-600">
-          Phase 1 stops here. Ingestion, extraction, validation, and submission land in the
-          subsequent phases per the roadmap.
-        </p>
-        <div className="mt-6 flex h-40 items-center justify-center rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 text-slate-400">
-          File drop will land here
-        </div>
+      <DropZone onUploaded={onUploaded} />
+
+      <section>
+        <h2 className="text-xl font-semibold">Recent uploads</h2>
+        {jobs.length === 0 ? (
+          <p className="mt-3 text-base text-slate-400">
+            No uploads yet. Drop a file above to get started.
+          </p>
+        ) : (
+          <ul className="mt-4 divide-y divide-slate-100 border-y border-slate-100">
+            {jobs.map((j) => (
+              <li key={j.id} className="flex items-center justify-between py-3">
+                <div>
+                  <div className="text-base font-medium">{j.original_filename}</div>
+                  <div className="text-2xs uppercase tracking-wider text-slate-400">
+                    {j.source_channel} · {(j.file_size / 1024).toFixed(1)} KB ·{" "}
+                    {new Date(j.upload_timestamp).toLocaleString()}
+                  </div>
+                </div>
+                <span
+                  className={[
+                    "rounded-full px-3 py-1 text-2xs font-medium",
+                    j.status === "validated"
+                      ? "bg-success/10 text-success"
+                      : j.status === "error" || j.status === "rejected"
+                        ? "bg-error/10 text-error"
+                        : "bg-slate-100 text-slate-600",
+                  ].join(" ")}
+                >
+                  {j.status.replace(/_/g, " ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section>
