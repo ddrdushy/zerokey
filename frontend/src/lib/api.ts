@@ -52,6 +52,35 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 // --- Identity --------------------------------------------------------------
 
+export type WebhookEndpointRow = {
+  id: string;
+  label: string;
+  url: string;
+  event_types: string[];
+  secret_prefix: string;
+  is_active: boolean;
+  created_at: string | null;
+  last_succeeded_at?: string | null;
+  last_failed_at?: string | null;
+  revoked_at?: string | null;
+};
+
+export type WebhookDeliveryRow = {
+  id: string;
+  endpoint_id: string;
+  event_id: string;
+  event_type: string;
+  attempt: number;
+  outcome: "pending" | "success" | "failure" | "retrying" | "abandoned";
+  response_status: number | null;
+  response_body_excerpt: string;
+  error_class: string;
+  duration_ms: number | null;
+  queued_at: string | null;
+  delivered_at: string | null;
+  payload_excerpt: string;
+};
+
 export type BillingPlan = {
   id: string;
   slug: string;
@@ -831,6 +860,38 @@ export const api = {
       usage: BillingUsage;
       available_plans: BillingPlan[];
     }>("/billing/overview/"),
+  listWebhooks: () =>
+    request<{
+      results: WebhookEndpointRow[];
+      available_events: { key: string; label: string }[];
+    }>("/integrations/webhooks/"),
+  createWebhook: (body: {
+    label: string;
+    url: string;
+    event_types: string[];
+  }) =>
+    request<WebhookEndpointRow & { plaintext_secret: string }>(
+      "/integrations/webhooks/",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  revokeWebhook: (webhookId: string) =>
+    request<WebhookEndpointRow>(`/integrations/webhooks/${webhookId}/`, {
+      method: "DELETE",
+    }),
+  testWebhook: (webhookId: string) =>
+    request<WebhookDeliveryRow>(
+      `/integrations/webhooks/${webhookId}/test/`,
+      { method: "POST" },
+    ),
+  listWebhookDeliveries: (params?: { webhookId?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.webhookId) qs.set("webhook_id", params.webhookId);
+    if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+    const search = qs.toString();
+    return request<{ results: WebhookDeliveryRow[] }>(
+      `/integrations/deliveries/${search ? `?${search}` : ""}`,
+    );
+  },
   updateOrganization: (updates: Partial<Record<keyof OrganizationDetail, string>>) =>
     request<OrganizationDetail>("/identity/organization/", {
       method: "PATCH",
