@@ -444,6 +444,232 @@ def list_platform_tenants(
     return out
 
 
+# --- Engine credentials management (Slice 36) ----------------------------------
+#
+# The super-admin can rotate per-engine credentials (API keys, hosts, model
+# identifiers) and toggle status (active / degraded / archived) without
+# touching .env or restarting workers. The Engine.credentials JSONField is
+# the source of truth at runtime; ``apps.extraction.credentials`` reads
+# from it first, then falls back to env. The frontend redacts credential
+# values when displaying — operators can replace but not read existing
+# values, matching standard credential-rotation UX.
+
+
+# Credential fields are NEVER returned in cleartext. The frontend gets a
+# bool per key indicating "is this field set?", which is enough to render
+# "edit" vs "rotate" UI without leaking the secret. To replace a value the
+# operator submits the new value; to clear, they submit an empty string.
+_REDACTED_PLACEHOLDER = "***"
+
+
+def list_engines_for_admin(*, actor_user_id: UUID | str) -> list[dict[str, Any]]:
+    """Cross-engine catalogue with redacted credential metadata.
+
+    Returns one dict per Engine row with its name, capability, status,
+    description, recent-call counts, and a ``credential_keys`` map
+    (``{key: is_set}``) — never the values themselves. Operators rotate
+    by writing new values; reading them back isn't part of the contract.
+
+    Audited as ``admin.engines_listed`` so the read shows on the chain.
+    """
+    from datetime import timedelta
+
+    from django.db.models import Count
+    from django.utils import timezone
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.extraction.models import Engine, EngineCall
+
+    cutoff = timezone.now() - timedelta(days=7)
+
+    # No tenant filter — the engine catalogue is global. The audit event
+    # below records the read.
+    engines = list(Engine.objects.order_by("capability", "name"))
+    engine_ids = [e.id for e in engines]
+    recent_calls = dict(
+        EngineCall.objects.filter(
+            engine_id__in=engine_ids, started_at__gte=cutoff
+        )
+        .values_list("engine_id")
+        .annotate(c=Count("id"))
+    )
+    success_calls = dict(
+        EngineCall.objects.filter(
+            engine_id__in=engine_ids,
+            started_at__gte=cutoff,
+            outcome=EngineCall.Outcome.SUCCESS,
+        )
+        .values_list("engine_id")
+        .annotate(c=Count("id"))
+    )
+
+    out: list[dict[str, Any]] = []
+    for engine in engines:
+        creds = engine.credentials or {}
+        credential_keys = {k: bool(v) for k, v in creds.items() if isinstance(k, str)}
+        out.append(
+            {
+                "id": str(engine.id),
+                "name": engine.name,
+                "vendor": engine.vendor,
+                "model_identifier": engine.model_identifier,
+                "adapter_version": engine.adapter_version,
+                "capability": engine.capability,
+                "status": engine.status,
+                "cost_per_call_micros": int(engine.cost_per_call_micros),
+                "description": engine.description,
+                "credential_keys": credential_keys,
+                "calls_last_7d": int(recent_calls.get(engine.id, 0)),
+                "calls_success_last_7d": int(success_calls.get(engine.id, 0)),
+                "created_at": engine.created_at.isoformat()
+                if engine.created_at
+                else None,
+                "updated_at": engine.updated_at.isoformat()
+                if engine.updated_at
+                else None,
+            }
+        )
+
+    record_event(
+        action_type="admin.engines_listed",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=None,
+        affected_entity_type="Engine",
+        affected_entity_id="",
+        payload={"result_count": len(out)},
+    )
+    return out
+
+
+# Editable Engine columns. Whitelist enforces "name + adapter_version +
+# capability" remain immutable from the UI — those are wiring contracts;
+# changing them silently could orphan routing rules.
+_EDITABLE_ENGINE_FIELDS = {
+    "model_identifier",
+    "status",
+    "cost_per_call_micros",
+    "description",
+}
+
+
+class EngineUpdateError(Exception):
+    """Raised when an engine update payload is invalid."""
+
+
+def update_engine(
+    *,
+    engine_id: UUID | str,
+    actor_user_id: UUID | str,
+    field_updates: dict[str, Any] | None = None,
+    credential_updates: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Atomically update editable fields and/or credentials on one Engine.
+
+    ``field_updates`` keys are restricted to ``_EDITABLE_ENGINE_FIELDS``
+    (model_identifier, status, cost_per_call_micros, description).
+    ``credential_updates`` is a dict of {key: value}; an empty-string value
+    deletes the key from the JSON, any other string sets it. Reading back
+    a credential is never possible through this surface.
+
+    Audited as ``admin.engine_updated`` with the FIELD names (not values)
+    in the payload — same PII-safe convention as customer-side
+    ``invoice.updated``.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.extraction.models import Engine
+
+    field_updates = field_updates or {}
+    credential_updates = credential_updates or {}
+
+    invalid = set(field_updates) - _EDITABLE_ENGINE_FIELDS
+    if invalid:
+        raise EngineUpdateError(
+            f"Fields not editable: {sorted(invalid)}. "
+            f"Allowed: {sorted(_EDITABLE_ENGINE_FIELDS)}"
+        )
+
+    if "status" in field_updates and field_updates["status"] not in {
+        Engine.Status.ACTIVE,
+        Engine.Status.DEGRADED,
+        Engine.Status.ARCHIVED,
+    }:
+        raise EngineUpdateError(
+            f"Invalid status {field_updates['status']!r}. "
+            f"Allowed: active, degraded, archived"
+        )
+
+    with transaction.atomic():
+        engine = Engine.objects.select_for_update().get(id=engine_id)
+
+        changed_fields: list[str] = []
+        for key, value in field_updates.items():
+            if getattr(engine, key) != value:
+                setattr(engine, key, value)
+                changed_fields.append(key)
+
+        changed_credential_keys: list[str] = []
+        if credential_updates:
+            current = dict(engine.credentials or {})
+            for key, value in credential_updates.items():
+                if not isinstance(key, str) or not key:
+                    raise EngineUpdateError("Credential keys must be non-empty strings.")
+                if value == "":
+                    if key in current:
+                        del current[key]
+                        changed_credential_keys.append(key)
+                else:
+                    if current.get(key) != value:
+                        current[key] = value
+                        changed_credential_keys.append(key)
+            engine.credentials = current
+
+        if not changed_fields and not changed_credential_keys:
+            # Nothing actually changed — skip the save + audit so the
+            # operator's "no-op" gesture (e.g. re-saving the same form)
+            # doesn't add audit noise.
+            return _engine_admin_dict(engine)
+
+        engine.save()
+
+        record_event(
+            action_type="admin.engine_updated",
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(actor_user_id),
+            organization_id=None,
+            affected_entity_type="Engine",
+            affected_entity_id=str(engine.id),
+            payload={
+                "engine_name": engine.name,
+                "fields_changed": sorted(changed_fields),
+                # Names of credential keys, never values.
+                "credential_keys_changed": sorted(changed_credential_keys),
+            },
+        )
+
+    return _engine_admin_dict(engine)
+
+
+def _engine_admin_dict(engine: Any) -> dict[str, Any]:
+    """Single-engine admin shape — same as the list-view rows."""
+    creds = engine.credentials or {}
+    return {
+        "id": str(engine.id),
+        "name": engine.name,
+        "vendor": engine.vendor,
+        "model_identifier": engine.model_identifier,
+        "adapter_version": engine.adapter_version,
+        "capability": engine.capability,
+        "status": engine.status,
+        "cost_per_call_micros": int(engine.cost_per_call_micros),
+        "description": engine.description,
+        "credential_keys": {k: bool(v) for k, v in creds.items()},
+        "updated_at": engine.updated_at.isoformat() if engine.updated_at else None,
+    }
+
+
 def refresh_reference_catalogs() -> dict[str, int]:
     """Stamp ``last_refreshed_at`` on every active reference row.
 

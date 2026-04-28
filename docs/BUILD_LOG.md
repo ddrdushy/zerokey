@@ -3487,6 +3487,149 @@ What's deferred:
 
 ---
 
+### Slice 36 — Super-admin engine credentials management UI
+
+The closing slice in the super-admin UI arc (Slices 33–36).
+Lets the operator rotate per-engine API keys, swap models,
+toggle status, and adjust cost baselines without touching
+`.env` or restarting workers. The Engine.credentials JSONField
+already exists (Slice 12) and the runtime resolver
+(`extraction.credentials.engine_credential`) already prefers
+DB over env — this slice plugs the missing UI for the
+"super-admin populates the row" leg.
+
+Backend:
+
+- **`apps.administration.services.list_engines_for_admin`** —
+  cross-engine catalogue. Returns one dict per Engine with
+  name, vendor, capability, status, cost, description, plus
+  recent-call counts (last 7 days, success vs total) joined
+  from EngineCall. Crucially: the `credentials` JSON values
+  are *never* serialised — instead, each row carries a
+  `credential_keys: {key: bool}` map indicating "is this key
+  set?" without leaking the value. Audited as
+  `admin.engines_listed`.
+- **`update_engine`** — atomic editor with
+  `select_for_update` lock. `field_updates` is allowlisted
+  to `{model_identifier, status, cost_per_call_micros,
+  description}`; `name`, `vendor`, `capability`,
+  `adapter_version` are immutable from the UI (they're
+  wiring contracts; changing them silently could orphan
+  routing rules). `credential_updates` accepts
+  `{key: value}`; an empty-string value deletes the key.
+  No-op detection skips the audit + save when nothing
+  actually changed (stops the chain from filling with
+  re-saves of the same form). Audited as
+  `admin.engine_updated` with the FIELD names changed and
+  the credential KEY names changed — never the values.
+  Same PII-clean convention as `invoice.updated`.
+- **Endpoints**:
+  - `GET /api/v1/admin/engines/`
+  - `PATCH /api/v1/admin/engines/<uuid>/`
+  Both gated by `IsPlatformStaff`.
+
+Frontend:
+
+- **`/admin/engines/page.tsx`** — one card per engine. Header
+  shows name + status pill + capability tag + vendor / model
+  / adapter; right side shows recent call activity (7-day
+  count + success count). Footer has the credential-keys
+  summary (each key as a chip — green when set, slate when
+  unset) and an Edit button.
+- **In-place editor** (expanded card): status select
+  (active / degraded / archived), model identifier text
+  input, and one input per credential key with placeholder
+  "•••• (set)" or "(unset)". The form starts empty for
+  every credential field; typing into one rotates that
+  value, leaving others untouched. Empty-string submit
+  clears the key. Sustained "values are write-only"
+  contract: the operator can rotate but never read.
+- **Status pill** uses success/warning/slate colour family
+  for active/degraded/archived. Capability tag mirrors the
+  same vocabulary as the audit / engine-activity pages.
+- The shell's Engines nav item drops its `soon` badge —
+  every nav item is now live.
+- `api.adminListEngines()` + `adminUpdateEngine()` clients
+  + `AdminEngine` type added.
+
+Tests: 11 new (369 passing total, was 358). List endpoint:
+auth gate (401/403/customer-403), staff sees engines with
+redacted credential keys (the test asserts plaintext values
+do NOT appear anywhere in the JSON response). Update
+endpoint: status change, credential rotation, credential
+clear (empty-string), reject non-editable field with the
+allowlist error message, reject invalid status, 404 on
+unknown engine, no-op detection (re-submitting the same
+api_key produces no audit row), customer 403 + verify the
+engine wasn't actually mutated.
+
+Verified live with Playwright (`admin@symprio.com`): visited
+`/admin/engines`, all 5 seeded engines visible
+(anthropic-claude-sonnet-structure, ollama-structure,
+easyocr, pdfplumber, anthropic-claude-sonnet-vision) each
+with the right status pill, capability badge, vendor info,
+description, and recent-call counts in the right rail. The
+"No credentials configured (engine may run on env fallbacks)"
+note correctly reflects truth — the seeded engines have
+empty Engine.credentials and currently rely on env vars set
+via `.env`. Once an operator rotates through this UI, the
+DB takes over.
+
+Durable design decisions:
+
+- **Credential values are never returned, ever.** A future
+  operator might be tempted to add a "view current value"
+  toggle for confirming what's stored. We refuse — the API
+  has no read path for credential plaintext. Rotation is
+  the only operation. This matches the standard
+  credential-rotation UX (browser password managers, AWS
+  IAM access keys) and means a UI bug or mis-rendered
+  expanded card can't leak the value to the page DOM.
+- **Audit logs the field/key NAMES, not values.** The same
+  PII-clean convention every customer-side audit event
+  follows. An operator rotating an api_key produces an
+  `admin.engine_updated` event with
+  `credential_keys_changed: ["api_key"]` and zero leak of
+  the new value.
+- **Allowlist of editable fields, not deny-list.** `name`,
+  `vendor`, `capability`, `adapter_version` are *contracts*
+  that other code reads. Renaming an engine through this UI
+  would invisibly break routing rules pointing at the old
+  name. The allowlist forces a code change for any new
+  operator-editable field, which is the right friction.
+- **No-op detection skips the audit row.** Saving an empty
+  form (or resubmitting unchanged values) is a common UX
+  pattern; if we didn't filter, the audit chain would fill
+  with non-events. The detection is by-value (if the new
+  value equals the existing value, skip), not by-form-input
+  (which would naively count "empty input" as a clear).
+- **Five seeded engines, all visible.** The catalogue
+  doesn't filter — even archived engines appear (their
+  status pill makes their state obvious). An operator
+  investigating "why is this engine not running?" can see
+  it greyed-out without going through Django admin.
+
+What's deferred:
+
+- **New-engine creation from the UI.** Today engines are
+  only registered via data migrations (the right place for
+  wiring contracts). A "create engine" button could be
+  added, but it would mostly serve as a footgun — registering
+  an engine without an adapter class to back it produces a
+  broken row.
+- **Routing rule editor.** EngineRoutingRule has the same
+  shape (priority + mime allowlist + fallback engine) but
+  isn't editable from the UI yet. Lands in a follow-up
+  slice when the operator surfaces start needing per-tenant
+  routing overrides.
+- **Cost calibration view.** The cost_per_call_micros
+  field is editable but there's no comparison surface ("here's
+  what you've actually been spending vs. what you set as
+  baseline"). The data exists on EngineCall rows; the
+  visualisation is Phase 5 polish.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -3568,7 +3711,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 358 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 369 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

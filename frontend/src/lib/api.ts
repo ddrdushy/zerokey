@@ -189,6 +189,23 @@ export type AdminMe = {
   is_superuser: boolean;
 };
 
+export type AdminEngine = {
+  id: string;
+  name: string;
+  vendor: string;
+  model_identifier: string;
+  adapter_version: string;
+  capability: string;
+  status: "active" | "degraded" | "archived";
+  cost_per_call_micros: number;
+  description: string;
+  credential_keys: Record<string, boolean>;
+  calls_last_7d?: number;
+  calls_success_last_7d?: number;
+  created_at?: string | null;
+  updated_at: string | null;
+};
+
 export type PlatformTenant = {
   id: string;
   legal_name: string;
@@ -486,6 +503,26 @@ export const api = {
     request<{ results: string[] }>("/admin/audit/action-types/").then(
       (r) => r.results,
     ),
+  adminListEngines: () =>
+    request<{ results: AdminEngine[] }>("/admin/engines/").then(
+      (r) => r.results,
+    ),
+  adminUpdateEngine: (
+    engineId: string,
+    body: {
+      fields?: Partial<{
+        status: string;
+        model_identifier: string;
+        cost_per_call_micros: number;
+        description: string;
+      }>;
+      credentials?: Record<string, string>;
+    },
+  ) =>
+    request<AdminEngine>(`/admin/engines/${engineId}/`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   adminListTenants: (params?: { search?: string; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.search) qs.set("search", params.search);

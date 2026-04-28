@@ -24,4 +24,10 @@ urlpatterns = [
         name="platform-action-types",
     ),
     path("tenants/", views.platform_tenants, name="platform-tenants"),
+    path("engines/", views.admin_list_engines, name="admin-list-engines"),
+    path(
+        "engines/<uuid:engine_id>/",
+        views.admin_update_engine,
+        name="admin-update-engine",
+    ),
 ]

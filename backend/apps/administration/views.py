@@ -108,6 +108,67 @@ def platform_action_types(request: Request) -> Response:
 
 @api_view(["GET"])
 @permission_classes([IsPlatformStaff])
+def admin_list_engines(request: Request) -> Response:
+    """List every engine with redacted credential metadata."""
+    return Response(
+        {
+            "results": services.list_engines_for_admin(
+                actor_user_id=request.user.id,
+            ),
+        }
+    )
+
+
+@api_view(["PATCH"])
+@permission_classes([IsPlatformStaff])
+def admin_update_engine(request: Request, engine_id: str) -> Response:
+    """Patch editable fields + credential keys for one engine.
+
+    Body shape:
+        {
+            "fields": {"status": "active", "model_identifier": "..."},
+            "credentials": {"api_key": "<new>", "host": ""}
+        }
+    Empty-string credential value deletes the key. Reading back the
+    plaintext credential is never possible via this surface.
+    """
+    from apps.extraction.models import Engine
+
+    body = request.data or {}
+    field_updates = body.get("fields") or {}
+    credential_updates = body.get("credentials") or {}
+
+    if not isinstance(field_updates, dict) or not isinstance(
+        credential_updates, dict
+    ):
+        return Response(
+            {"detail": "fields and credentials must be objects."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        result = services.update_engine(
+            engine_id=engine_id,
+            actor_user_id=request.user.id,
+            field_updates=field_updates,
+            credential_updates=credential_updates,
+        )
+    except Engine.DoesNotExist:
+        return Response(
+            {"detail": "Engine not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    except services.EngineUpdateError as exc:
+        return Response(
+            {"detail": str(exc)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
 def platform_tenants(request: Request) -> Response:
     """Tenant directory with member + activity counts.
 
