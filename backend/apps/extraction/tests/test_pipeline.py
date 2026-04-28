@@ -64,6 +64,44 @@ def pdf_engine_and_rule(db) -> Engine:
 
 
 @pytest.fixture
+def easyocr_engine_and_rule(db) -> Engine:
+    """Register an EasyOCR engine + priority-200 PDF rule.
+
+    The Slice 32 escalation chain expects this rule to exist as the
+    "second-priority" TextExtract for PDFs — the router's
+    ``pick_fallback_engine`` skips pdfplumber (priority 100) and finds
+    this. If the rule is missing, the OCR escalation function silently
+    skips and the existing vision escalation runs.
+    """
+    engine, _ = Engine.objects.update_or_create(
+        name="easyocr",
+        defaults={"vendor": "easyocr", "capability": "text_extract"},
+    )
+    EngineRoutingRule.objects.update_or_create(
+        capability="text_extract",
+        priority=200,
+        engine=engine,
+        match_mime_types="application/pdf",
+        defaults={"is_active": True},
+    )
+    return engine
+
+
+class _FakeOCRAdapter(TextExtractEngine):
+    name = "easyocr"
+
+    def __init__(self, result: TextExtractResult | None = None) -> None:
+        self._result = result or TextExtractResult(
+            text="OCR'd content goes here", confidence=0.85, page_count=1
+        )
+        self.calls: list[tuple[bytes, str]] = []
+
+    def extract_text(self, *, body: bytes, mime_type: str) -> TextExtractResult:
+        self.calls.append((body, mime_type))
+        return self._result
+
+
+@pytest.fixture
 def vision_engine_and_rule(db) -> Engine:
     """Register a vision engine + routing rule that matches PDFs.
 
@@ -140,7 +178,7 @@ class _FakeVisionAdapter(VisionExtractEngine):
         return self._result
 
 
-def _adapter_dispatcher(text_adapter, vision_adapter):
+def _adapter_dispatcher(text_adapter, vision_adapter, ocr_adapter=None):
     """Return a stand-in for ``get_adapter`` that routes by adapter name."""
 
     def _resolve(name: str):
@@ -148,6 +186,8 @@ def _adapter_dispatcher(text_adapter, vision_adapter):
             return text_adapter
         if vision_adapter is not None and name == vision_adapter.name:
             return vision_adapter
+        if ocr_adapter is not None and name == ocr_adapter.name:
+            return ocr_adapter
         raise KeyError(name)
 
     return _resolve
@@ -498,3 +538,207 @@ class TestClaudeVisionAdapterMimeDispatch:
 
         with pytest.raises(EngineUnavailable):
             _document_block(body=b"...", mime_type="application/zip")
+
+
+@pytest.mark.django_db
+class TestOCREscalation:
+    """Slice 32: pdfplumber low confidence -> EasyOCR -> (else vision).
+
+    The escalation chain has three tiers:
+      1. pdfplumber on the PDF — fast, free, works for native PDFs.
+      2. If confidence < threshold (sparse text → likely scanned),
+         pick_fallback_engine returns the priority-200 EasyOCR rule and
+         the OCR adapter runs. If its confidence ≥ threshold, the OCR
+         text replaces the primary result; the rest of the pipeline
+         (FieldStructure with Ollama) proceeds unchanged.
+      3. If OCR also fails / is unavailable / returns low confidence,
+         the existing vision escalation runs.
+    """
+
+    def _scanned(self) -> TextExtractResult:
+        # pdfplumber's "I couldn't pull anything" return value — empty text,
+        # 0.10 confidence floor.
+        return TextExtractResult(text="", confidence=0.10, page_count=1)
+
+    def test_low_pdf_confidence_triggers_ocr_and_skips_vision(
+        self,
+        org_and_user,
+        pdf_engine_and_rule,
+        easyocr_engine_and_rule,
+        vision_engine_and_rule,
+    ) -> None:
+        org, _ = org_and_user
+        job = _make_job(org)
+
+        text_adapter = _FakeAdapter(self._scanned())
+        ocr_adapter = _FakeOCRAdapter(
+            TextExtractResult(
+                text="OCR'd full invoice text from the scanned PDF.",
+                confidence=0.85,
+                page_count=2,
+            )
+        )
+        vision_adapter = _FakeVisionAdapter()
+
+        with (
+            patch("apps.extraction.services._read_object", return_value=b"%PDF fake"),
+            patch(
+                "apps.extraction.services.get_adapter",
+                side_effect=_adapter_dispatcher(text_adapter, vision_adapter, ocr_adapter),
+            ),
+            patch("apps.extraction.tasks.structure_invoice.delay"),
+        ):
+            run_extraction(job.id)
+
+        # OCR was called with the original bytes + mime.
+        assert len(ocr_adapter.calls) == 1
+        assert ocr_adapter.calls[0] == (b"%PDF fake", "application/pdf")
+
+        # Vision NOT called — OCR succeeded so the chain stopped there.
+        # Asserting through the audit log + job state below proves the
+        # post-OCR pipeline took the FieldStructure path (the structuring
+        # task is wrapped in transaction.on_commit which doesn't fire in
+        # the test's transaction).
+
+        job.refresh_from_db()
+        assert job.status == IngestionJob.Status.READY_FOR_REVIEW
+        # Combined engine name records the chain step.
+        assert job.extraction_engine == "pdfplumber+easyocr"
+        # Confidence reflects the OCR pass, not pdfplumber's 0.10.
+        assert job.extraction_confidence == pytest.approx(0.85)
+        # The OCR text becomes the job's extracted_text.
+        assert "OCR'd full invoice text" in job.extracted_text
+
+        # Two engine calls succeeded (pdfplumber + easyocr).
+        outcomes = list(EngineCall.objects.values_list("outcome", flat=True))
+        assert outcomes.count(EngineCall.Outcome.SUCCESS) == 2
+
+        # Audit chain has the OCR escalation events.
+        actions = set(AuditEvent.objects.values_list("action_type", flat=True))
+        assert "ingestion.job.ocr_escalation_started" in actions
+        assert "ingestion.job.ocr_escalation_applied" in actions
+        # Vision escalation was NOT started — chain stopped at OCR.
+        assert "ingestion.job.vision_escalation_started" not in actions
+
+    def test_ocr_low_confidence_falls_through_to_vision(
+        self,
+        org_and_user,
+        pdf_engine_and_rule,
+        easyocr_engine_and_rule,
+        vision_engine_and_rule,
+    ) -> None:
+        """OCR ran but its own confidence was sub-threshold → vision still runs."""
+        org, _ = org_and_user
+        job = _make_job(org)
+
+        text_adapter = _FakeAdapter(self._scanned())
+        # OCR confidence below threshold — bad scan that even OCR couldn't
+        # read confidently.
+        ocr_adapter = _FakeOCRAdapter(
+            TextExtractResult(text="garbled fragments", confidence=0.20, page_count=1)
+        )
+        vision_adapter = _FakeVisionAdapter()
+
+        with (
+            patch("apps.extraction.services._read_object", return_value=b"%PDF fake"),
+            patch(
+                "apps.extraction.services.get_adapter",
+                side_effect=_adapter_dispatcher(text_adapter, vision_adapter, ocr_adapter),
+            ),
+            patch("apps.extraction.tasks.structure_invoice.delay"),
+        ):
+            run_extraction(job.id)
+
+        # Both OCR + vision were tried.
+        assert len(ocr_adapter.calls) == 1
+        assert len(vision_adapter.calls) == 1
+
+        # Audit log shows OCR was attempted but skipped, then vision applied.
+        actions = list(AuditEvent.objects.values_list("action_type", flat=True))
+        assert "ingestion.job.ocr_escalation_started" in actions
+        assert "ingestion.job.ocr_escalation_skipped" in actions
+        assert "ingestion.job.vision_escalation_started" in actions
+
+    def test_high_pdf_confidence_does_not_trigger_ocr(
+        self,
+        org_and_user,
+        pdf_engine_and_rule,
+        easyocr_engine_and_rule,
+        vision_engine_and_rule,
+    ) -> None:
+        """Native PDF (high confidence) bypasses OCR entirely."""
+        org, _ = org_and_user
+        job = _make_job(org)
+
+        text_adapter = _FakeAdapter(
+            TextExtractResult(text="Native text content", confidence=0.95, page_count=1)
+        )
+        ocr_adapter = _FakeOCRAdapter()  # default response — should be untouched
+        vision_adapter = _FakeVisionAdapter()
+
+        with (
+            patch("apps.extraction.services._read_object", return_value=b"%PDF fake"),
+            patch(
+                "apps.extraction.services.get_adapter",
+                side_effect=_adapter_dispatcher(text_adapter, vision_adapter, ocr_adapter),
+            ),
+            patch("apps.extraction.tasks.structure_invoice.delay"),
+        ):
+            run_extraction(job.id)
+
+        # Neither OCR nor vision was called.
+        assert ocr_adapter.calls == []
+        assert vision_adapter.calls == []
+
+        # No OCR escalation events on the audit chain.
+        actions = list(AuditEvent.objects.values_list("action_type", flat=True))
+        assert "ingestion.job.ocr_escalation_started" not in actions
+
+    def test_ocr_unavailable_falls_through_to_vision(
+        self,
+        org_and_user,
+        pdf_engine_and_rule,
+        easyocr_engine_and_rule,
+        vision_engine_and_rule,
+    ) -> None:
+        """OCR adapter raises EngineUnavailable → audit + fall through."""
+        org, _ = org_and_user
+        job = _make_job(org)
+
+        text_adapter = _FakeAdapter(self._scanned())
+
+        class _BoomOCR(TextExtractEngine):
+            name = "easyocr"
+
+            def __init__(self):
+                self.calls: list = []
+
+            def extract_text(self, *, body, mime_type):
+                self.calls.append((body, mime_type))
+                raise EngineUnavailable("easyocr is not installed")
+
+        ocr_adapter = _BoomOCR()
+        vision_adapter = _FakeVisionAdapter()
+
+        with (
+            patch("apps.extraction.services._read_object", return_value=b"%PDF fake"),
+            patch(
+                "apps.extraction.services.get_adapter",
+                side_effect=_adapter_dispatcher(text_adapter, vision_adapter, ocr_adapter),
+            ),
+            patch("apps.extraction.tasks.structure_invoice.delay"),
+        ):
+            run_extraction(job.id)
+
+        # OCR was attempted, raised, vision then ran.
+        assert len(ocr_adapter.calls) == 1
+        assert len(vision_adapter.calls) == 1
+
+        actions = list(AuditEvent.objects.values_list("action_type", flat=True))
+        assert "ingestion.job.ocr_escalation_skipped" in actions
+        # The skip reason carried the EngineUnavailable message — UI can
+        # surface it on the inbox detail.
+        skip_event = AuditEvent.objects.filter(
+            action_type="ingestion.job.ocr_escalation_skipped"
+        ).first()
+        assert "easyocr is not installed" in skip_event.payload["reason"]

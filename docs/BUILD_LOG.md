@@ -3049,6 +3049,107 @@ What's deferred:
 
 ---
 
+### Slice 32 — pdfplumber → EasyOCR → vision escalation chain
+
+The vision escalation from Slice 12 jumps straight from "low
+pdfplumber confidence" to a paid Anthropic API call. Slice 31
+landed EasyOCR with a priority-200 fallback rule for PDFs but
+the routing logic didn't actually consult fallback rules.
+This slice wires the chain: scanned PDF → pdfplumber returns
+sparse text → EasyOCR runs locally → if OCR returns confident
+text, the regular FieldStructure (Ollama) path proceeds
+unchanged. Only if OCR also fails do we pay for vision.
+
+Backend:
+
+- **`pick_fallback_engine(capability, mime_type, exclude_engine_id)`**
+  in `apps.extraction.router` — returns the next-priority
+  matching rule that doesn't reference a given engine. Built on
+  the same internal helper as `pick_engine`; raises
+  `NoRouteFound` when no fallback exists. Documented as the
+  hook for any future "try a second engine" routing pattern.
+- **`_maybe_escalate_to_ocr`** in `apps.extraction.services` —
+  runs after the primary text extract, before vision
+  escalation. Returns `OCREscalationOutcome(applied=True,
+  replacement_result=…)` if a fallback engine ran and its
+  confidence cleared `EXTRACTION_OCR_THRESHOLD` (default 0.5,
+  env-overridable). When applied, the OCR's `TextExtractResult`
+  *replaces* the primary `result` — vision escalation then
+  evaluates against the OCR's confidence (which has just
+  cleared the threshold), so it skips. Recorded engine name
+  becomes `"pdfplumber+easyocr"` so the audit trail makes the
+  chain visible.
+- **Failure modes graceful**: missing fallback rule, missing
+  adapter, `EngineUnavailable`, vendor exception, sub-threshold
+  OCR confidence — every branch records the reason as an
+  `ingestion.job.ocr_escalation_skipped` audit event and falls
+  through to vision. The pipeline never breaks because OCR
+  couldn't run.
+- **Audit events**: `ingestion.job.ocr_escalation_started`
+  (chain initiated), `ingestion.job.ocr_escalation_applied`
+  (OCR text used as primary), `ingestion.job.ocr_escalation_skipped`
+  (OCR ran but didn't help). Same naming pattern as the
+  existing vision escalation events so an audit log filter for
+  `*escalation*` shows the full chain history.
+
+Tests: 4 new (337 passing total, was 333). Low pdfplumber
+confidence + good OCR → OCR text replaces primary, vision
+NOT called, audit log records the chain. Low pdfplumber +
+sub-threshold OCR → both run, vision then escalates as
+fallback. High pdfplumber confidence → neither OCR nor vision
+runs (native PDF unaffected). OCR `EngineUnavailable` →
+audit-and-skip with the unavailability reason in the inbox-
+visible payload, then vision runs.
+
+Verified live: pre-existing PDF flow on `invoice 5.pdf`
+(Telekom — pdfplumber returns 95% confidence) → OCR not
+triggered, structured-fields path unchanged from Slice 30
+behaviour. The OCR escalation only fires on scanned PDFs;
+the dev DB has none, but the Slice 31 image upload exercise
+(EasyOCR on a JPEG render of the same invoice) verifies the
+adapter end-to-end.
+
+Durable design decisions:
+
+- **OCR substitutes the primary `result`, not just produces
+  side text.** The simpler API would record OCR text under a
+  separate field on the IngestionJob ("ocr_text") and let
+  downstream code pick. We instead replace `result` so the
+  rest of the pipeline (vision threshold check, FieldStructure
+  task queue, audit recording) is unchanged. Single source of
+  truth for "what's the text we structured against" stays
+  `IngestionJob.extracted_text`.
+- **Combined engine name (`"pdfplumber+easyocr"`).** Same
+  pattern as Slice 12's `"pdfplumber+anthropic-claude-sonnet-vision"`
+  for vision escalation. The name encodes the chain step;
+  filterable downstream.
+- **OCR ran but sub-threshold counts as "skip", not "applied".**
+  A 0.20-confidence OCR result is barely better than nothing
+  for downstream structuring — the model would hallucinate
+  fields off garbled fragments. Treating it as "OCR couldn't
+  read this either" and falling through to vision matches the
+  customer-friendly outcome.
+- **Threshold = 0.5 for both OCR and vision.** The same
+  threshold could theoretically diverge (OCR is local + free
+  so we might want a more permissive threshold), but a single
+  knob simplifies operator reasoning and there's no calibration
+  data yet showing a different value works better. Two settings
+  exist in code so they CAN diverge later without a refactor.
+
+What's deferred:
+
+- **Per-tenant threshold tuning.** Some customers have mostly
+  native PDFs (tighten threshold to 0.7 to avoid wasting OCR
+  cycles); others have mostly scans (drop to 0.3 to escalate
+  earlier). Phase 5 polish; needs calibration data.
+- **OCR model swap by file class.** A future "this is a
+  receipt photo, use the receipt-tuned model" routing rule
+  could match on diagnostic signals (page count, image
+  dimensions). Today's single English Reader handles
+  everything.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -3130,7 +3231,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 333 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 337 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

@@ -29,6 +29,35 @@ class NoRouteFound(Exception):
 
 
 def pick_engine(*, capability: str, mime_type: str) -> RoutingDecision:
+    return _pick_engine(capability=capability, mime_type=mime_type, exclude_engine_id=None)
+
+
+def pick_fallback_engine(
+    *, capability: str, mime_type: str, exclude_engine_id: str
+) -> RoutingDecision:
+    """Return the next-priority active rule, skipping the engine that already ran.
+
+    Used by the escalation pipeline (Slice 32) when a primary text-extract
+    returns low confidence and we want to try the next-best engine before
+    paying for vision. The existing ``pick_engine`` always returns the
+    lowest-priority match; this variant returns the second-or-later match
+    that doesn't reference the engine we're trying to escape from.
+
+    ``NoRouteFound`` if no fallback rule exists; the caller decides whether
+    that's an audit-and-skip (escalation chain has no more options) or a
+    hard error (the primary path itself was a fallback that shouldn't have
+    run).
+    """
+    return _pick_engine(
+        capability=capability,
+        mime_type=mime_type,
+        exclude_engine_id=str(exclude_engine_id),
+    )
+
+
+def _pick_engine(
+    *, capability: str, mime_type: str, exclude_engine_id: str | None
+) -> RoutingDecision:
     rules = (
         EngineRoutingRule.objects.filter(
             capability=capability,
@@ -40,6 +69,8 @@ def pick_engine(*, capability: str, mime_type: str) -> RoutingDecision:
     )
 
     for rule in rules:
+        if exclude_engine_id and str(rule.engine_id) == exclude_engine_id:
+            continue
         if not _mime_matches(rule.match_mime_types, mime_type):
             continue
         fallbacks: list[Engine] = []

@@ -38,11 +38,12 @@ from apps.extraction.capabilities import (
     EngineUnavailable,
     StructuredExtractResult,
     TextExtractEngine,
+    TextExtractResult,
     VisionExtractEngine,
 )
 from apps.extraction.models import Engine, EngineCall
 from apps.extraction.registry import get_adapter
-from apps.extraction.router import NoRouteFound, pick_engine
+from apps.extraction.router import NoRouteFound, pick_engine, pick_fallback_engine
 from apps.identity.tenancy import set_tenant, super_admin_context
 from apps.ingestion.models import IngestionJob
 
@@ -55,6 +56,14 @@ logger = logging.getLogger(__name__)
 # Configurable via ``settings.EXTRACTION_VISION_THRESHOLD``; tunable per-tenant
 # in a later slice once we have data on what works for which document mix.
 DEFAULT_VISION_ESCALATION_THRESHOLD = 0.5
+
+# When pdfplumber returns sparse text on a PDF (likely scanned), the pipeline
+# tries a second TextExtract engine (EasyOCR) BEFORE paying for vision. If
+# the OCR pass returns text whose confidence beats this floor, we use it as
+# the primary text and let the regular FieldStructure path proceed (free
+# Ollama structuring). If OCR also falls below this floor, the vision
+# escalation runs as before. ``settings.EXTRACTION_OCR_THRESHOLD`` overrides.
+DEFAULT_OCR_ESCALATION_THRESHOLD = 0.5
 
 
 @dataclass(frozen=True)
@@ -181,6 +190,29 @@ def run_extraction(job_id: UUID | str) -> ExtractionResult:
         diagnostics=result.diagnostics,
     )
 
+    # Slice 32: when the primary text-extract returned sparse text (likely
+    # a scanned PDF), try a second TextExtract engine (EasyOCR) BEFORE paying
+    # for vision. If OCR returns text whose confidence beats the floor, we
+    # use it as the primary text — the rest of the pipeline (free Ollama
+    # structuring) proceeds unchanged. If OCR also fails, the vision
+    # escalation kicks in as before.
+    ocr_outcome = _maybe_escalate_to_ocr(
+        job=job,
+        primary_engine=decision.engine,
+        primary_confidence=result.confidence,
+        body=body,
+    )
+    if ocr_outcome.applied:
+        # Substitute the OCR result for the rest of the pipeline. Engine
+        # name is recorded as "pdfplumber+easyocr" so the audit trail
+        # makes the escalation visible without inventing a new field.
+        result = ocr_outcome.replacement_result
+        recorded_engine_name = (
+            f"{decision.engine.name}+{ocr_outcome.engine_name}"
+        )
+    else:
+        recorded_engine_name = decision.engine.name
+
     vision_outcome = _maybe_escalate_to_vision(
         job=job,
         primary_engine=decision.engine,
@@ -190,7 +222,7 @@ def run_extraction(job_id: UUID | str) -> ExtractionResult:
 
     _complete(
         job,
-        engine_name=decision.engine.name,
+        engine_name=recorded_engine_name,
         text=result.text,
         confidence=result.confidence,
         page_count=result.page_count,
@@ -202,6 +234,209 @@ def run_extraction(job_id: UUID | str) -> ExtractionResult:
         engine_name=decision.engine.name,
         confidence=result.confidence,
         text_length=len(result.text),
+    )
+
+
+# --- OCR escalation (Slice 32) -------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OCREscalationOutcome:
+    """Result of the optional OCR pass after a low-confidence primary TextExtract.
+
+    ``applied`` is True only when a fallback TextExtract engine ran AND
+    returned text whose confidence cleared
+    ``EXTRACTION_OCR_THRESHOLD``. ``replacement_result`` is the new
+    primary text/confidence to use for the rest of the pipeline.
+
+    All "no, we couldn't" branches return ``applied=False`` with a
+    populated ``reason`` for the audit log; the caller falls through to
+    the vision escalation path unchanged.
+    """
+
+    attempted: bool
+    applied: bool
+    engine_name: str
+    replacement_result: TextExtractResult | None
+    reason: str = ""
+
+
+def _ocr_threshold() -> float:
+    return float(
+        getattr(settings, "EXTRACTION_OCR_THRESHOLD", DEFAULT_OCR_ESCALATION_THRESHOLD)
+    )
+
+
+def _maybe_escalate_to_ocr(
+    *,
+    job: IngestionJob,
+    primary_engine: Engine,
+    primary_confidence: float,
+    body: bytes,
+) -> OCREscalationOutcome:
+    """Run a fallback TextExtract pass when the primary returned sparse text.
+
+    The router has the OCR rule pre-wired at a lower priority for the same
+    MIME (Slice 31's seed migration). We use ``pick_fallback_engine`` to
+    skip the engine that already ran (``primary_engine``) and pick the
+    next-priority match. If no fallback rule exists, we just return
+    ``applied=False`` and let the existing vision escalation handle it.
+
+    Failure modes are graceful — every "no, we can't" branch records the
+    reason on the audit log and returns ``applied=False`` so the caller
+    falls through.
+    """
+    threshold = _ocr_threshold()
+    not_applied = OCREscalationOutcome(
+        attempted=False,
+        applied=False,
+        engine_name="",
+        replacement_result=None,
+    )
+    if primary_confidence >= threshold:
+        return not_applied
+
+    try:
+        decision = pick_fallback_engine(
+            capability=Engine.Capability.TEXT_EXTRACT,
+            mime_type=job.file_mime_type,
+            exclude_engine_id=str(primary_engine.id),
+        )
+    except NoRouteFound as exc:
+        # No fallback rule wired — silently skip; vision escalation runs.
+        # Don't audit because this is the steady-state for documents
+        # without an OCR fallback (and emitting an event on every clean
+        # PDF would be noise).
+        logger.debug("ocr escalation skipped — no fallback rule: %s", exc)
+        return not_applied
+
+    record_event(
+        action_type="ingestion.job.ocr_escalation_started",
+        actor_type=AuditEvent.ActorType.SERVICE,
+        actor_id="extraction.pipeline",
+        organization_id=str(job.organization_id),
+        affected_entity_type="IngestionJob",
+        affected_entity_id=str(job.id),
+        payload={
+            "primary_engine": primary_engine.name,
+            "primary_confidence": str(primary_confidence),
+            "fallback_engine": decision.engine.name,
+            "threshold": str(threshold),
+        },
+    )
+
+    try:
+        adapter = get_adapter(decision.engine.name)
+    except KeyError as exc:
+        return _record_ocr_skip(
+            job, reason=f"ocr adapter missing: {exc}"
+        )
+
+    if not isinstance(adapter, TextExtractEngine):
+        return _record_ocr_skip(
+            job,
+            reason=(
+                f"adapter {decision.engine.name!r} is registered for "
+                f"{decision.engine.capability} but isn't a TextExtractEngine"
+            ),
+        )
+
+    started_at = timezone.now()
+    started_perf = time.perf_counter()
+    try:
+        ocr_result = adapter.extract_text(body=body, mime_type=job.file_mime_type)
+    except EngineUnavailable as exc:
+        _record_call(
+            engine=decision.engine,
+            job=job,
+            started_at=started_at,
+            duration_ms=int((time.perf_counter() - started_perf) * 1000),
+            outcome=EngineCall.Outcome.UNAVAILABLE,
+            error_class=type(exc).__name__,
+            cost_micros=0,
+            confidence=None,
+            diagnostics={"detail": str(exc)},
+        )
+        return _record_ocr_skip(job, reason=f"ocr unavailable: {exc}")
+    except Exception as exc:  # graceful — escalation never breaks the pipeline
+        _record_call(
+            engine=decision.engine,
+            job=job,
+            started_at=started_at,
+            duration_ms=int((time.perf_counter() - started_perf) * 1000),
+            outcome=EngineCall.Outcome.FAILURE,
+            error_class=type(exc).__name__,
+            cost_micros=0,
+            confidence=None,
+            diagnostics={"detail": str(exc)[:500]},
+        )
+        return _record_ocr_skip(
+            job, reason=f"ocr failed: {type(exc).__name__}: {exc}"
+        )
+
+    _record_call(
+        engine=decision.engine,
+        job=job,
+        started_at=started_at,
+        duration_ms=int((time.perf_counter() - started_perf) * 1000),
+        outcome=EngineCall.Outcome.SUCCESS,
+        error_class="",
+        cost_micros=ocr_result.cost_micros,
+        confidence=ocr_result.confidence,
+        diagnostics=ocr_result.diagnostics,
+    )
+
+    # Even when the OCR call "succeeded", if its confidence is below the
+    # threshold we treat it as "OCR also couldn't read it" and fall through
+    # to vision. The audit event records that we tried.
+    if ocr_result.confidence < threshold:
+        return _record_ocr_skip(
+            job,
+            reason=(
+                f"ocr confidence {ocr_result.confidence:.2f} below threshold "
+                f"{threshold:.2f}; falling through to vision"
+            ),
+        )
+
+    record_event(
+        action_type="ingestion.job.ocr_escalation_applied",
+        actor_type=AuditEvent.ActorType.SERVICE,
+        actor_id="extraction.pipeline",
+        organization_id=str(job.organization_id),
+        affected_entity_type="IngestionJob",
+        affected_entity_id=str(job.id),
+        payload={
+            "engine": decision.engine.name,
+            "confidence": str(ocr_result.confidence),
+            "text_length": len(ocr_result.text),
+        },
+    )
+
+    return OCREscalationOutcome(
+        attempted=True,
+        applied=True,
+        engine_name=decision.engine.name,
+        replacement_result=ocr_result,
+    )
+
+
+def _record_ocr_skip(job: IngestionJob, *, reason: str) -> OCREscalationOutcome:
+    """Audit a non-fatal OCR escalation miss; caller falls back to vision."""
+    record_event(
+        action_type="ingestion.job.ocr_escalation_skipped",
+        actor_type=AuditEvent.ActorType.SERVICE,
+        actor_id="extraction.pipeline",
+        organization_id=str(job.organization_id),
+        affected_entity_type="IngestionJob",
+        affected_entity_id=str(job.id),
+        payload={"reason": reason[:255]},
+    )
+    return OCREscalationOutcome(
+        attempted=True,
+        applied=False,
+        engine_name="",
+        replacement_result=None,
+        reason=reason,
     )
 
 
