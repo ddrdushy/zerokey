@@ -134,6 +134,34 @@ export type AuditStats = {
   sparkline: Array<{ date: string; count: number }>;
 };
 
+export type EngineSummary = {
+  engine_name: string;
+  vendor: string;
+  capability: string;
+  total_calls: number;
+  success_count: number;
+  failure_count: number;
+  timeout_count: number;
+  unavailable_count: number;
+  success_rate: number;
+  avg_duration_ms: number;
+  total_cost_micros: number;
+};
+
+export type EngineCallRecord = {
+  id: string;
+  engine_name: string;
+  vendor: string;
+  request_id: string | null;
+  started_at: string;
+  duration_ms: number;
+  outcome: "success" | "failure" | "timeout" | "unavailable";
+  error_class: string;
+  cost_micros: number;
+  confidence: number | null;
+  diagnostics: Record<string, unknown>;
+};
+
 export type AuditEvent = {
   id: string;
   sequence: number;
@@ -292,6 +320,18 @@ export const api = {
       tampering_detected: boolean;
       support_message: string;
     }>("/audit/verify/", { method: "POST" }),
+  engineSummary: () =>
+    request<{ results: EngineSummary[] }>("/engines/").then((r) => r.results),
+  listEngineCalls: (params?: { limit?: number; beforeStartedAt?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.beforeStartedAt)
+      search.set("before_started_at", params.beforeStartedAt);
+    const qs = search.toString();
+    return request<{ results: EngineCallRecord[] }>(
+      `/engines/calls/${qs ? `?${qs}` : ""}`,
+    ).then((r) => r.results);
+  },
   throughput: (days = 7) => request<Throughput>(`/ingestion/throughput/?days=${days}`),
   updateInvoice: (id: string, updates: Record<string, string | null>) =>
     request<Invoice>(`/invoices/${id}/`, {

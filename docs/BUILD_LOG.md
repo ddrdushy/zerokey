@@ -1782,6 +1782,111 @@ What's deferred:
   for SME workloads; revisit only if a Custom-tier customer
   contractually requires it.
 
+### Slice 22 — Engine activity page
+
+Surfaces the per-engine telemetry the platform has been recording
+since Slice 5 — every OCR / LLM call writes an `EngineCall` row with
+latency, cost, outcome, confidence, vendor diagnostics. Until this
+slice none of that was visible. ENGINE_REGISTRY.md "observability and
+auditability" requires the surface; customers paying per call have a
+legitimate need to see which engines processed their invoices and how
+reliably.
+
+Backend:
+
+- **`engine_summary_for_organization`** in
+  `apps.extraction.services` — per-engine roll-up scoped to the
+  active org's calls. Annotations via `Count` + `Avg` + `Sum` on the
+  outcome field do the work in one query; the per-row dict carries
+  `total_calls`, success/failure/timeout/unavailable counts,
+  computed-on-read `success_rate`, `avg_duration_ms`,
+  `total_cost_micros`. Sorted by `total_calls` desc — the engines
+  doing the most work for the customer come first.
+- **`list_engine_calls_for_organization`** — recent EngineCall rows,
+  newest-first, cursor-paginated on `started_at`. `select_related`
+  on the engine FK keeps the row payload one query.
+- **`GET /api/v1/engines/`** + **`GET /api/v1/engines/calls/`**.
+  Limit clamping, ISO-8601 cursor parsing for `before_started_at`,
+  invalid input → 400.
+- **EngineCallSerializer** is compact (id, engine_name, vendor,
+  request_id, started_at, duration_ms, outcome, error_class,
+  cost_micros, confidence, diagnostics). Diagnostics ride along as
+  the JSON the adapter wrote — no PII per the model docstring's
+  redaction contract.
+
+Frontend:
+
+- **`/dashboard/engines`** — two stacks. Top: per-engine summary
+  table (engine + vendor / capability badge / call count / success
+  rate with success/warning/error tone bands / avg latency / total
+  cost). Bottom: recent calls table with click-to-expand details
+  (request_id, cost in micros USD, full vendor diagnostics dump as
+  pretty-printed JSON). Cursor-paginated "Load more" same as the
+  audit log surface (Slice 20).
+- **Cost formatting** rounds to two cents above $0.01, four decimals
+  below — keeps small per-call costs readable without scientific
+  notation. **Latency formatting** auto-switches ms ↔ seconds.
+- **Outcome badges** color-code success / unavailable / failure /
+  timeout consistent with the rest of the brand palette.
+- **Sidebar**: "Engine activity" drops the `soon` badge.
+- New types `EngineSummary` + `EngineCallRecord` + the matching
+  `api.engineSummary()` / `api.listEngineCalls()` clients.
+
+Tests: 11 new (249 passing total). Service: per-engine roll-up
+counts (success / failure / unavailable broken out, success_rate
+ratio, avg_duration_ms int rounding); cross-tenant rows excluded;
+empty case returns `[]`; calls list newest-first;
+`before_started_at` cursor pagination produces strictly older
+pages; cross-tenant call list excludes other org's rows.
+Endpoint: summary returns rolled-up rows, calls returns compact
+shape with engine + vendor surfaced via SerializerMethodField,
+limit / cursor invalid-input 400, unauth rejected.
+
+Verified live with Playwright: signed up fresh,
+`/dashboard/engines` showed the empty state ("No engine calls
+yet."). Dropped a PDF, returned to engines: summary table showed
+**pdfplumber 1 call, 100% success, 2 ms avg, $0** and
+**anthropic-claude-sonnet-vision 1 call, 0% success, 2 ms avg,
+$0** (vision unavailable as expected — no API key in dev).
+Recent calls expanded to reveal the actual vendor diagnostics
+JSON: `"detail": "Credential
+anthropic-claude-sonnet-vision.api_key not configured (looked in
+Engine(...).credentials[api_key], env ANTHROPIC_API_KEY)"`. Real
+observability surfacing real engine state.
+
+Durable design decisions:
+
+- **Compute success rate on read, don't store it.** Storing a ratio
+  goes stale on every new call; a single SQL aggregation is
+  fast enough at any scale we'll see for a year.
+- **Cursor on `started_at`, not on `id` or `sequence`.** Engine
+  calls don't get a sequence; the natural ordering for the user
+  is when-it-happened. The index on `(organization_id,
+  -started_at)` (already on the model) makes it a point lookup.
+- **Diagnostics surfaced verbatim.** The adapter's JSON dump is
+  the right level of detail for ops investigations; pretty-
+  printing it in the UI rather than parsing/normalizing keeps
+  the shape forward-compatible with new adapter shapes.
+- **Tenant-scoped from the service, not RLS.** EngineCall rows
+  carry `organization_id` but the table isn't in the per-tenant
+  RLS list (Slice 5 noted "system-scoped so cross-tenant
+  analytics are straightforward"). Service-level filter is the
+  one belt-and-suspenders here; the customer surface never
+  crosses tenants.
+
+What's deferred:
+
+- **Filter dropdown** on the calls list (by engine, by outcome).
+  Full table is what you want by default; filters wait until
+  log size warrants.
+- **Engine health surface** — current `Engine.status` (active /
+  degraded / archived) doesn't render anywhere. Worth a
+  per-engine card or badge once we wire engine health monitoring
+  per ENGINE_REGISTRY.md "engine health monitoring".
+- **Cost-by-customer rollups** — the data is there to render
+  "you spent $X this month on AI calls", which is a billing
+  surface. Defer to the billing slice.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -1865,7 +1970,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 238 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 249 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -1958,6 +2063,12 @@ Coverage:
   the verify call itself is audited (one audit.chain_verified
   event per call with redacted payload), POST not GET (idempotency
   lie would mislead), unauth + no-active-org rejected.
+- Engine activity — per-engine rollup counts (success / failure /
+  unavailable broken out; success_rate ratio; avg_duration_ms int
+  rounding); cross-tenant rows excluded; empty case returns []; call
+  list newest-first with cursor pagination; serializer surfaces
+  engine_name + vendor via SerializerMethodField; limit clamping +
+  invalid-input 400.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -1990,8 +2101,8 @@ Ordered roughly by Phase 2/3 priority:
    `contact_phone`, `registered_address` are plain text in dev. Same
    KMS dependency as the runtime-config encryption (Slice 10).
 8. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
-   Invoices, Engine activity, Settings. (Customers shipped in
-   Slice 16; Audit log shipped in Slice 20.)
+   Invoices, Settings. (Customers shipped in Slice 16; Audit log
+   shipped in Slice 20; Engine activity shipped in Slice 22.)
 9. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
    can wrap the existing `make test` + frontend lint/build.
 

@@ -588,3 +588,83 @@ def _record_call(
 
 def _iso(value: datetime) -> str:
     return value.isoformat(timespec="milliseconds")
+
+
+# --- Engine activity surface (customer-facing telemetry) -----------------------
+
+
+def engine_summary_for_organization(*, organization_id: UUID | str) -> list[dict]:
+    """Per-engine roll-up of the active org's EngineCall rows.
+
+    Drives the "Engine activity" dashboard: shows the user which AI
+    engines processed their invoices, how often, how reliably, and at
+    what cost. Tenant-scoped — engine telemetry is platform-wide in
+    storage, but this view is the customer's own slice.
+
+    Returned rows: {engine_name, vendor, capability, total_calls,
+    success_count, failure_count, unavailable_count, success_rate,
+    avg_duration_ms, total_cost_micros}. Sorted by total_calls desc
+    so the engines doing the most work for the customer come first.
+    """
+    from django.db.models import Avg, Count, Q, Sum
+
+    rollups = (
+        EngineCall.objects.filter(organization_id=organization_id)
+        .values("engine_id", "engine__name", "engine__vendor", "engine__capability")
+        .annotate(
+            total_calls=Count("id"),
+            success_count=Count("id", filter=Q(outcome=EngineCall.Outcome.SUCCESS)),
+            failure_count=Count("id", filter=Q(outcome=EngineCall.Outcome.FAILURE)),
+            timeout_count=Count("id", filter=Q(outcome=EngineCall.Outcome.TIMEOUT)),
+            unavailable_count=Count(
+                "id", filter=Q(outcome=EngineCall.Outcome.UNAVAILABLE)
+            ),
+            avg_duration_ms=Avg("duration_ms"),
+            total_cost_micros=Sum("cost_micros"),
+        )
+        .order_by("-total_calls")
+    )
+
+    out: list[dict] = []
+    for row in rollups:
+        total = row["total_calls"]
+        success = row["success_count"]
+        out.append(
+            {
+                "engine_name": row["engine__name"],
+                "vendor": row["engine__vendor"],
+                "capability": row["engine__capability"],
+                "total_calls": total,
+                "success_count": success,
+                "failure_count": row["failure_count"],
+                "timeout_count": row["timeout_count"],
+                "unavailable_count": row["unavailable_count"],
+                # Float in [0,1]; UI renders as percent. Avoids storing the
+                # ratio, which would go stale; computed on read.
+                "success_rate": (success / total) if total else 0.0,
+                "avg_duration_ms": int(row["avg_duration_ms"] or 0),
+                "total_cost_micros": int(row["total_cost_micros"] or 0),
+            }
+        )
+    return out
+
+
+def list_engine_calls_for_organization(
+    *,
+    organization_id: UUID | str,
+    limit: int = 50,
+    before_started_at: datetime | None = None,
+) -> list[EngineCall]:
+    """Recent EngineCall rows for the active org.
+
+    Cursor pagination on ``started_at`` mirrors the audit log surface
+    pattern. Each call carries enough metadata for the operations view:
+    engine, request id (the IngestionJob), outcome, duration, cost,
+    confidence, and the diagnostic dict the adapter wrote.
+    """
+    qs = EngineCall.objects.filter(
+        organization_id=organization_id
+    ).select_related("engine")
+    if before_started_at is not None:
+        qs = qs.filter(started_at__lt=before_started_at)
+    return list(qs.order_by("-started_at")[:limit])
