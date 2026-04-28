@@ -2666,6 +2666,147 @@ What's deferred:
 
 ---
 
+### Slice 29 — Ollama field structuring (local + cloud)
+
+The first non-Anthropic field-structure adapter — and the one
+that makes the launch shape *actually finish* without depending
+on a paid API key. The same adapter handles both local Ollama
+(`http://host.docker.internal:11434`) and Ollama Cloud
+(`https://ollama.com`); host + key + model are per-engine
+credentials, not separate code paths.
+
+Backend:
+
+- **`apps.extraction.adapters.ollama_adapter.OllamaFieldStructureAdapter`**
+  implements the existing `FieldStructureEngine` capability ABC.
+  Reads host / api_key / model from `Engine.credentials` with env
+  fallbacks (`OLLAMA_HOST`, `OLLAMA_API_KEY`, `OLLAMA_MODEL`) so a
+  super-admin can rotate without a redeploy and dev can boot from
+  `.env` alone. POSTs to `{host}/api/chat` with `format: "json"`
+  and `stream: false`.
+- **Cloud-host detection**: when `host` contains `ollama.com`,
+  the adapter requires an api_key and raises `EngineUnavailable`
+  if missing, rather than letting the cloud return a 401 deep in
+  the pipeline. The local path omits the `Authorization` header
+  entirely (local Ollama treats Bearer tokens as a protocol
+  error).
+- **Defensive JSON parsing**: strip ```json fences if present,
+  flatten nested dict/list values to JSON-text rather than crashing,
+  return `{}` on parse failure (the validation rules then fire
+  required-field issues and the inbox lifecycle handles the
+  "this needs a human" message). Same approach as the Claude
+  adapter so the contract is uniform.
+- **PII safety**: HTTP 5xx responses do NOT echo the body into
+  the `EngineUnavailable` exception. The body could quote our
+  prompt, which embeds the invoice text — that would leak into
+  audit/inbox detail. Status code only; body stays in the access
+  log.
+- **`apps.extraction.registry`**: factory registered. Same lazy-
+  instantiate pattern as Claude.
+- **Migration `extraction/0004_seed_ollama_structure`**: registers
+  the `ollama-structure` engine row + a routing rule with
+  **priority 50** (lower number = higher priority in the
+  router). Anthropic stays at priority 100 as fallback when
+  Ollama is unconfigured / unreachable. No credentials seeded
+  in the migration — those live in `.env` (dev) or
+  `Engine.credentials` (production) so secrets never land in git.
+- **`infra/docker-compose.yml`**: added `OLLAMA_HOST`,
+  `OLLAMA_API_KEY`, `OLLAMA_MODEL` to the shared `backend-env`
+  block so the worker, beat, signer, and backend all see the
+  same credentials without a per-service stanza.
+- **Diagnostics**: every call records `model`, `host`,
+  `done_reason`, `input_tokens`, `output_tokens`,
+  `total_duration_ns` on the EngineCall row — the engine activity
+  page (Slice 22) surfaces them automatically.
+
+Tests: 9 new (320 passing total). Local-path: no api_key, no
+Authorization header, JSON parse + per-field confidence shape.
+Cloud-path: api_key in credentials → Authorization header sent;
+host is `ollama.com` and api_key missing → `EngineUnavailable`
+at call site. Error paths: HTTP 5xx → exception with status code
+only, no body echo (asserted by checking sensitive prompt
+fragments don't appear in the exception); httpx.ConnectError →
+`EngineUnavailable`; malformed JSON → empty fields with 0.0
+confidence (no crash); fenced JSON parses cleanly.
+Credential resolution: `Engine.credentials` beats env fallback;
+env fallback used when credentials are blank. The structuring
+test that previously asserted `engine == "anthropic-..."` now
+asserts `"ollama-structure"` to reflect the new launch primary.
+
+Verified live with the actual sample PDFs:
+
+- Smoke-tested the adapter against `gemini-3-flash-preview` via
+  Ollama Cloud — synthetic 5-line invoice text produced 8/8
+  populated fields with the cloud key. ~3.8s total, 218 input /
+  728 output tokens, model + host + token counts in diagnostics.
+- Ran all 4 sample invoices (`docs/sample invoices/*.pdf`,
+  gitignored) through the dashboard. Telekom Malaysia invoice
+  populated 11+ fields correctly: invoice number, issue date,
+  due date, currency `RM`, supplier `Telekom Malaysia Berhad`,
+  buyer `SKYRIM SDN BHD`, addresses, subtotal `139.00`, tax
+  `8.34`, grand total `147.35` — all at 85% confidence.
+- Inbox went from **8 rows** in the previous live test
+  (structuring_skipped + validation_failure per invoice) to
+  **4 rows** (validation_failure only) — proof that structuring
+  succeeded on every invoice. The remaining 4 errors / 2
+  warnings are real LHDN issues (missing supplier/buyer TIN on
+  this 2022 invoice; line items not yet extracted).
+
+Durable design decisions:
+
+- **One adapter for local + cloud.** The temptation was to ship
+  `OllamaLocalAdapter` and `OllamaCloudAdapter` as separate
+  classes — different deployment story, different error
+  signatures. The wire format is identical, though, and the
+  difference (host string, presence of api_key) is data, not
+  behaviour. One adapter + per-engine credentials means a
+  super-admin can swap a customer from local to cloud (or
+  rotate keys) without code changes. The classes-per-vendor
+  smell goes away.
+- **Cloud-host detection by substring**, not by a `is_cloud`
+  flag in credentials. The host `https://ollama.com` is the
+  fact; everything else (whether to require a key, whether to
+  send Authorization) is derived. Adding an `is_cloud` flag
+  would let the two get out of sync — a host of
+  `https://ollama.com` with `is_cloud: false` is nonsense the
+  schema would accept.
+- **`format: "json"` not function-calling / tool use.** Ollama's
+  function-calling support varies by model and adds a layer of
+  protocol that doesn't earn anything for our schema-on-demand
+  use case. JSON mode + a tight prompt + defensive parsing is
+  enough — and it works on every cloud model in the catalogue.
+- **No retry on the adapter.** The Celery task that wraps
+  structuring (`extraction.structure_invoice`) is configured
+  with `max_retries=0` for the same reason as the rest of the
+  pipeline: the state machine transitions eagerly, blanket
+  retries skip with the job mid-state. If Ollama errors, the
+  routing fallback (Anthropic) gets a chance; if both fail, the
+  pipeline records `structuring_skipped` and the inbox surfaces
+  it. Real retries land later gated on a richer "is this safe
+  to retry?" signal.
+- **Cost stays at 0 for now.** Ollama's response doesn't return
+  a billable amount; the cloud bills monthly per model usage,
+  not per call. Reconstructing per-invoice cost from token
+  counts requires a per-model price table the catalogue doesn't
+  publish stably. We keep `cost_micros=0` and rely on token
+  counts in diagnostics for spend reconstruction later.
+
+What's deferred:
+
+- **Vision via Ollama** (e.g. qwen3-vl, gemma vision). The
+  catalogue includes vision-capable models, but this slice is
+  text-structure only. A second adapter implementing
+  `VisionExtractEngine` against the same `/api/chat` endpoint
+  with image content blocks lands when needed.
+- **Cost calibration.** Token counts in diagnostics are
+  recorded; turning them into dollars-per-call requires a price
+  table per model and a periodic refresh. Phase 5 polish.
+- **Local Ollama smoke test in CI.** The tests mock httpx, so
+  CI doesn't need Ollama. A separate "Ollama is reachable"
+  health check could ship later; not blocking.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -2747,7 +2888,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 311 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 320 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

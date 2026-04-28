@@ -45,6 +45,9 @@ x-backend-env: &backend-env
   S3_BUCKET_EXPORTS: zerokey-exports
   S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OLLAMA_HOST: ${OLLAMA_HOST:-}
+  OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-}
 
 services:
   postgres:

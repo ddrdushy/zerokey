@@ -139,7 +139,9 @@ class TestStructuring:
             result = structure_invoice(invoice.id)
 
         assert result.line_count == 1
-        assert result.engine == "anthropic-claude-sonnet-structure"
+        # Slice 29 added Ollama at priority 50 as the launch primary for
+        # field structuring; Anthropic remains at priority 100 as fallback.
+        assert result.engine == "ollama-structure"
 
         invoice.refresh_from_db()
         assert invoice.status == Invoice.Status.READY_FOR_REVIEW
