@@ -1,5 +1,324 @@
-"""Service-layer interface for the enrichment context.
+"""Enrichment service — match-or-create master records, auto-fill invoices.
 
-Other bounded contexts call functions in this module rather than importing models
-directly. Keep the surface narrow and well-typed.
+The convergence point. ``enrich_invoice(invoice_id)`` is the one entry the
+rest of the platform uses; it runs at the end of structuring (right
+before validation) and does three things:
+
+  1. Customer master:
+       - Match by ``buyer_tin`` (exact). Failing that, by
+         ``buyer_legal_name`` exact-case-insensitive against the canonical
+         name or any learned alias.
+       - On match: increment ``usage_count``, append a new name to
+         ``aliases`` if it differs, and copy any *blank* invoice fields
+         from the master (auto-fill).
+       - On miss: create a new master record from this invoice's buyer
+         block.
+
+  2. Item master, per line item:
+       - Same matching pattern keyed off ``description``.
+       - On match: copy any blank LineItem code fields from the master
+         (classification / tax-type / UOM); bump ``usage_count``.
+       - On miss: create a new master with the description as canonical
+         and the inherited fields blank, ready to learn from later
+         corrections.
+
+  3. Audit: a single ``invoice.enriched`` event records counts (matched vs
+     created) for both customer + items, and the customer master row id
+     so an audit reader can reconstruct what changed without leaking
+     buyer names into the payload.
+
+Auto-fill rules:
+
+- We NEVER overwrite a non-empty value the LLM produced. The LLM saw
+  the actual document; the master is a pattern from prior invoices,
+  weaker evidence on a per-invoice basis.
+- We DO fill blanks. That's the entire point: subsequent invoices from
+  a known buyer don't have to re-extract the buyer's address.
+- When a field is auto-filled, ``per_field_confidence`` for that field
+  is set to ``1.0`` — the review UI's three-band scheme renders that as
+  green (high confidence), correctly signalling "from your master, not
+  a fresh extraction".
 """
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from uuid import UUID
+
+from django.db import transaction
+from django.utils import timezone
+
+from apps.audit.models import AuditEvent
+from apps.audit.services import record_event
+from apps.submission.models import Invoice, LineItem
+
+from .models import CustomerMaster, ItemMaster
+
+logger = logging.getLogger(__name__)
+
+
+# Buyer fields the master knows how to populate. Map: (CustomerMaster
+# attribute, Invoice attribute). Iterating this is the only place that
+# knows the buyer field set, so adding a new buyer field requires
+# changes in exactly one place.
+_BUYER_FIELD_MAP: tuple[tuple[str, str], ...] = (
+    ("legal_name", "buyer_legal_name"),
+    ("tin", "buyer_tin"),
+    ("registration_number", "buyer_registration_number"),
+    ("msic_code", "buyer_msic_code"),
+    ("address", "buyer_address"),
+    ("phone", "buyer_phone"),
+    ("sst_number", "buyer_sst_number"),
+    ("country_code", "buyer_country_code"),
+)
+
+
+@dataclass(frozen=True)
+class EnrichmentResult:
+    customer_matched: bool
+    customer_created: bool
+    customer_id: UUID | None
+    items_matched: int = 0
+    items_created: int = 0
+    fields_autofilled: list[str] = field(default_factory=list)
+
+
+def enrich_invoice(invoice_id: UUID | str) -> EnrichmentResult:
+    """Run customer + item master enrichment on an Invoice.
+
+    Reload the invoice with line items prefetched so the rule loop sees
+    a consistent snapshot. The whole run is wrapped in a single
+    transaction so a partial failure doesn't leave orphan masters.
+    """
+    invoice = Invoice.objects.prefetch_related("line_items").get(id=invoice_id)
+
+    with transaction.atomic():
+        customer = _enrich_customer(invoice)
+        autofilled = _autofill_buyer(invoice, customer.master) if customer.master else []
+        items_matched, items_created = _enrich_line_items(invoice)
+
+        if autofilled:
+            invoice.save()
+
+        record_event(
+            action_type="invoice.enriched",
+            actor_type=AuditEvent.ActorType.SERVICE,
+            actor_id="enrichment.pipeline",
+            organization_id=str(invoice.organization_id),
+            affected_entity_type="Invoice",
+            affected_entity_id=str(invoice.id),
+            payload={
+                "customer_master_id": (
+                    str(customer.master.id) if customer.master else None
+                ),
+                "customer_matched": customer.matched,
+                "customer_created": customer.created,
+                "items_matched": items_matched,
+                "items_created": items_created,
+                "fields_autofilled": autofilled,
+            },
+        )
+
+    return EnrichmentResult(
+        customer_matched=customer.matched,
+        customer_created=customer.created,
+        customer_id=customer.master.id if customer.master else None,
+        items_matched=items_matched,
+        items_created=items_created,
+        fields_autofilled=list(autofilled),
+    )
+
+
+# --- Customer master --------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _CustomerOutcome:
+    master: CustomerMaster | None
+    matched: bool
+    created: bool
+
+
+def _enrich_customer(invoice: Invoice) -> _CustomerOutcome:
+    """Find or create a CustomerMaster row for this invoice's buyer.
+
+    Skip entirely when both ``buyer_tin`` and ``buyer_legal_name`` are
+    blank — we have nothing to key off, and creating a useless empty
+    record would pollute the master table.
+    """
+    if not invoice.buyer_tin and not invoice.buyer_legal_name:
+        return _CustomerOutcome(master=None, matched=False, created=False)
+
+    master = _find_customer_master(invoice)
+    if master is None:
+        master = CustomerMaster.objects.create(
+            organization_id=invoice.organization_id,
+            legal_name=invoice.buyer_legal_name or "(no name)",
+            aliases=[],
+            tin=invoice.buyer_tin or "",
+            registration_number=invoice.buyer_registration_number or "",
+            msic_code=invoice.buyer_msic_code or "",
+            address=invoice.buyer_address or "",
+            phone=invoice.buyer_phone or "",
+            sst_number=invoice.buyer_sst_number or "",
+            country_code=invoice.buyer_country_code or "",
+            usage_count=1,
+            last_used_at=timezone.now(),
+        )
+        return _CustomerOutcome(master=master, matched=False, created=True)
+
+    # Match: bump usage, learn the alias if the LLM emitted a name variant,
+    # and backfill any blank master fields from this invoice (master also
+    # learns from new invoices, not just the invoice from the master).
+    master.usage_count += 1
+    master.last_used_at = timezone.now()
+    if (
+        invoice.buyer_legal_name
+        and invoice.buyer_legal_name != master.legal_name
+        and invoice.buyer_legal_name not in master.aliases
+    ):
+        master.aliases = [*master.aliases, invoice.buyer_legal_name]
+
+    for master_field, invoice_field in _BUYER_FIELD_MAP:
+        if master_field == "legal_name":
+            continue
+        if getattr(master, master_field):
+            continue
+        new_value = getattr(invoice, invoice_field) or ""
+        if new_value:
+            setattr(master, master_field, new_value)
+
+    master.save()
+    return _CustomerOutcome(master=master, matched=True, created=False)
+
+
+def _find_customer_master(invoice: Invoice) -> CustomerMaster | None:
+    """TIN match first; alias-or-canonical name match second."""
+    qs = CustomerMaster.objects.filter(organization_id=invoice.organization_id)
+
+    if invoice.buyer_tin:
+        match = qs.filter(tin=invoice.buyer_tin).first()
+        if match is not None:
+            return match
+
+    if invoice.buyer_legal_name:
+        target = invoice.buyer_legal_name.strip()
+        match = qs.filter(legal_name__iexact=target).first()
+        if match is not None:
+            return match
+        # Aliases — JSONField __contains is case-sensitive on both
+        # Postgres and SQLite, so we do the case-insensitive comparison
+        # in Python. The per-tenant alias set is small.
+        for record in qs.exclude(aliases__exact=[]):
+            if any(alias.lower() == target.lower() for alias in record.aliases):
+                return record
+    return None
+
+
+# --- Auto-fill --------------------------------------------------------------
+
+
+def _autofill_buyer(invoice: Invoice, master: CustomerMaster) -> list[str]:
+    """Copy blank invoice fields from the master. Never overwrite.
+
+    Returns the list of field names that were filled so the audit log
+    reports what enrichment actually changed.
+    """
+    filled: list[str] = []
+    confidence = dict(invoice.per_field_confidence or {})
+    for master_field, invoice_field in _BUYER_FIELD_MAP:
+        if master_field == "legal_name":
+            # The legal name comes from the document the LLM read; we
+            # never silently change what the user sees vs the source.
+            continue
+        if getattr(invoice, invoice_field):
+            continue
+        master_value = getattr(master, master_field) or ""
+        if not master_value:
+            continue
+        setattr(invoice, invoice_field, master_value)
+        # 1.0 = "from your verified master". The review UI's three-band
+        # scheme renders this as the highest-confidence green dot.
+        confidence[invoice_field] = 1.0
+        filled.append(invoice_field)
+    if filled:
+        invoice.per_field_confidence = confidence
+    return filled
+
+
+# --- Item master ------------------------------------------------------------
+
+
+def _enrich_line_items(invoice: Invoice) -> tuple[int, int]:
+    """Match-or-create ItemMaster rows for every line item.
+
+    Returns (matched_count, created_count). Line items with empty
+    descriptions are skipped — there's nothing meaningful to key off.
+    """
+    matched = 0
+    created = 0
+    for line in invoice.line_items.all():
+        if not (line.description or "").strip():
+            continue
+
+        master, was_created = _find_or_create_item_master(invoice, line)
+        master.usage_count += 1
+        master.last_used_at = timezone.now()
+
+        if was_created:
+            created += 1
+        else:
+            matched += 1
+            _autofill_line_item(line, master)
+            line.save()
+            _learn_item_alias(master, line.description)
+
+        master.save()
+    return matched, created
+
+
+def _find_or_create_item_master(
+    invoice: Invoice, line: LineItem
+) -> tuple[ItemMaster, bool]:
+    target = line.description.strip()
+    qs = ItemMaster.objects.filter(organization_id=invoice.organization_id)
+
+    match = qs.filter(canonical_name__iexact=target).first()
+    if match is None:
+        for record in qs.exclude(aliases__exact=[]):
+            if any(alias.lower() == target.lower() for alias in record.aliases):
+                match = record
+                break
+
+    if match is not None:
+        return match, False
+
+    new = ItemMaster.objects.create(
+        organization_id=invoice.organization_id,
+        canonical_name=target[:512],
+        aliases=[],
+        default_classification_code=line.classification_code or "",
+        default_tax_type_code=line.tax_type_code or "",
+        default_unit_of_measurement=line.unit_of_measurement or "",
+        default_unit_price_excl_tax=line.unit_price_excl_tax,
+    )
+    return new, True
+
+
+def _autofill_line_item(line: LineItem, master: ItemMaster) -> None:
+    """Fill blank LineItem code fields from the master. Never overwrite."""
+    if not line.classification_code and master.default_classification_code:
+        line.classification_code = master.default_classification_code
+    if not line.tax_type_code and master.default_tax_type_code:
+        line.tax_type_code = master.default_tax_type_code
+    if not line.unit_of_measurement and master.default_unit_of_measurement:
+        line.unit_of_measurement = master.default_unit_of_measurement
+
+
+def _learn_item_alias(master: ItemMaster, description: str) -> None:
+    if description == master.canonical_name:
+        return
+    if description in master.aliases:
+        return
+    master.aliases = [*master.aliases, description]

@@ -239,13 +239,15 @@ def apply_structured_fields(
         },
     )
 
-    # Run pre-flight validation now that the Invoice + LineItems are
-    # populated. Cross-context import of services (not models) is allowed.
-    # Inline rather than queued: the rule set is regex/arithmetic and runs
-    # in milliseconds, and the review UI needs the issue list on the same
-    # page-load that shows the structured fields.
+    # Enrich first (auto-fill blanks from CustomerMaster + ItemMaster), THEN
+    # validate. Order matters: validation sees the post-enrichment field
+    # set, so a master-filled buyer_address doesn't trip the
+    # "buyer_address is required" warning the user would otherwise see.
+    # Cross-context imports of services (not models) are allowed.
+    from apps.enrichment.services import enrich_invoice
     from apps.validation.services import validate_invoice
 
+    enrich_invoice(invoice.id)
     validate_invoice(invoice.id)
 
     return StructuringResult(
@@ -348,11 +350,14 @@ def finalize_invoice_without_structuring(
         affected_entity_id=str(invoice.id),
         payload={"reason": reason[:255]},
     )
-    # Even with no structured fields the user still benefits from running
-    # validation — the required-fields rule will flag the empty header so
-    # the UI is honest about what's missing.
+    # Even with no structured fields the user benefits from a master pass
+    # (in case the LLM left something extractable but the master has it
+    # from a previous invoice) followed by validation, so the UI is
+    # honest about what's missing after auto-fill.
+    from apps.enrichment.services import enrich_invoice
     from apps.validation.services import validate_invoice
 
+    enrich_invoice(invoice.id)
     validate_invoice(invoice.id)
 
     return StructuringResult(invoice=invoice, line_count=0, overall_confidence=0.0, engine="")

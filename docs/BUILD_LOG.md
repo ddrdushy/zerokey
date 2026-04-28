@@ -850,6 +850,121 @@ Durable design decisions:
   Postgres-gated test — they accumulate, and CI eventually runs
   them as a separate matrix entry.
 
+### Slice 14 — Customer + item master (enrichment)
+
+`apps.enrichment` finally does work — the empty bounded context that's
+been sitting next to `extraction` and `validation` since Phase 1.
+Closes the foundational gap behind the "every correction makes the
+system smarter" promise from PRODUCT_VISION.md and the switching-cost
+strategy in BUSINESS_MODEL.md.
+
+What landed:
+
+- **`CustomerMaster`** model — one row per known buyer per Organization.
+  Carries the canonical legal name + a JSON list of learned aliases,
+  the buyer's TIN with verification state (LHDN-API integration is
+  the next slice), and the full identifier set
+  (registration_number / msic_code / address / phone / sst_number /
+  country_code) plus `usage_count` + `last_used_at`. Unique
+  `(organization, tin)` constraint with a partial index on non-empty
+  TINs (B2C / pre-LHDN buyers without TINs aren't deduped at the DB
+  layer; the alias-name match handles them).
+- **`ItemMaster`** model — one row per known item description.
+  `canonical_name` + aliases list, default codes
+  (`default_msic_code` / `default_classification_code` /
+  `default_tax_type_code` / `default_unit_of_measurement`), advisory
+  `default_unit_price_excl_tax` (Decimal), and `usage_count`.
+- **RLS migrations** for both tables, per-table CREATE POLICY pattern
+  matching the rest of the codebase.
+- **`enrich_invoice(invoice_id)`** service — the convergence point.
+  Customer match strategy: by TIN (exact) first, then by legal name
+  (case-insensitive) against canonical or any learned alias, then
+  create. Same shape for ItemMaster keyed off the line description.
+  Auto-fill is **strictly additive** — never overwrites a non-empty
+  value the LLM produced — because the LLM saw the actual document
+  and the master is weaker per-invoice evidence. When a field is
+  auto-filled, its `per_field_confidence` is set to `1.0`, so the
+  review UI's three-band scheme renders it as the highest-confidence
+  green dot ("from your verified master, not a fresh extraction").
+- **Pipeline hook**: `apps.submission.services.apply_structured_fields`
+  now calls `enrich_invoice` *before* `validate_invoice`. Order
+  matters: validation sees the post-enrichment field set, so a
+  master-filled `buyer_address` doesn't trip the
+  "buyer_address is missing" warning. The graceful-degrade path
+  (`finalize_invoice_without_structuring`) also runs enrichment so
+  even an empty extraction gets one shot at master auto-fill.
+- **Audit**: `invoice.enriched` event with counts (customer_matched
+  / customer_created / items_matched / items_created /
+  fields_autofilled list) and the customer master row id. **No buyer
+  name in the payload** — buyer names are PII; an audit reader
+  reconstructs what changed by following the master id, not by
+  reading the name.
+
+Tests: 14 new (5 customer-master, 3 auto-fill semantics, 4 item-master,
+2 audit + cross-tenant isolation). Coverage of the contract every
+other context relies on: first-time create, repeat-buyer increment,
+case-insensitive name match including alias learning, no-overwrite
+of populated values, blank-description skip, no buyer-name in audit
+payload, cross-tenant isolation. Suite is now 158 passing /
+5 skipped.
+
+Verified live against the running stack: first invoice for a new
+buyer created a master with `usage_count=1`; second invoice (same
+TIN, blank address) matched the existing master, auto-filled
+`buyer_address` from the master to "42 Jalan Sample" with
+`per_field_confidence['buyer_address']=1.0`, and bumped
+`usage_count` to 2. ItemMaster matched one line on repeat. The
+master count stayed at 1 — no duplication.
+
+Durable design decisions:
+
+- **Auto-fill is strictly additive — LLM evidence wins.** The LLM
+  read the source document; the master is a pattern from prior
+  invoices. On a per-invoice basis, the LLM's evidence is stronger
+  unless the user explicitly corrects it. Master only fills blanks.
+- **Legal name is never auto-filled.** The LLM read SOME name from
+  the document; silently swapping it for the master's canonical
+  would change what the user sees vs. the source. Address, TIN,
+  MSIC, etc. are auto-filled because those are pattern-stable;
+  the visible name is not.
+- **Confidence 1.0 on master-filled fields** signals to the review
+  UI that the value didn't come from a fresh extraction. The user
+  reading the green dot understands "this is from your verified
+  master" without us having to add a separate visual treatment.
+- **TIN match wins over name match.** TIN is the LHDN-issued
+  identifier; names drift (LLM emits variants, customers
+  rebrand). The alias list is a catch-all for when TIN is absent
+  (B2C, pre-LHDN buyers).
+- **Master backfill is bidirectional.** When a new invoice matches
+  an existing master, the master also learns blank fields from the
+  invoice — not just the invoice from the master. Three invoices
+  in, the master has the union of every field the LLM has ever
+  extracted for that buyer.
+- **No buyer-name in the audit payload.** Audit events list what
+  changed by master id; PII never enters the chain. Same principle
+  as Slice 11 (codes-not-messages).
+- **Idempotent re-runs**: the validate-then-edit flow can re-trigger
+  enrichment safely. Auto-fill is no-op when fields are filled;
+  alias learning de-dupes on insert.
+
+What's deferred (and where it should plug in):
+
+- **Manual correction → master update**. The "user fixed the master's
+  default code" feedback loop needs an `ExtractionCorrection`
+  emitter on Invoice edits + a master-update consumer.
+  `PATCH /invoices/<id>/` endpoint is the prerequisite (Phase 3
+  follow-up).
+- **Frontend customer / item master pages.** The data is rich
+  enough now to power a "frequent customers" view + per-customer
+  editing. Sidebar already shows the "Customers" route as `soon`.
+- **Live LHDN TIN verification** populates
+  `tin_verification_state` / `tin_last_verified_at` on master
+  rows. Credentials are already in the `lhdn` SystemSetting from
+  Slice 10.
+- **Smarter buyer matching** (fuzzy/Levenshtein, embeddings) when
+  exact + alias matches start missing recurring buyers. Premature
+  today; revisit when we see the miss patterns in production.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -933,7 +1048,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 144 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 158 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -977,6 +1092,11 @@ Coverage:
   on a clean baseline. Service-level tests cover atomic re-run
   replacement, audit-payload contents (codes yes, messages no), and
   cross-tenant isolation.
+- Enrichment (CustomerMaster + ItemMaster) — first-time create,
+  repeat-buyer increment, TIN-vs-name match including alias learning,
+  blank-fields auto-fill (never overwrites), legal-name protection
+  (never silently changed), per-line item code inheritance,
+  audit-payload PII redaction, cross-tenant isolation.
 
 **Frontend:** typecheck + lint clean; no unit tests yet.
 
@@ -986,32 +1106,30 @@ Coverage:
 
 Ordered roughly by Phase 2/3 priority:
 
-1. **Customer master / item master** — `apps.enrichment` is empty. Per
-   DATA_MODEL.md these accumulate buyer/item patterns and drive auto-fill
-   on subsequent invoices.
-3. **Live LHDN TIN verification** — the format rule passes "looks like a
-   TIN"; the API confirms the TIN actually exists. Wires through the
-   LHDN SystemSetting credentials (Slice 10).
-4. **MSIC / classification / UOM catalog matching** — format rules
+1. **Live LHDN TIN verification** — the format rule passes "looks like a
+   TIN"; the API confirms the TIN actually exists. Updates
+   `CustomerMaster.tin_verification_state` (Slice 14). Wires through
+   the LHDN `SystemSetting` credentials (Slice 10).
+2. **MSIC / classification / UOM catalog matching** — format rules
    exist; full catalog matching needs cached LHDN catalogs (separate
    slice that fetches + refreshes monthly).
-5. **Signing service** — placeholder Celery task on the dedicated
+3. **Signing service** — placeholder Celery task on the dedicated
    `signing` queue exists. KMS-backed envelope encryption + Ed25519
    signature over `chain_hash` lands when KMS is provisioned.
-6. **MyInvois submission** — placeholder Celery task exists. Real LHDN
+4. **MyInvois submission** — placeholder Celery task exists. Real LHDN
    API client + UUID/QR retrieval + cancellation within 72-hour window.
-7. **Email / WhatsApp / API ingestion channels** — only `web_upload` is
+5. **Email / WhatsApp / API ingestion channels** — only `web_upload` is
    wired. Web-upload is the most visible path; the others share the
    `IngestionJob` model and just need their adapters.
-8. **Billing + Stripe + FPX** — `apps.billing` is empty; the plan/tier
+6. **Billing + Stripe + FPX** — `apps.billing` is empty; the plan/tier
    catalog from BUSINESS_MODEL.md isn't seeded.
-9. **PII field-level encryption** — `Organization.contact_email`,
+7. **PII field-level encryption** — `Organization.contact_email`,
    `contact_phone`, `registered_address` are plain text in dev. Same
    KMS dependency as the runtime-config encryption (Slice 10).
-10. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
-    Invoices, Customers, Audit log, Engine activity, Settings.
-11. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
-    can wrap the existing `make test` + frontend lint/build.
+8. **Frontend sub-routes that show "soon" in the sidebar** — Inbox,
+   Invoices, Customers, Audit log, Engine activity, Settings.
+9. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
+   can wrap the existing `make test` + frontend lint/build.
 
 ---
 
