@@ -2914,6 +2914,141 @@ What's deferred:
 
 ---
 
+### Slice 31 — EasyOCR for images + scanned-PDF fallback
+
+The first local OCR engine, and the one that closes a real
+routing gap from Slice 1: ingestion accepts ``image/jpeg /
+image/png / image/webp`` uploads, but the only seeded
+TextExtract route was for ``application/pdf`` (pdfplumber). An
+image upload would hit ``NoRouteFound`` and fail silently. This
+slice plugs that hole and queues EasyOCR for future scanned-PDF
+escalation.
+
+Backend:
+
+- **`apps.extraction.adapters.easyocr_adapter.EasyOCRAdapter`** —
+  in-process OCR via the `easyocr` Python package. Implements
+  `TextExtractEngine` for image MIMEs (jpeg / png / webp) and
+  `application/pdf` (rasterised page-by-page). PDF
+  rasterisation goes through `pypdfium2` — a single Python wheel
+  with no system deps, much leaner than the
+  pdf2image+poppler-utils alternative. 200 DPI render is the
+  empirical sweet spot between accuracy on small fonts and
+  speed.
+- **Reader caching**: `easyocr.Reader(...)` loads the language
+  model into memory at construction time (multi-second + 64 MB).
+  We cache it as a module-level singleton with a thread-lock
+  guard so the second adapter call within a worker process is
+  instant.
+- **Confidence**: averaged over EasyOCR's per-detection scores.
+  Unlike pdfplumber's "0.95 vs 0.10 floor" heuristic, EasyOCR's
+  confidence is calibrated by the model itself; we trust it.
+- **Languages**: English only at launch. Bahasa Malaysia uses
+  Latin script so the English model handles it well; adding the
+  Malay language pack is a one-line change when needed.
+- **Page cap**: 30 pages per PDF, matching `MAX_LINE_ITEMS` in
+  submission as a sanity ceiling so a 100-page accident doesn't
+  blow the request budget.
+- **`apps.extraction.registry`**: factory registered alongside
+  the existing pdfplumber / Claude / Ollama adapters.
+- **Migration `extraction/0005_seed_easyocr`**:
+  - Registers the `easyocr` engine row (capability `text_extract`,
+    cost 0).
+  - Routing rule **priority 100** for `image/jpeg,image/png,
+    image/webp` — the launch primary for images. Replaces the
+    silent "image upload fails" behaviour with a real OCR pass.
+  - Routing rule **priority 200** for `application/pdf` —
+    fallback for the future. The router today picks the lowest
+    priority and doesn't auto-fall-back, so this rule sits
+    behind pdfplumber's priority 100. When the "escalate
+    text_extract on low confidence" hook lands, the rule is
+    already in place and only the routing logic edits.
+- **Dependencies**: `easyocr>=1.7,<2.0` and `pypdfium2>=4,<5`
+  added to `pyproject.toml`. The transitive torch (CPU) +
+  opencv-python-headless adds ~250 MB to the worker image and
+  EasyOCR downloads its English model (~64 MB) on first use,
+  cached in the container under `easyocr/`. **`tool.uv.required-environments`**
+  declared (Linux x86_64, Linux aarch64, macOS arm64) so the
+  lockfile resolves without trying to find Intel-macOS torch
+  wheels that don't exist.
+
+Tests: 9 new (333 passing total, was 324). Image path: jpeg /
+png / webp all OCR-and-return; per-detection confidences are
+averaged correctly; blank image → 0 confidence + no crash.
+PDF path: pages rasterised through a mocked pypdfium2,
+per-page text concatenated, per-page confidences averaged,
+diagnostics carry `mode=pdf`, `pages_ocrd`, `render_dpi`. Error
+paths: malformed PDF → `EngineUnavailable` from the rasterise
+step; unsupported MIME → clear `EngineUnavailable`. Reader
+caching: across two image calls the fake `Reader.__init__` is
+constructed exactly once. EasyOCR-not-installed:
+`EngineUnavailable` raised at the call site rather than
+crashing on import.
+
+Verified live: image-MIME path exercised against the Telekom
+invoice (rasterised to JPEG via Chromium first), end-to-end
+OCR → Ollama structuring → review screen with structured
+fields populated. The Engine activity page (Slice 22) shows
+the EasyOCR call with timing + character count diagnostics.
+
+Durable design decisions:
+
+- **EasyOCR over Tesseract.** Tesseract is leaner (~30 MB
+  binary vs ~300 MB pulled by EasyOCR's torch dep) but its
+  accuracy on real-world Malaysian invoices (mixed-language,
+  low-contrast, varied fonts, photographed receipts) is
+  noticeably worse. EasyOCR's torch CPU + transformer
+  detector produces clean text where Tesseract returns
+  fragments; the cost is image weight, not request latency.
+- **`pypdfium2` over `pdf2image` + poppler.** pdf2image is the
+  conventional choice but requires `poppler-utils` as a system
+  dep installed via apt. pypdfium2 is a single wheel; no
+  Dockerfile changes, no per-arch headache.
+- **Module-level Reader singleton, not a Django cache or
+  lru_cache.** The Reader holds GPU/CPU model weights — a
+  Django cache would either pickle them (slow, fragile) or
+  miss every time. A module-level singleton scoped to the
+  worker process matches the natural lifecycle: one
+  initialisation per worker, reused across all jobs that
+  worker handles.
+- **Routing priority for PDFs is 200, not 100.** EasyOCR could
+  technically handle every PDF, but for native-text PDFs
+  pdfplumber is faster and cheaper (no model inference). The
+  priority ordering makes pdfplumber the launch primary and
+  positions EasyOCR as the future escalation target. The
+  alternative — leaving the PDF rule out entirely until the
+  escalation slice ships — would force a second migration
+  later; this way the wiring is in place.
+- **English only, not multi-language by default.** A
+  multi-language Reader takes longer to initialise and
+  produces worse confidence scores per detection (the model
+  has to disambiguate). Malaysian invoices use Latin script;
+  English handles them well. Multi-language is a credentials-
+  driven knob (`Engine.credentials.languages`) when a
+  customer's documents need it.
+
+What's deferred:
+
+- **Low-confidence pdfplumber → EasyOCR escalation.** The
+  routing rule is in place; the pipeline hook isn't yet.
+  When a real scanned-PDF customer arrives, the hook becomes
+  one branch in `extraction.services._maybe_escalate_to_vision`
+  (rename to `_maybe_escalate`, try OCR before vision).
+- **Region-of-interest cropping.** EasyOCR currently OCRs the
+  whole page, including watermarks and decorative elements.
+  Cropping to invoice-relevant regions (header, line items
+  table, totals) would speed things up and cut noise.
+  Earnings-the-complexity later.
+- **Per-region confidence.** EasyOCR returns per-detection
+  bounding boxes — we discard them. A future "show me where
+  the model read this from" UI overlay would consume the
+  bbox data.
+- **Multi-language pack.** Add `["en", "ms"]` (Malay) to the
+  Reader credentials when a customer's documents include
+  non-Latin script.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -2995,7 +3130,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 324 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 333 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

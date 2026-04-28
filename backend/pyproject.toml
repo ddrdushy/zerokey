@@ -19,6 +19,14 @@ dependencies = [
     "boto3>=1.35,<2.0",
     "pdfplumber>=0.11,<1.0",
     "anthropic>=0.39,<1.0",
+    # EasyOCR for image / scanned-PDF text extraction (Slice 31). Pulls in
+    # torch (CPU) + opencv-python-headless + Pillow as transitive deps; the
+    # CPU torch wheel is ~200MB and EasyOCR's English language model is
+    # downloaded on first use (cached in the easyocr/ directory).
+    "easyocr>=1.7,<2.0",
+    # PDF → image rasterisation for OCR. pypdfium2 is a single Python wheel
+    # with no system deps, much leaner than pdf2image+poppler.
+    "pypdfium2>=4,<5",
 ]
 
 [dependency-groups]
@@ -31,6 +39,18 @@ dev = [
     "django-stubs[compatible-mypy]>=5.1,<6.0",
     "djangorestframework-stubs>=3.15,<4.0",
     "ipython>=8.28,<9.0",
+]
+
+[tool.uv]
+# We run inside the Linux Docker container in dev + prod; some deps
+# (torch, EasyOCR's transitive Pillow build) don't publish Intel-macOS
+# wheels. Declaring required environments tells uv to only resolve for
+# the platforms we actually run on, so a no-wheel platform doesn't
+# block the lockfile.
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [tool.ruff]

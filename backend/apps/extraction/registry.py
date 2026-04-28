@@ -20,6 +20,8 @@ from .adapters.claude_adapter import (
     ClaudeFieldStructureAdapter,
     ClaudeVisionAdapter,
 )
+from .adapters.easyocr_adapter import ADAPTER_NAME as EASYOCR_ADAPTER_NAME
+from .adapters.easyocr_adapter import EasyOCRAdapter
 from .adapters.ollama_adapter import ADAPTER_NAME as OLLAMA_STRUCTURE_NAME
 from .adapters.ollama_adapter import OllamaFieldStructureAdapter
 from .adapters.pdfplumber_adapter import ADAPTER_NAME as PDFPLUMBER_ADAPTER_NAME
@@ -31,6 +33,7 @@ _ADAPTER_FACTORIES: dict[str, Callable[[], Any]] = {
     VISION_ADAPTER_NAME: ClaudeVisionAdapter,
     STRUCTURE_ADAPTER_NAME: ClaudeFieldStructureAdapter,
     OLLAMA_STRUCTURE_NAME: OllamaFieldStructureAdapter,
+    EASYOCR_ADAPTER_NAME: EasyOCRAdapter,
 }
 
 
