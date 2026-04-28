@@ -494,13 +494,25 @@ def _complete(
         )
         return
 
-    # Queue the structuring task only if we have any text to structure on.
+    # Queue the structuring task when we have text to structure on. Otherwise
+    # finalize directly: a totally empty extraction (e.g. scanned PDF + no
+    # vision adapter available) still has to run validation so the review
+    # UI surfaces the required-field errors honestly. Without this branch
+    # the Invoice would sit in EXTRACTING forever and the review banner
+    # would falsely report "looks good to submit".
     if text.strip():
         from django.db import transaction as _txn
 
         from apps.extraction.tasks import structure_invoice as structure_task
 
         _txn.on_commit(lambda: structure_task.delay(str(invoice.id)))
+    else:
+        from apps.submission.services import finalize_invoice_without_structuring
+
+        finalize_invoice_without_structuring(
+            invoice=invoice,
+            reason="No extracted text and no vision adapter available.",
+        )
 
 
 @transaction.atomic

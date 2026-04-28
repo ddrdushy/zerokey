@@ -130,7 +130,7 @@ def structure_invoice(invoice_id: UUID | str) -> StructuringResult:
             mime_type="text/plain",
         )
     except NoRouteFound as exc:
-        return _finalize_without_structuring(invoice, reason=str(exc))
+        return finalize_invoice_without_structuring(invoice=invoice, reason=str(exc))
 
     target_schema = [*INVOICE_HEADER_FIELDS, LINE_ITEMS_KEY]
     started_at = timezone.now()
@@ -154,7 +154,7 @@ def structure_invoice(invoice_id: UUID | str) -> StructuringResult:
             confidence=None,
             diagnostics={"detail": str(exc)},
         )
-        return _finalize_without_structuring(invoice, reason=str(exc))
+        return finalize_invoice_without_structuring(invoice=invoice, reason=str(exc))
     except Exception as exc:
         EngineCall.objects.create(
             engine=decision.engine,
@@ -168,7 +168,7 @@ def structure_invoice(invoice_id: UUID | str) -> StructuringResult:
             confidence=None,
             diagnostics={"detail": str(exc)[:500]},
         )
-        return _finalize_without_structuring(invoice, reason=f"{type(exc).__name__}: {exc}")
+        return finalize_invoice_without_structuring(invoice=invoice, reason=f"{type(exc).__name__}: {exc}")
 
     EngineCall.objects.create(
         engine=decision.engine,
@@ -322,7 +322,20 @@ def _materialise_line_items(invoice: Invoice, raw: Any) -> int:
 
 
 @transaction.atomic
-def _finalize_without_structuring(invoice: Invoice, *, reason: str) -> StructuringResult:
+def finalize_invoice_without_structuring(
+    *, invoice: Invoice, reason: str
+) -> StructuringResult:
+    """Mark an Invoice ready-for-review without structured fields, then validate.
+
+    Used when structuring can't run — adapter unavailable, no API key, or
+    upstream extraction returned no text and no vision was applied. The
+    user still gets a row to review, with validation issues surfacing
+    every required-field gap so the UI is honest about what's missing.
+
+    Public so the extraction context can call it directly when its
+    pipeline reaches a state where the FieldStructure task should not
+    be queued. Keep the cross-context import on services-only.
+    """
     invoice.status = Invoice.Status.READY_FOR_REVIEW
     invoice.error_message = f"Auto-structuring skipped: {reason}"[:8000]
     invoice.save(update_fields=["status", "error_message", "updated_at"])

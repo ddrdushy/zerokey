@@ -678,6 +678,121 @@ What's deferred (and should be obvious next moves):
 - **MYR-equivalent threshold** for foreign-currency invoices —
   needs BNM exchange-rate wiring.
 
+### Slice 12 — Side-by-side review UI + extraction-finalize fix
+
+Closes the Phase 2 polish gap. The detail page is now a proper
+review surface: source PDF on the left, structured fields on the
+right with per-field confidence dots and per-field validation issue
+pills, all anchored by a top-of-pane validation banner. Layout
+stacks on mobile (< lg) and is sticky-side-by-side on desktop so
+the document stays visible while the reviewer scrolls fields.
+
+Frontend (new components, all in `frontend/src/components/review/`):
+
+- **`DocumentPreview`** — native rendering only. PDFs get an
+  `<iframe>` with `#toolbar=0&navpanes=0` and a no-scripts sandbox;
+  images get an `<img>` with `object-contain`; everything else
+  falls back to a "use Open" placeholder. Zero dependencies — we
+  don't pay the ~500 KB pdfjs cost until we actually need page-
+  level controls (zoom, page nav, annotations).
+- **`ValidationBanner`** — top-of-pane summary that explains
+  posture rather than just declaring numbers (UX_PRINCIPLES
+  principle 4: "errors are explained, not announced"). Three tones
+  driven by `validation_summary`: red ("This invoice is not ready
+  to submit"), warning ("Ready to submit — with notes to review"),
+  success ("Looks good to submit").
+- **`FieldRow`** — label + value + confidence dot + inline
+  IssuePills. The confidence dot is always visible when
+  `per_field_confidence[field]` exists (UX_PRINCIPLES principle 7:
+  uncertainty signaled clearly); thresholds match the vision-
+  escalation cutoff (>= 0.8 success, >= 0.5 warning, < 0.5 error)
+  so the reviewer's mental model lines up with the engine's.
+- **`IssuePill`** — small badge keyed by severity. Compact mode for
+  in-table pills; full mode for inline-with-field pills. Tone
+  derives from semantic tokens so a future theme change updates
+  everything.
+- **`LineItemsTable`** — rebuilds the existing table with per-line
+  issue matching (`field_path` of the form `line_items[N].<field>`)
+  + a tinted issue row underneath any line that has findings.
+
+Page refactor (`frontend/src/app/dashboard/jobs/[id]/page.tsx`):
+
+- Two-column layout (`grid lg:grid-cols-[1fr_1fr]`). Document pane
+  is `lg:sticky lg:top-6` so it stays in view while the right pane
+  scrolls.
+- Right pane: `ValidationBanner` → Header → Parties → Totals →
+  Line items → orphan issues (any `field_path` we don't render
+  explicitly), with the existing State history and Raw extracted
+  text relegated to collapsible `<details>` at the bottom. Polling
+  cadence preserved (2s while non-terminal).
+
+Backend (one fix exposed by live verification):
+
+- **`finalize_invoice_without_structuring` is now a public service.**
+  Renamed from the leading-underscore private form and given a
+  docstring. The extraction context calls it directly when text is
+  empty AND vision didn't apply — previously the pipeline only
+  queued FieldStructure when `text.strip()` was truthy, so empty-
+  text + vision-unavailable left the Invoice stuck in `EXTRACTING`
+  forever with no validation issues. The review banner then
+  falsely reported "looks good to submit" on a totally empty
+  invoice. Fix routes the empty case to the public finalize
+  function which runs validation, surfacing the required-field
+  errors honestly. New regression test pins the behaviour.
+
+Tests: 1 new backend regression test + 1 existing test rewritten
+to assert the corrected post-finalize state. Suite is now
+144 passing / 4 skipped. Frontend bundle for the detail route
+went 6.66 KB → 9.24 KB (no new dependencies — just the new
+components).
+
+Verified live with Playwright: registered a fresh user via the
+sign-up form, dropped the synthetic empty-PDF fixture into the
+upload zone, the job reached `ready_for_review` in 2 seconds,
+the review screen rendered with a red banner reporting "6 errors
+must be fixed before LHDN will accept this invoice", 6 issue pills
+inline next to the empty required-field rows, 1 warning pill on
+buyer TIN, and the document preview pane on the left. Screenshot
+confirms the visual hierarchy (`/tmp/sliceD-review.png` during
+local development).
+
+Durable design decisions:
+
+- **Native PDF rendering via `<iframe>`, not pdfjs.** The bundle
+  cost of pdfjs (~500 KB) is the kind of dependency that doesn't
+  pay off until we need annotation overlays or page-level scroll
+  sync between document and fields. We don't, yet. When we do, we
+  swap the implementation behind the same `DocumentPreview`
+  component contract.
+- **Confidence thresholds match the vision-escalation cutoff.**
+  >= 0.8 / >= 0.5 / < 0.5 → success / warning / error. Reviewers
+  see the same boundary the engine sees, so a "warning yellow"
+  field is one that *would* have triggered escalation if it
+  hadn't already been escalated.
+- **`field_path` is the join key between rules and UI.** The
+  rules module emits paths like `supplier_tin`, `totals.grand_total`,
+  `line_items[2].quantity`. The page maintains a `FIELD_PATHS` set
+  of paths it explicitly renders; anything outside that set lands
+  in the "Other issues" stack so nothing gets lost. New rules can
+  ship without touching the UI.
+- **Public `finalize_invoice_without_structuring`.** Pipelines
+  that produce structured invoices come from multiple paths
+  (vision short-circuit, FieldStructure adapter, no-structuring
+  fallback). Each path has to terminate in the same finalized
+  state with validation having run. The convergence point is now
+  a public service rather than a private detail of one path.
+
+What's deferred (UI-only, the data is there):
+
+- **Per-field confidence color tints** (the dot is there; tinting
+  the field background by confidence band is a polish pass).
+- **Sticky validation summary** as the reviewer scrolls past it
+  on a long invoice.
+- **Edit-in-place** for fields, with re-validation on save —
+  needs a `PATCH /invoices/<id>/` endpoint (Phase 3 follow-up).
+- **Approve & submit** primary action — gated on the signing
+  service landing.
+
 ---
 
 ## Architectural decisions worth preserving
@@ -761,7 +876,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 143 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 144 passing, 4 skipped (3 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -814,12 +929,7 @@ Coverage:
 
 Ordered roughly by Phase 2/3 priority:
 
-1. **Side-by-side invoice review UI** — current detail page is functional
-   but the polished review screen with PDF viewer + field-level confidence
-   highlighting + per-field validation-issue badges hasn't landed.
-   Validation issues now flow through the API (Slice 11), so the UI just
-   needs to render them.
-2. **Customer master / item master** — `apps.enrichment` is empty. Per
+1. **Customer master / item master** — `apps.enrichment` is empty. Per
    DATA_MODEL.md these accumulate buyer/item patterns and drive auto-fill
    on subsequent invoices.
 3. **Live LHDN TIN verification** — the format rule passes "looks like a

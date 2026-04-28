@@ -381,6 +381,54 @@ class TestVisionEscalation:
         job.refresh_from_db()
         assert job.extraction_engine == "pdfplumber"
 
+    def test_empty_text_no_vision_still_finalizes_and_validates(
+        self, org_and_user, pdf_engine_and_rule, vision_engine_and_rule
+    ) -> None:
+        """Regression: an extraction with no text + no vision must NOT leave
+        the Invoice stuck in EXTRACTING with no validation issues.
+
+        Previously the pipeline only queued FieldStructure when text.strip()
+        was truthy; the empty-text + vision-unavailable case fell through
+        and the Invoice sat in EXTRACTING forever. The review UI then
+        falsely reported "looks good to submit" because no rules had run.
+        Now the empty-text branch routes directly to
+        ``finalize_invoice_without_structuring`` which runs validation and
+        surfaces the required-field errors.
+        """
+        org, _ = org_and_user
+        job = _make_job(org)
+
+        text_adapter = _FakeAdapter(
+            TextExtractResult(text="", confidence=0.10, page_count=1)
+        )
+        vision_adapter = _FakeVisionAdapter(raises=EngineUnavailable("no api key"))
+
+        with (
+            patch("apps.extraction.services._read_object", return_value=b"%PDF fake"),
+            patch(
+                "apps.extraction.services.get_adapter",
+                side_effect=_adapter_dispatcher(text_adapter, vision_adapter),
+            ),
+        ):
+            run_extraction(job.id)
+
+        invoice = Invoice.objects.get(ingestion_job_id=job.id)
+        assert invoice.status == Invoice.Status.READY_FOR_REVIEW
+        # Validation actually ran — required-field rules fired on the empty header.
+        from apps.validation.models import ValidationIssue
+
+        codes = set(
+            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list(
+                "code", flat=True
+            )
+        )
+        assert "required.invoice_number" in codes
+        assert "required.supplier_legal_name" in codes
+        # The audit log captured the structuring-skipped event with a clear reason.
+        actions = list(AuditEvent.objects.values_list("action_type", flat=True))
+        assert "invoice.structuring_skipped" in actions
+        assert "invoice.validated" in actions
+
     def test_escalation_records_skip_when_vision_unavailable(
         self, org_and_user, pdf_engine_and_rule, vision_engine_and_rule
     ) -> None:
@@ -408,15 +456,18 @@ class TestVisionEscalation:
         unavailable = EngineCall.objects.filter(outcome=EngineCall.Outcome.UNAVAILABLE).count()
         assert unavailable == 1
 
-        # Final job state: regular text engine, NOT the escalation combo —
-        # the FieldStructure queue handles structuring on the regular path.
+        # Final job state: regular text engine, NOT the escalation combo.
         job.refresh_from_db()
         assert job.status == IngestionJob.Status.READY_FOR_REVIEW
         assert job.extraction_engine == "pdfplumber"
-        # Invoice is left in EXTRACTING state for the FieldStructure task to
-        # finish; vision did NOT short-circuit structuring.
+        # Invoice is finalized (READY_FOR_REVIEW) with validation issues —
+        # text is empty here (low-confidence baseline) so the pipeline
+        # short-circuits to finalize_invoice_without_structuring rather
+        # than queueing the FieldStructure task on no text. Validation
+        # runs inside the finalize path, so the review UI never falsely
+        # reports "looks good to submit" on an empty invoice.
         invoice = Invoice.objects.get(ingestion_job_id=job.id)
-        assert invoice.status == Invoice.Status.EXTRACTING
+        assert invoice.status == Invoice.Status.READY_FOR_REVIEW
 
 
 class TestClaudeVisionAdapterMimeDispatch:
