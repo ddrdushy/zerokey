@@ -474,15 +474,23 @@ class InvoiceUpdateResult:
     invoice: Invoice
     changed_fields: list[str]
     changed_line_items: list[dict[str, Any]]
+    added_line_numbers: list[int]
+    removed_line_numbers: list[int]
 
 
-# The PATCH payload accepts header fields + an optional ``line_items``
-# array. Each entry in the array MUST include ``line_number`` (the stable
-# identifier within the invoice) and any subset of EDITABLE_LINE_FIELDS.
-# We don't expose the database id of the LineItem to the front-end —
-# line_number is unique within an invoice and is the natural addressing
-# key in the UI.
+# The PATCH payload accepts header fields + three optional line-item
+# arrays. Each addresses an Invoice's lines by ``line_number`` (the
+# stable identifier within the invoice; we don't expose the DB id):
+#   - ``line_items``        edits to existing lines
+#   - ``add_line_items``    new lines to insert; server assigns the
+#                           next line_number (max existing + 1)
+#   - ``remove_line_items`` line_numbers to delete
+# Line numbers are NEVER recompacted on remove — that would invalidate
+# every audit event / validation issue / inbox detail that referenced
+# the old number. Removed numbers stay forever holey.
 _LINE_ITEMS_KEY = "line_items"
+_ADD_LINE_ITEMS_KEY = "add_line_items"
+_REMOVE_LINE_ITEMS_KEY = "remove_line_items"
 
 
 @transaction.atomic
@@ -517,12 +525,15 @@ def update_invoice(
          response carries fresh issues for the corrected invoice.
     """
     line_items_payload = updates.pop(_LINE_ITEMS_KEY, None)
+    add_payload = updates.pop(_ADD_LINE_ITEMS_KEY, None)
+    remove_payload = updates.pop(_REMOVE_LINE_ITEMS_KEY, None)
 
     unknown = set(updates.keys()) - EDITABLE_HEADER_FIELDS
     if unknown:
         raise InvoiceUpdateError(
             f"Cannot edit non-editable fields: {sorted(unknown)}. "
-            f"Editable: {sorted(EDITABLE_HEADER_FIELDS)} (plus line_items)"
+            f"Editable: {sorted(EDITABLE_HEADER_FIELDS)} (plus line_items, "
+            f"add_line_items, remove_line_items)"
         )
 
     invoice = Invoice.objects.get(organization_id=organization_id, id=invoice_id)
@@ -536,11 +547,25 @@ def update_invoice(
         setattr(invoice, field_name, coerced)
         changed_header.append(field_name)
 
+    # Apply structural changes first (remove, then add) so cell edits
+    # see the post-add line set. Removes-before-adds means "I deleted
+    # line 1 and added a new one" doesn't accidentally remove the new line.
+    removed_numbers = _apply_line_item_removes(invoice, remove_payload)
+    added_numbers = _apply_line_item_adds(invoice, add_payload)
     changed_lines = _apply_line_item_updates(invoice, line_items_payload)
 
-    if not changed_header and not changed_lines:
+    if not (
+        changed_header
+        or changed_lines
+        or removed_numbers
+        or added_numbers
+    ):
         return InvoiceUpdateResult(
-            invoice=invoice, changed_fields=[], changed_line_items=[]
+            invoice=invoice,
+            changed_fields=[],
+            changed_line_items=[],
+            added_line_numbers=[],
+            removed_line_numbers=[],
         )
 
     if changed_header:
@@ -560,6 +585,8 @@ def update_invoice(
         payload={
             "changed_fields": sorted(changed_header),
             "changed_line_items": changed_lines,
+            "added_line_numbers": added_numbers,
+            "removed_line_numbers": removed_numbers,
         },
     )
 
@@ -580,6 +607,8 @@ def update_invoice(
         invoice=invoice,
         changed_fields=sorted(changed_header),
         changed_line_items=changed_lines,
+        added_line_numbers=added_numbers,
+        removed_line_numbers=removed_numbers,
     )
 
 
@@ -766,6 +795,114 @@ def _apply_line_item_updates(
         )
 
     return changed_summaries
+
+
+def _apply_line_item_removes(invoice: Invoice, payload: Any) -> list[int]:
+    """Delete line items addressed by ``line_number``.
+
+    Returns the list of line_numbers removed. Validation rules:
+      - ``payload`` must be a list of integers (or absent / None).
+      - Every entry must reference an existing line on this invoice;
+        an unknown number raises rather than silently skipping (the
+        caller's UI is desyncing from server state, surface it).
+
+    Line numbers are NEVER recompacted — removed numbers stay holey.
+    Recompacting would break every prior audit event / validation
+    issue / inbox detail that referenced the old number.
+    """
+    if payload is None:
+        return []
+    if not isinstance(payload, list):
+        raise InvoiceUpdateError(
+            "'remove_line_items' must be an array of line_number integers."
+        )
+
+    by_number: dict[int, LineItem] = {
+        line.line_number: line for line in invoice.line_items.all()
+    }
+    removed: list[int] = []
+    for entry in payload:
+        if not isinstance(entry, int):
+            raise InvoiceUpdateError(
+                f"remove_line_items entries must be integers; got {entry!r}"
+            )
+        if entry not in by_number:
+            raise InvoiceUpdateError(
+                f"remove_line_items[{entry}] does not exist on this invoice."
+            )
+        by_number[entry].delete()
+        removed.append(entry)
+    return sorted(removed)
+
+
+def _apply_line_item_adds(invoice: Invoice, payload: Any) -> list[int]:
+    """Insert new line items, server-assigned line_numbers.
+
+    Returns the list of line_numbers assigned. Validation rules:
+      - ``payload`` must be a list of dicts (or absent / None).
+      - Each dict's keys must all be in ``EDITABLE_LINE_FIELDS``
+        (no ``line_number`` — server assigns; no DB id).
+      - ``description`` is required (the matching key for ItemMaster
+        + the user-visible label; a blank line item is a bug).
+
+    The next line_number is ``max(existing) + 1`` (or 1 if no lines
+    yet). Multiple adds in one call get sequential numbers.
+    """
+    if payload is None:
+        return []
+    if not isinstance(payload, list):
+        raise InvoiceUpdateError(
+            "'add_line_items' must be an array of {description, ...} objects."
+        )
+
+    existing_numbers = list(
+        invoice.line_items.values_list("line_number", flat=True)
+    )
+    next_number = (max(existing_numbers) + 1) if existing_numbers else 1
+    assigned: list[int] = []
+
+    for entry in payload:
+        if not isinstance(entry, dict):
+            raise InvoiceUpdateError(
+                "Each add_line_items entry must be an object with at "
+                "minimum a 'description' field."
+            )
+        unknown = set(entry.keys()) - EDITABLE_LINE_FIELDS
+        if unknown:
+            raise InvoiceUpdateError(
+                f"Cannot set non-editable line fields on add: {sorted(unknown)}. "
+                f"Editable: {sorted(EDITABLE_LINE_FIELDS)}"
+            )
+
+        description = (entry.get("description") or "").strip()
+        if not description:
+            raise InvoiceUpdateError(
+                "add_line_items entries require a non-empty description."
+            )
+
+        # Coerce + populate every field on the new row. Unset fields
+        # default to the model defaults (None for decimals, "" for
+        # text). per_field_confidence starts at 1.0 for every populated
+        # field — same convention as the cell-edit path.
+        kwargs: dict[str, Any] = {
+            "organization_id": invoice.organization_id,
+            "invoice": invoice,
+            "line_number": next_number,
+        }
+        confidence: dict[str, float] = {}
+        for field_name, raw_value in entry.items():
+            new_line_proxy = LineItem(invoice=invoice)
+            coerced = _coerce_line_field(new_line_proxy, field_name, raw_value)
+            kwargs[field_name] = coerced
+            if coerced not in (None, ""):
+                confidence[field_name] = 1.0
+
+        kwargs["per_field_confidence"] = confidence
+        LineItem.objects.create(**kwargs)
+        assigned.append(next_number)
+        next_number += 1
+
+    return assigned
 
 
 def _coerce_line_field(line: LineItem, field_name: str, raw_value: Any) -> Any:

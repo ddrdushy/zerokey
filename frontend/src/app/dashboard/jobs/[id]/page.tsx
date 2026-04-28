@@ -35,6 +35,7 @@ import { IssuePill } from "@/components/review/IssuePill";
 import {
   LineItemsTable,
   type LineDraft,
+  type PendingAdd,
 } from "@/components/review/LineItemsTable";
 import { ValidationBanner } from "@/components/review/ValidationBanner";
 
@@ -72,6 +73,8 @@ export default function JobDetailPage() {
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [draft, setDraft] = useState<Draft>({});
   const [lineDrafts, setLineDrafts] = useState<LineDrafts>({});
+  const [pendingAdds, setPendingAdds] = useState<PendingAdd[]>([]);
+  const [removedNumbers, setRemovedNumbers] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -127,13 +130,61 @@ export default function JobDetailPage() {
     }));
   }
 
+  function onChangePendingAdd(
+    pendingNumber: number,
+    field: string,
+    value: string,
+  ) {
+    setSaveError(null);
+    setPendingAdds((prev) =>
+      prev.map((p) =>
+        p.pendingNumber === pendingNumber
+          ? { ...p, fields: { ...p.fields, [field]: value } }
+          : p,
+      ),
+    );
+  }
+
+  function onAddLine() {
+    setSaveError(null);
+    // Negative numbers as keys; collisions with real line_numbers are
+    // impossible since real numbers start at 1. Each click decrements.
+    setPendingAdds((prev) => {
+      const nextPending =
+        prev.length === 0
+          ? -1
+          : Math.min(...prev.map((p) => p.pendingNumber)) - 1;
+      return [...prev, { pendingNumber: nextPending, fields: {} }];
+    });
+  }
+
+  function onRemoveLine(lineNumber: number) {
+    setSaveError(null);
+    setRemovedNumbers((prev) =>
+      prev.includes(lineNumber) ? prev : [...prev, lineNumber],
+    );
+  }
+
+  function onUndoRemove(lineNumber: number) {
+    setSaveError(null);
+    setRemovedNumbers((prev) => prev.filter((n) => n !== lineNumber));
+  }
+
+  function onDiscardPendingAdd(pendingNumber: number) {
+    setSaveError(null);
+    setPendingAdds((prev) =>
+      prev.filter((p) => p.pendingNumber !== pendingNumber),
+    );
+  }
+
   async function onSave() {
     if (!invoice) return;
     setSaving(true);
     setSaveError(null);
     try {
-      // Build the PATCH payload combining header drafts and per-line drafts.
-      // Empty strings clear cells; the backend coerces them per type.
+      // Build the PATCH payload combining header drafts, cell edits,
+      // structural adds, and structural removes. Empty strings clear
+      // cells; the backend coerces them per type.
       const payload: Record<string, unknown> = { ...draft };
       const lineEntries = Object.entries(lineDrafts);
       if (lineEntries.length > 0) {
@@ -142,10 +193,21 @@ export default function JobDetailPage() {
           ...fields,
         }));
       }
-      // The backend accepts arrays via JSON.stringify, but our typed
-      // client expects Record<string, string|null>. Cast via unknown to
-      // keep the strict client signature working without widening it
-      // for every call site.
+      // Pending adds — strip the local pendingNumber, send only the
+      // user-entered fields. Empty pending adds (the user clicked
+      // "Add line" but typed nothing) are dropped silently rather than
+      // sent and rejected by the backend's "non-empty description"
+      // rule; the user discards them implicitly by saving without
+      // filling them in.
+      const validAdds = pendingAdds
+        .map((p) => p.fields)
+        .filter((f) => (f.description ?? "").trim() !== "");
+      if (validAdds.length > 0) {
+        payload.add_line_items = validAdds;
+      }
+      if (removedNumbers.length > 0) {
+        payload.remove_line_items = removedNumbers;
+      }
       const updated = await api.updateInvoice(
         invoice.id,
         payload as Record<string, string | null>,
@@ -153,6 +215,8 @@ export default function JobDetailPage() {
       setInvoice(updated);
       setDraft({});
       setLineDrafts({});
+      setPendingAdds([]);
+      setRemovedNumbers([]);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Save failed.");
     } finally {
@@ -163,6 +227,8 @@ export default function JobDetailPage() {
   function onDiscard() {
     setDraft({});
     setLineDrafts({});
+    setPendingAdds([]);
+    setRemovedNumbers([]);
     setSaveError(null);
   }
 
@@ -172,7 +238,11 @@ export default function JobDetailPage() {
 
   const dirtyCount =
     Object.keys(draft).length +
-    Object.values(lineDrafts).reduce((sum, d) => sum + Object.keys(d).length, 0);
+    Object.values(lineDrafts).reduce((sum, d) => sum + Object.keys(d).length, 0) +
+    // Each non-empty pending add counts once; empty ones are dropped on save.
+    pendingAdds.filter((p) => (p.fields.description ?? "").trim() !== "")
+      .length +
+    removedNumbers.length;
 
   return (
     <AppShell>
@@ -194,8 +264,15 @@ export default function JobDetailPage() {
                 invoice={invoice}
                 draft={draft}
                 lineDrafts={lineDrafts}
+                pendingAdds={pendingAdds}
+                removedNumbers={removedNumbers}
                 onChangeField={onChangeField}
                 onChangeLineCell={onChangeLineCell}
+                onChangePendingAdd={onChangePendingAdd}
+                onAddLine={onAddLine}
+                onRemoveLine={onRemoveLine}
+                onUndoRemove={onUndoRemove}
+                onDiscardPendingAdd={onDiscardPendingAdd}
               />
             ) : (
               <PendingPanel job={job} />
@@ -292,16 +369,34 @@ type ReviewPanelProps = {
   invoice: Invoice;
   draft: Draft;
   lineDrafts: LineDrafts;
+  pendingAdds: PendingAdd[];
+  removedNumbers: number[];
   onChangeField: (name: string, value: string) => void;
   onChangeLineCell: (lineNumber: number, field: string, value: string) => void;
+  onChangePendingAdd: (
+    pendingNumber: number,
+    field: string,
+    value: string,
+  ) => void;
+  onAddLine: () => void;
+  onRemoveLine: (lineNumber: number) => void;
+  onUndoRemove: (lineNumber: number) => void;
+  onDiscardPendingAdd: (pendingNumber: number) => void;
 };
 
 function ReviewPanel({
   invoice,
   draft,
   lineDrafts,
+  pendingAdds,
+  removedNumbers,
   onChangeField,
   onChangeLineCell,
+  onChangePendingAdd,
+  onAddLine,
+  onRemoveLine,
+  onUndoRemove,
+  onDiscardPendingAdd,
 }: ReviewPanelProps) {
   const issuesByPath = useMemo(() => groupByPath(invoice.validation_issues), [
     invoice.validation_issues,
@@ -448,7 +543,14 @@ function ReviewPanel({
           issues={invoice.validation_issues}
           currency={invoice.currency_code}
           drafts={lineDrafts}
+          pendingAdds={pendingAdds}
+          removed={removedNumbers}
           onChangeCell={onChangeLineCell}
+          onChangePendingAdd={onChangePendingAdd}
+          onAddLine={onAddLine}
+          onRemoveLine={onRemoveLine}
+          onUndoRemove={onUndoRemove}
+          onDiscardPendingAdd={onDiscardPendingAdd}
         />
       </section>
 

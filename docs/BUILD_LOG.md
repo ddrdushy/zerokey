@@ -2252,6 +2252,144 @@ What's deferred:
 
 ---
 
+### Slice 26 — Add / remove line items in review
+
+Closes the editable-invoice surface. Slice 17 made existing line
+cells editable; this slice lets the operator **add** entirely new
+lines and **delete** wrong ones. Together with Slices 14, 15, 17
+the correction loop is now complete: anything the extractor got
+wrong — header fields, party master fields, line-item cells, line
+membership itself — can be fixed in the review screen.
+
+Backend:
+
+- **`update_invoice` accepts two new arrays** alongside the
+  existing `line_items` patch list:
+  - `add_line_items: [{description, quantity, unit_price_excl_tax,
+    tax_rate, ...}]` — each entry must include a non-empty
+    description; other fields are optional and default to zero /
+    null. Allowed fields gated by the existing
+    `EDITABLE_LINE_FIELDS` allowlist (no smuggling
+    `organization_id` / `id` / per-field-confidence in via the
+    add path).
+  - `remove_line_items: [<line_number>, ...]` — integer line
+    numbers. Unknown numbers reject the whole update with a
+    400 (no partial application).
+  - `_apply_line_item_removes` runs **before** the adds so a
+    payload can simultaneously remove L2 and add a new line — the
+    new line still gets `max(remaining_numbers) + 1`, which is
+    the durable rule.
+- **Line numbers never recompact.** Removing line 1 of a 3-line
+  invoice leaves lines 2 + 3 with their numbers intact; the next
+  add becomes line 4. This matches the invariant that
+  `(invoice, line_number)` is a stable external reference — audit
+  events, exception-inbox detail payloads, and any future
+  rejection-retry comparison can quote line numbers without
+  worrying that they shift under their feet.
+- **New lines store `per_field_confidence=1.0`** for every
+  populated field, same as the user-correction path on existing
+  lines — the structured data carries forward the fact that a
+  human asserted these values.
+- **`InvoiceUpdateResult`** carries new `added_line_numbers` +
+  `removed_line_numbers` lists. The `invoice.updated` audit event
+  records both as field names (numbers, not values), keeping the
+  audit log PII-clean.
+- **Validation re-runs after every structural change.** Adding a
+  line that fixes an "invoice needs at least one line" violation
+  resolves the inbox row automatically (via the
+  `_sync_validation_inbox` hook from Slice 25) — no separate
+  user gesture needed.
+
+Frontend:
+
+- **`LineItemsTable`** in edit mode grew:
+  - Per-row trash button (with `aria-label` "Remove line N"). A
+    marked-for-removal row becomes line-through + dimmed, and
+    the trash flips to an Undo (RotateCcw) button so the user
+    can reverse before saving.
+  - "+ Add line" button below the table opens a fresh editable
+    row tagged "+ new" with a signal-tinted background. Pending
+    rows use negative `pendingNumber` keys (-1, -2, …) to keep
+    React keys stable until the server assigns real numbers on
+    save.
+  - Each pending row has its own discard (×) button so the user
+    can back out of an add that's no longer wanted.
+- **Page state** (`/dashboard/jobs/[id]`) added `pendingAdds` +
+  `removedNumbers` alongside the existing `lineDrafts`. The
+  SaveBar count rolls all four sources together. On save, the
+  PATCH body builds `add_line_items` (filtered to entries with
+  a non-empty description — empty drafts are silently dropped)
+  and `remove_line_items` (just the array of line numbers).
+- **Error handling**: if the backend rejects (e.g. unknown line
+  number on remove), the SaveBar surfaces the message and the
+  drafts stay in place so the user can correct without losing
+  their work.
+
+Tests: 9 new (299 passing total). Service: add assigns next
+sequential number; multiple adds increment monotonically; add
+requires non-empty description (400); add rejects unknown
+fields; remove deletes by number; remove rejects unknown line
+number; remove rejects non-array payload; combined
+add+remove+edit in one call (removes preserve gaps, edits hit
+remaining rows); audit payload lists added + removed numbers.
+
+Verified live with Playwright: signed up fresh, dropped a PDF,
+opened the job. Clicked "Add line" twice → two pending rows
+appeared with the signal tint and "+ new" labels; SaveBar read
+"2 unsaved corrections". Filled both descriptions, clicked
+"Save corrections" — both rows persisted. Clicked the trash on
+the first remaining row, saved again — only the second row
+remained, **numbered #2** (the first row's number stayed gone,
+no recompacting). The validation banner went from 6 errors → 5
+errors as soon as the first save landed (the empty-lines
+violation cleared once any line existed) — the inbox auto-resolution
+loop closed itself end-to-end.
+
+Durable design decisions:
+
+- **No recompaction of line numbers.** Once line 1 is removed,
+  it stays removed. Line 4 stays line 4 even after lines 1-3
+  vanish. This keeps any external reference (audit event, inbox
+  payload, future LHDN rejection citing a line number) stable
+  forever. The cost is one extra invariant for the UI to know
+  about; the benefit is no spooky reference rot.
+- **Removes processed before adds in a single call.** Counter-
+  intuitive at first — but ensures that a payload that says
+  "remove L2, add a new line" computes the new line's number
+  from the post-remove state. Without this, a remove-then-add
+  pair could collide on the same number.
+- **Pending rows don't enter the table data structure** until
+  saved. They live in a parallel `pendingAdds` array on the
+  client. This keeps the read-only "current truth" view of the
+  table (the persisted lines) cleanly separable from the
+  unsaved-edit overlay, mirroring how `lineDrafts` works for
+  cell-level edits.
+- **Empty-description pending rows are silently dropped on
+  save.** A user who clicks "Add line" then changes their mind
+  doesn't need to also remember to discard the row — saving
+  with empty draft = same as not adding. Explicit rejection
+  fired on the backend only kicks in if the client somehow
+  tries to send an explicitly empty description.
+- **No bulk-add / paste-CSV.** Out of scope for the manual-
+  correction loop. Bulk-onboard belongs in a future "import
+  invoices" surface, not the per-job review screen.
+
+What's deferred:
+
+- **Reorder lines.** No customer has asked; LHDN doesn't care
+  about row order; deferred until someone needs it.
+- **Restore-deleted toggle.** Once saved, removed lines are
+  truly gone (the DB row is deleted). The audit event records
+  the line number; full restoration would need a soft-delete
+  pattern, which we'll add only if the use case appears.
+- **Per-line `is_user_added` flag.** We could mark which lines
+  came from extraction vs human-added in the UI; not done
+  because the per-field confidence column already carries that
+  signal (1.0 = user-asserted) and visually nothing about a
+  user-added line should differ from a corrected-extracted line.
+
+---
+
 ## Architectural decisions worth preserving
 
 These are choices made because the spec docs were silent or vague. They
@@ -2333,7 +2471,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 290 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 299 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

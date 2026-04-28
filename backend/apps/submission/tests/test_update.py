@@ -606,6 +606,168 @@ class TestLineItemUpdates:
         assert len(payload["changed_line_items"]) == 1
         assert payload["changed_line_items"][0]["line_number"] == 1
 
+    def test_add_line_item_assigns_next_number(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+        # Existing numbers are [1, 2]; new line should be 3.
+        result = update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={
+                "add_line_items": [
+                    {
+                        "description": "Newly-added widget",
+                        "quantity": "1",
+                        "unit_price_excl_tax": "50.00",
+                        "tax_amount": "3.00",
+                        "line_total_incl_tax": "53.00",
+                    },
+                ],
+            },
+            actor_user_id=user.id,
+        )
+        assert result.added_line_numbers == [3]
+        line = invoice.line_items.get(line_number=3)
+        assert line.description == "Newly-added widget"
+        assert line.unit_price_excl_tax == Decimal("50.00")
+        # confidence flags every populated field on the add path.
+        assert line.per_field_confidence.get("description") == 1.0
+        assert line.per_field_confidence.get("unit_price_excl_tax") == 1.0
+
+    def test_add_multiple_lines_get_sequential_numbers(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+        result = update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={
+                "add_line_items": [
+                    {"description": "Add A"},
+                    {"description": "Add B"},
+                    {"description": "Add C"},
+                ],
+            },
+            actor_user_id=user.id,
+        )
+        assert result.added_line_numbers == [3, 4, 5]
+
+    def test_add_requires_non_empty_description(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+        with pytest.raises(InvoiceUpdateError, match="non-empty description"):
+            update_invoice(
+                organization_id=org.id,
+                invoice_id=invoice.id,
+                updates={"add_line_items": [{"quantity": "1"}]},
+                actor_user_id=user.id,
+            )
+
+    def test_add_rejects_unknown_field(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+        with pytest.raises(InvoiceUpdateError, match="non-editable line fields"):
+            update_invoice(
+                organization_id=org.id,
+                invoice_id=invoice.id,
+                updates={
+                    "add_line_items": [
+                        {"description": "Hi", "id": "spoofed"},
+                    ],
+                },
+                actor_user_id=user.id,
+            )
+
+    def test_remove_line_item_persists(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+        # Existing numbers [1, 2]; remove 1.
+        result = update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={"remove_line_items": [1]},
+            actor_user_id=user.id,
+        )
+        assert result.removed_line_numbers == [1]
+        remaining = sorted(invoice.line_items.values_list("line_number", flat=True))
+        # Numbers are NOT recompacted — line 2 stays line 2.
+        assert remaining == [2]
+
+    def test_remove_unknown_line_number_rejected(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+        with pytest.raises(InvoiceUpdateError, match="line_items\\[99\\]"):
+            update_invoice(
+                organization_id=org.id,
+                invoice_id=invoice.id,
+                updates={"remove_line_items": [99]},
+                actor_user_id=user.id,
+            )
+
+    def test_remove_payload_must_be_array(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+        with pytest.raises(InvoiceUpdateError, match="must be an array"):
+            update_invoice(
+                organization_id=org.id,
+                invoice_id=invoice.id,
+                updates={"remove_line_items": "1"},
+                actor_user_id=user.id,
+            )
+        with pytest.raises(InvoiceUpdateError, match="integers"):
+            update_invoice(
+                organization_id=org.id,
+                invoice_id=invoice.id,
+                updates={"remove_line_items": ["one"]},
+                actor_user_id=user.id,
+            )
+
+    def test_combined_add_remove_edit_in_one_call(self, org_user) -> None:
+        """Server processes removes -> adds -> updates in that order."""
+        org, user = org_user
+        invoice = _make_invoice(org)
+        # Existing [1, 2]. Remove 1, add a new one (becomes 3 — adds use
+        # max-existing-after-removes), edit line 2's description.
+        result = update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={
+                "remove_line_items": [1],
+                "add_line_items": [{"description": "Brand new line"}],
+                "line_items": [
+                    {"line_number": 2, "description": "Edited line 2"},
+                ],
+            },
+            actor_user_id=user.id,
+        )
+        assert result.removed_line_numbers == [1]
+        # After removing 1, max existing is 2; new line becomes 3 (NOT 2).
+        assert result.added_line_numbers == [3]
+        assert any(
+            entry["line_number"] == 2 and "description" in entry["changed_fields"]
+            for entry in result.changed_line_items
+        )
+        # Resulting line set: 2 (edited), 3 (added).
+        nums = sorted(invoice.line_items.values_list("line_number", flat=True))
+        assert nums == [2, 3]
+
+    def test_audit_payload_lists_added_and_removed_numbers(self, org_user) -> None:
+        org, user = org_user
+        invoice = _make_invoice(org)
+        update_invoice(
+            organization_id=org.id,
+            invoice_id=invoice.id,
+            updates={
+                "remove_line_items": [1],
+                "add_line_items": [{"description": "x"}],
+            },
+            actor_user_id=user.id,
+        )
+        event = AuditEvent.objects.filter(action_type="invoice.updated").last()
+        assert event.payload["added_line_numbers"] == [3]
+        assert event.payload["removed_line_numbers"] == [1]
+        # No description text in the payload — line content stays out of audit.
+        assert "Brand" not in str(event.payload)
+
     def test_no_changes_returns_empty_summary(self, org_user) -> None:
         """Submitting current values for both header + lines is a no-op."""
         org, user = org_user
