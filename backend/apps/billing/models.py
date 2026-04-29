@@ -79,6 +79,14 @@ class Plan(TimestampedModel):
     # source of truth is the seed migration + future plan-edit UI.
     features = models.JSONField(default=dict, blank=True)
 
+    # Stripe Price IDs — created in the Stripe dashboard or via
+    # API once per plan version. Two IDs per plan (monthly + annual)
+    # because Stripe represents recurring intervals as separate
+    # Price objects under the same Product. Leave blank for plans
+    # that aren't sold via Stripe (e.g. enterprise contracts).
+    stripe_price_id_monthly = models.CharField(max_length=128, blank=True)
+    stripe_price_id_annual = models.CharField(max_length=128, blank=True)
+
     is_active = models.BooleanField(default=True)
     is_public = models.BooleanField(
         default=True,
