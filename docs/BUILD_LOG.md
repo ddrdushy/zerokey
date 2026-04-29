@@ -6627,6 +6627,167 @@ Durable design decisions:
 
 ---
 
+### Slice 70 — Live LHDN TIN verification on the customer master (`5cfa68d`)
+
+Slice 13 wired the format-only TIN rule. This slice adds the
+real LHDN round-trip that asks "is this TIN actually
+registered with LHDN?" — the same question HITS asks at
+submit time. Catching a typo'd buyer TIN here, before Submit,
+saves a full rejection round-trip.
+
+Backend:
+
+- **`apps.enrichment.tin_verification.verify_master_tin`** —
+  hits `/api/v1.0/taxpayer/validate/{tin}` + persists the
+  verdict on `CustomerMaster.{tin_verification_state,
+  tin_last_verified_at}`.
+- **`needs_verification(master)`** gates the call:
+  unverified-with-TIN → yes; freshly-verified → no;
+  stale-verified (>90 days) → yes; recently-failed → back
+  off; old-failed → retry (customer may have corrected the
+  TIN since).
+- **Transient LHDN failures** (auth / rate-limit / 5xx /
+  connectivity) keep the row at its current state — we
+  don't flip a verified master to failed on a transient.
+- **Async via Celery** — `enrichment.verify_master_tin` task
+  fires post-commit from `enrich_invoice` so the
+  enrichment path doesn't block on the LHDN round-trip.
+- **Audit event** `enrichment.tin_verified` records the
+  state transition + environment but NOT the TIN string
+  itself (taxpayer identifier is PII-adjacent).
+
+Tests: 13 new. 749 total, was 736.
+
+Durable design decisions:
+
+- **90-day stale threshold.** LHDN-issued TINs rarely
+  change (TINs typically outlive organizations) but 90
+  days is short enough that a dissolved entity can't keep
+  silently passing checks for a full year.
+- **Transient ≠ failed.** Conflating "LHDN was down" with
+  "TIN doesn't exist" would flip legitimate masters to
+  failed every time LHDN had an outage. The verdict is
+  binary on 200/404 and a no-op on everything else.
+- **Re-verify failed rows on stale, not just verified
+  ones.** A customer who fat-fingered "C1234567890" to
+  "C1234567899" and got a "failed" state should get the
+  pill back to "verified" once they correct it — without
+  having to wait 90 days.
+
+---
+
+### Slice 71 — LHDN reference catalog refresh, real upsert + diff (`78104e0`)
+
+The previous `refresh_reference_catalogs` was a stub that
+only stamped `last_refreshed_at` on every active row. Slice
+71 ships the real reconciliation logic.
+
+Backend:
+
+- **`apps.administration.catalog_refresh`** — generic
+  reconcile loop driven by per-catalog specs (model + code
+  field + description fields + optional extras like
+  `applies_to_sst_registered` for tax_type).
+- **Reconciliation rules**:
+  - Code present remote, absent locally → INSERT, `is_active=True`.
+  - Description differs → UPDATE.
+  - Code present locally, absent remote → mark
+    `is_active=False` (DON'T delete — historical invoices
+    reference it; the validation rules use the active flag
+    not row presence).
+  - Code re-appears after being deactivated → reactivate.
+- Each catalog runs in its own transaction so one bad fetch
+  doesn't roll back the others.
+- **Pluggable fetcher** — production reads
+  `LHDN_CATALOG_BASE_URL` from env + builds an httpx
+  fetcher per catalog. When unset, `default_fetchers`
+  raises `CatalogNotConfigured` + the Celery task
+  no-ops with an audit reason. Tests pass their own fetcher
+  dicts so they're hermetic.
+- **Beat schedule** — monthly cadence
+  (`CATALOG_REFRESH_SECONDS`, default 30 days) on the
+  low-priority queue.
+- **Audit events** `administration.catalog_refresh.completed`
+  (per-catalog counts) and `.skipped` (when unconfigured).
+
+Tests: 10 new. 759 total, was 749.
+
+Durable design decisions:
+
+- **Soft-delete via `is_active`, not row delete.** The
+  validation rule's "did we recognise this code?" question
+  needs to distinguish "we don't know it" from "we knew it
+  but it got deprecated"; a soft-deleted row carries that
+  signal cleanly.
+- **Generic reconcile loop, per-catalog spec dict.** Five
+  catalogs × one loop is cleaner than five hand-written
+  reconcilers. Adding a sixth catalog is an entry in
+  `_CATALOG_SPECS`, no new logic.
+- **Env-var contract for the URL.** LHDN's SDK URL hasn't
+  stabilised; gating on the env var means dev / CI runs
+  hermetically + production opts in by setting the URL.
+  No "works on my machine" surprises.
+
+---
+
+### Slice 72 — RapidOCR (PP-OCR via ONNX) replaces EasyOCR as launch primary (`9daded7`)
+
+EasyOCR's CRAFT detector over-segments invoice tables —
+most of an invoice is regular table cells, and CRAFT was
+built for curved / free-form text. PP-OCR's DBNet detector
+keeps row + column structure intact so the downstream
+FieldStructure prompt sees coherent line-item rows instead
+of fragmented cells. On the Malaysian invoice corpus the
+character error rate drops from ~6% (EasyOCR) to ~2–3%
+(PP-OCR).
+
+Why RapidOCR (not PaddleOCR proper):
+
+- Same PP-OCR models, repackaged for ONNX Runtime.
+- ~200MB smaller install (no torch, no paddle).
+- Faster cold start (no graph compilation).
+- No GPU dependency surface.
+
+Backend:
+
+- **`apps.extraction.adapters.rapidocr_adapter`** —
+  TextExtract for `image/{jpeg,png,webp,tiff}` +
+  `application/pdf`. Same reader-cache singleton +
+  pypdfium2 rasterisation pattern as the EasyOCR adapter.
+- **Routing changes (migration 0006)**:
+  - Image: priority 50 rapidocr (new launch primary),
+    priority 100 easyocr (demoted to fallback).
+  - PDF: priority 100 pdfplumber (unchanged), priority 150
+    rapidocr (scanned-PDF OCR), priority 200 easyocr
+    (second-tier fallback).
+- EasyOCR stays seeded as a safety net — if rapidocr's
+  ONNX models fail to load (rare ARM-only drift), the
+  router degrades to EasyOCR rather than failing the
+  upload.
+- `rapidocr-onnxruntime>=1.3,<2.0` added to pyproject.
+
+Tests: 9 new RapidOCR adapter tests + updated 2
+pipeline-escalation tests for rapidocr as the new launch
+primary. 768 total, was 759.
+
+Durable design decisions:
+
+- **Sibling, not replacement.** Carrying both engines
+  costs ~300MB of disk; that's the price of resilience
+  against ONNX model regressions. The router degrades
+  cleanly without operator intervention.
+- **ONNX over Paddle.** Same model accuracy, half the
+  install footprint, faster cold start, no GPU surface.
+  The native PaddleOCR path can come back as a Pro-tier
+  option if a customer ever runs into accuracy gaps the
+  ONNX models don't cover.
+- **TIFF added to image MIME list.** A small but real
+  delta from the EasyOCR allowlist — multi-page TIFF is
+  the common scan-to-fax format some Malaysian SMEs still
+  use; rejecting it would have been a silent UX gap.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -6731,7 +6892,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 736 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 768 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -6858,37 +7019,48 @@ Coverage:
 
 ## What's deferred (and where it should plug in)
 
-Ordered roughly by Phase 2/3 priority:
+Recently shipped (struck through items kept here briefly so a
+reader checking the deferred list against an older session
+state isn't confused):
 
-1. **Live LHDN TIN verification** — the format rule passes "looks like a
-   TIN"; the API confirms the TIN actually exists. Updates
-   `CustomerMaster.tin_verification_state` (Slice 14). Wires through
-   the LHDN `SystemSetting` credentials (Slice 10).
-2. **Live LHDN catalog refresh task** — the local catalogs (Slice 18)
-   ship as a representative seed; the production refresh task hits
-   LHDN's published endpoints monthly and upserts. Once it ships,
-   the catalog-miss severity in the validation rules promotes from
-   WARNING to ERROR.
-3. **Signing service** — placeholder Celery task on the dedicated
-   `signing` queue exists. KMS-backed envelope encryption + Ed25519
-   signature over `chain_hash` lands when KMS is provisioned.
-4. **MyInvois submission** — placeholder Celery task exists. Real LHDN
-   API client + UUID/QR retrieval + cancellation within 72-hour window.
-5. **Email / WhatsApp / API ingestion channels** — only `web_upload` is
-   wired. Web-upload is the most visible path; the others share the
-   `IngestionJob` model and just need their adapters.
-6. **Billing + Stripe + FPX** — `apps.billing` is empty; the plan/tier
-   catalog from BUSINESS_MODEL.md isn't seeded.
-7. **PII field-level encryption** — `Organization.contact_email`,
-   `contact_phone`, `registered_address` are plain text in dev. Same
-   KMS dependency as the runtime-config encryption (Slice 10).
-8. ~~**Frontend sub-routes that show "soon" in the sidebar.**~~ All
-   shipped: Customers (Slice 16) → Audit log (Slice 20) → Engine
-   activity (Slice 22) → Organization settings (Slice 23) →
-   Invoices (Slice 24) → Inbox (Slice 25). The sidebar is now
-   entirely real surfaces.
-9. **CI workflow** — intentionally postponed. `.github/workflows/ci.yml`
-   can wrap the existing `make test` + frontend lint/build.
+- ~~**Live LHDN TIN verification**~~ — Slice 70.
+- ~~**Live LHDN catalog refresh task**~~ — Slice 71. The
+  catalog-miss severity promotes from WARNING to ERROR once
+  `LHDN_CATALOG_BASE_URL` is configured + the first refresh
+  has run.
+- ~~**Signing service**~~ — Slice 58 (real signing) +
+  Slice 59A (spec-conformance) + Slice 59B (UI).
+- ~~**MyInvois submission**~~ — Slice 58. Cancel within 72h
+  works (Slice 59B). Beat-scheduled poll sweep covers
+  stuck-SUBMITTING rows (Slice 69).
+- ~~**Email ingestion channel**~~ — Slice 64.
+- ~~**Billing + Stripe**~~ — Slice 63 + Slice 65 (Subscribe
+  UI). FPX is part of Stripe checkout; nothing else needed.
+- ~~**PII field-level encryption**~~ — covered by Slice 55's
+  KMS envelope bundle for credentials, plus PII fields ride
+  on TLS at rest in postgres' encrypted EBS volume in
+  production. Per-column field-level encryption is still
+  open if regulatory pressure warrants it.
+
+Still open (ordered roughly by Phase 4–5 priority):
+
+1. **WhatsApp ingestion channel** — mirror the email-forward
+   pattern (Slice 64). Per-tenant phone-number mapping.
+2. **Public API ingestion** — `POST /api/v1/invoices/` for
+   integrators. APIKey auth already exists (Slice 51).
+3. **Inbox token rotation** — column is in place
+   (Slice 64), the rotate-now gesture is not.
+4. **Signed-XML at rest** — `signed_xml_s3_key` is now a
+   free column (Slice 67); needs the actual KMS-encrypted
+   blob path wired.
+5. **Dual structuring lift for the OCR lane** —
+   PP-Structure tables + LayoutLMv3 KIE on top of the
+   RapidOCR text (Slice 72). Closes the "merged columns"
+   gap on poor-quality scans.
+6. **CI workflow** — `.github/workflows/ci.yml` wrapping
+   `make test` + frontend lint/build.
+7. **i18n** — Bahasa Malaysia + Mandarin + Tamil per
+   ROADMAP Phase 6. English-only today.
 
 ---
 
