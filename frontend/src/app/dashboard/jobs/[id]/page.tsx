@@ -54,11 +54,15 @@ type EditableField =
   | "supplier_tin"
   | "supplier_address"
   | "supplier_msic_code"
+  | "supplier_id_type"
+  | "supplier_id_value"
   | "buyer_legal_name"
   | "buyer_tin"
   | "buyer_address"
   | "buyer_msic_code"
   | "buyer_country_code"
+  | "buyer_id_type"
+  | "buyer_id_value"
   | "subtotal"
   | "total_tax"
   | "grand_total";
@@ -608,6 +612,8 @@ function PartyBlock({
   const nameField = `${prefix}_legal_name` as EditableField;
   const tinField = `${prefix}_tin` as EditableField;
   const addressField = `${prefix}_address` as EditableField;
+  const idTypeField = `${prefix}_id_type` as EditableField;
+  const idValueField = `${prefix}_id_value` as EditableField;
   return (
     <div className="flex flex-col gap-3">
       <FieldRow
@@ -629,6 +635,13 @@ function PartyBlock({
         onChange={onChange}
         mono
       />
+      <PartyIdTypeRow
+        idTypeField={idTypeField}
+        idValueField={idValueField}
+        valueOf={valueOf}
+        isDirty={isDirty}
+        onChange={onChange}
+      />
       <FieldRow
         label={`${label} address`}
         name={addressField}
@@ -638,6 +651,80 @@ function PartyBlock({
         dirty={isDirty(addressField)}
         onChange={onChange}
       />
+    </div>
+  );
+}
+
+// LHDN secondary-ID picker — NRIC | PASSPORT | BRN | ARMY.
+// Two side-by-side fields: a select for the scheme + a free-
+// text value. Choose the right scheme based on entity type:
+//   - Malaysian individual → NRIC (12-digit MyKad)
+//   - Foreigner            → PASSPORT (alphanumeric)
+//   - Military             → ARMY
+//   - Corporate / business → BRN (registration number)
+// Wrong scheme = LHDN ERR206 even when value is correct.
+function PartyIdTypeRow({
+  idTypeField,
+  idValueField,
+  valueOf,
+  isDirty,
+  onChange,
+}: {
+  idTypeField: EditableField;
+  idValueField: EditableField;
+  valueOf: (name: EditableField) => string;
+  isDirty: (name: EditableField) => boolean;
+  onChange: (name: string, value: string) => void;
+}) {
+  const idType = valueOf(idTypeField);
+  const dirty = isDirty(idTypeField) || isDirty(idValueField);
+  return (
+    <div
+      className={[
+        "rounded-xl border px-4 py-3",
+        dirty ? "border-amber-200 ring-1 ring-amber-200" : "border-slate-100",
+      ].join(" ")}
+    >
+      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">
+        ID type / number
+      </div>
+      <div className="mt-1.5 grid grid-cols-[110px_1fr] gap-2">
+        <select
+          aria-label="ID type"
+          value={idType}
+          onChange={(e) => onChange(idTypeField as string, e.target.value)}
+          className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+        >
+          <option value="">—</option>
+          <option value="NRIC">NRIC</option>
+          <option value="PASSPORT">PASSPORT</option>
+          <option value="BRN">BRN</option>
+          <option value="ARMY">ARMY</option>
+        </select>
+        <input
+          type="text"
+          aria-label="ID number"
+          value={valueOf(idValueField)}
+          onChange={(e) => onChange(idValueField as string, e.target.value)}
+          placeholder={
+            idType === "NRIC"
+              ? "12-digit MyKad number"
+              : idType === "PASSPORT"
+                ? "Passport number"
+                : idType === "BRN"
+                  ? "Business Registration Number"
+                  : idType === "ARMY"
+                    ? "Military ID"
+                    : "Pick a type first"
+          }
+          disabled={!idType}
+          className="rounded-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-[11px] text-ink focus:outline-none focus:ring-1 focus:ring-ink disabled:bg-slate-50 disabled:text-slate-400"
+        />
+      </div>
+      <p className="mt-1 text-[10px] text-slate-400">
+        LHDN matches TIN + this ID against HITS. Wrong scheme returns
+        ERR206 even when the number is right.
+      </p>
     </div>
   );
 }
@@ -722,11 +809,15 @@ const FIELD_PATHS = new Set([
   "supplier_tin",
   "supplier_address",
   "supplier_msic_code",
+  "supplier_id_type",
+  "supplier_id_value",
   "buyer_legal_name",
   "buyer_tin",
   "buyer_address",
   "buyer_msic_code",
   "buyer_country_code",
+  "buyer_id_type",
+  "buyer_id_value",
   "totals.subtotal",
   "totals.total_tax",
   "totals.grand_total",

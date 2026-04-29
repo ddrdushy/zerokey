@@ -256,9 +256,14 @@ export type Invoice = {
   supplier_legal_name: string;
   supplier_tin: string;
   supplier_address: string;
+  /** LHDN secondary-ID scheme (Slice 60+). */
+  supplier_id_type: "" | "NRIC" | "PASSPORT" | "BRN" | "ARMY";
+  supplier_id_value: string;
   buyer_legal_name: string;
   buyer_tin: string;
   buyer_address: string;
+  buyer_id_type: "" | "NRIC" | "PASSPORT" | "BRN" | "ARMY";
+  buyer_id_value: string;
   subtotal: string | null;
   total_tax: string | null;
   grand_total: string | null;

@@ -452,6 +452,12 @@ EDITABLE_HEADER_FIELDS: frozenset[str] = frozenset(
         "supplier_address",
         "supplier_phone",
         "supplier_sst_number",
+        # LHDN secondary-ID scheme (NRIC / PASSPORT / BRN / ARMY).
+        # The combination of TIN + correctly-typed secondary-ID
+        # is what LHDN's HITS validator matches against. Wrong
+        # scheme = ERR206 even when the value is correct.
+        "supplier_id_type",
+        "supplier_id_value",
         "buyer_legal_name",
         "buyer_tin",
         "buyer_registration_number",
@@ -460,12 +466,21 @@ EDITABLE_HEADER_FIELDS: frozenset[str] = frozenset(
         "buyer_phone",
         "buyer_sst_number",
         "buyer_country_code",
+        "buyer_id_type",
+        "buyer_id_value",
         "subtotal",
         "total_tax",
         "grand_total",
         "discount_amount",
         "discount_reason_code",
     }
+)
+
+# Allowlist for the secondary-ID scheme. Anything outside trips
+# 400 in the update path so a typo on the FE side surfaces
+# immediately instead of failing silently at LHDN submit time.
+PARTY_ID_TYPES: frozenset[str] = frozenset(
+    {"", "NRIC", "PASSPORT", "BRN", "ARMY"}
 )
 
 # Buyer fields whose corrections propagate to the matched CustomerMaster.
@@ -590,6 +605,19 @@ def update_invoice(
             f"Editable: {sorted(EDITABLE_HEADER_FIELDS)} (plus line_items, "
             f"add_line_items, remove_line_items)"
         )
+
+    # Validate ID-type scheme is one of the four LHDN schemes (or
+    # blank). Catches typos before they make it to LHDN as ERR206.
+    for id_type_field in ("supplier_id_type", "buyer_id_type"):
+        if id_type_field in updates:
+            value = (updates[id_type_field] or "").strip().upper()
+            if value not in PARTY_ID_TYPES:
+                raise InvoiceUpdateError(
+                    f"{id_type_field} must be one of "
+                    f"{sorted(PARTY_ID_TYPES - {''})} or blank; "
+                    f"got {value!r}."
+                )
+            updates[id_type_field] = value
 
     invoice = Invoice.objects.get(organization_id=organization_id, id=invoice_id)
 
