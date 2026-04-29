@@ -438,3 +438,102 @@ class TestCertificateEndpoint:
         assert body["uploaded"] is True
         assert body["kind"] == "uploaded"
         assert body["subject_common_name"] == "Acme Sdn Bhd"
+
+    def _build_pfx_bundle(self, *, password: str, common_name: str = "PFX Co") -> bytes:
+        """Build a real PFX/P12 bundle for the test cases below."""
+        import base64
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives.serialization import pkcs12
+        from cryptography.x509.oid import NameOID
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subject = x509.Name(
+            [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
+        )
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(subject)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(timezone.now())
+            .not_valid_after(timezone.now() + timedelta(days=365))
+            .sign(key, hashes.SHA256())
+        )
+        encryption = (
+            serialization.BestAvailableEncryption(password.encode("utf-8"))
+            if password
+            else serialization.NoEncryption()
+        )
+        return pkcs12.serialize_key_and_certificates(
+            name=common_name.encode("utf-8"),
+            key=key,
+            cert=cert,
+            cas=None,
+            encryption_algorithm=encryption,
+        )
+
+    def test_post_pfx_happy_path(self, authed) -> None:
+        import base64
+
+        client, _, _ = authed
+        pfx_bytes = self._build_pfx_bundle(password="test-pass", common_name="PFX Co")
+        response = client.post(
+            "/api/v1/identity/organization/certificate/",
+            data=json.dumps(
+                {
+                    "pfx_b64": base64.b64encode(pfx_bytes).decode("ascii"),
+                    "pfx_password": "test-pass",
+                }
+            ),
+            content_type="application/json",
+        )
+        assert response.status_code == 200, response.json()
+        body = response.json()
+        assert body["uploaded"] is True
+        assert body["kind"] == "uploaded"
+        assert body["subject_common_name"] == "PFX Co"
+
+    def test_post_pfx_wrong_password(self, authed) -> None:
+        import base64
+
+        client, _, _ = authed
+        pfx_bytes = self._build_pfx_bundle(password="real-pass")
+        response = client.post(
+            "/api/v1/identity/organization/certificate/",
+            data=json.dumps(
+                {
+                    "pfx_b64": base64.b64encode(pfx_bytes).decode("ascii"),
+                    "pfx_password": "wrong-pass",
+                }
+            ),
+            content_type="application/json",
+        )
+        assert response.status_code == 400
+        # Error message hints at the most likely cause without
+        # falsely confirming the file is corrupt.
+        assert "password" in response.json()["detail"].lower()
+
+    def test_post_pfx_bad_base64(self, authed) -> None:
+        client, _, _ = authed
+        response = client.post(
+            "/api/v1/identity/organization/certificate/",
+            data=json.dumps(
+                {"pfx_b64": "not!base64!", "pfx_password": "x"}
+            ),
+            content_type="application/json",
+        )
+        assert response.status_code == 400
+        assert "base64" in response.json()["detail"].lower()
+
+    def test_post_neither_pfx_nor_pem(self, authed) -> None:
+        client, _, _ = authed
+        response = client.post(
+            "/api/v1/identity/organization/certificate/",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        assert response.status_code == 400

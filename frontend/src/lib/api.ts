@@ -981,6 +981,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ cert_pem, private_key_pem }),
     }),
+  // Slice 68 — PFX/P12 cert upload (single bundle from CA).
+  uploadCertificatePfx: (pfx_b64: string, pfx_password: string) =>
+    request<{
+      uploaded: boolean;
+      kind: string;
+      subject_common_name: string;
+      serial_hex: string;
+      expires_at: string;
+    }>("/identity/organization/certificate/", {
+      method: "POST",
+      body: JSON.stringify({ pfx_b64, pfx_password }),
+    }),
   // Slice 59B — LHDN lifecycle gestures on an invoice
   submitInvoiceToLhdn: (invoiceId: string) =>
     request<{

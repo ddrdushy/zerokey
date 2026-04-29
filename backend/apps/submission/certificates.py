@@ -341,3 +341,62 @@ def upload_certificate(
         "serial_hex": serial_hex,
         "expires_at": cert.not_valid_after_utc.date().isoformat(),
     }
+
+
+def pfx_to_pem(*, pfx_bytes: bytes, password: str) -> tuple[str, str]:
+    """Convert a PFX/P12 bundle to (cert_pem, private_key_pem).
+
+    Some Malaysian CAs (notably Pos Digicert) deliver the
+    issued certificate as a single ``.pfx`` / ``.p12`` file —
+    a PKCS#12 bundle that wraps the cert + private key behind
+    a passphrase. Customers shouldn't have to learn the
+    ``openssl pkcs12 -in cert.pfx -nodes ...`` incantation
+    just to onboard.
+
+    The bundle's password is used only to unlock the bundle —
+    we don't persist it. The unwrapped private key is then
+    stored encrypted via Slice 55's at-rest encryption,
+    matched-pair-checked + persisted via the standard
+    ``upload_certificate`` path (caller composes).
+
+    Raises ``CertificateError`` on any parse / wrong-password /
+    missing-cert / missing-key failure with a message that
+    points at the most likely cause (so the customer doesn't
+    keep trying the same wrong password against a corrupt file).
+    """
+    from cryptography.hazmat.primitives.serialization import pkcs12
+
+    try:
+        key, cert, _additional = pkcs12.load_key_and_certificates(
+            pfx_bytes, password.encode("utf-8") if password else None
+        )
+    except ValueError as exc:
+        # cryptography raises ValueError for both wrong-password
+        # and corrupt-file. We can't reliably distinguish from
+        # the message, so we surface a helpful both-cases hint.
+        raise CertificateError(
+            "Couldn't open the PFX/P12 file — the password may be "
+            "wrong or the file may be corrupted. "
+            f"({type(exc).__name__})"
+        ) from exc
+
+    if cert is None:
+        raise CertificateError(
+            "PFX/P12 bundle did not contain a certificate."
+        )
+    if key is None:
+        raise CertificateError(
+            "PFX/P12 bundle did not contain a private key."
+        )
+    if not isinstance(key, rsa.RSAPrivateKey):
+        raise CertificateError(
+            "Only RSA private keys are supported (LHDN requirement)."
+        )
+
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
+    key_pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    return cert_pem, key_pem

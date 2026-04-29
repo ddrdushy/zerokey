@@ -496,8 +496,12 @@ function CertificateCard({
   };
   const [state, setState] = useState<CertState | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [uploadFormat, setUploadFormat] = useState<"pem" | "pfx">("pem");
   const [certPem, setCertPem] = useState("");
   const [keyPem, setKeyPem] = useState("");
+  const [pfxFileName, setPfxFileName] = useState<string>("");
+  const [pfxBase64, setPfxBase64] = useState<string>("");
+  const [pfxPassword, setPfxPassword] = useState<string>("");
   const [uploading, setUploading] = useState(false);
 
   async function refresh() {
@@ -506,6 +510,14 @@ function CertificateCard({
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to load cert.");
     }
+  }
+
+  function resetForm() {
+    setCertPem("");
+    setKeyPem("");
+    setPfxFileName("");
+    setPfxBase64("");
+    setPfxPassword("");
   }
 
   useEffect(() => {
@@ -517,15 +529,39 @@ function CertificateCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function onPfxFileChange(file: File | null) {
+    if (!file) return;
+    setPfxFileName(file.name);
+    const buf = await file.arrayBuffer();
+    // Convert ArrayBuffer → base64 in the browser. window.btoa
+    // handles binary strings; we slice to avoid stack-overflow on
+    // large bundles (PFX bundles are typically <10 KB so this is
+    // belt-and-braces).
+    let binary = "";
+    const bytes = new Uint8Array(buf);
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(
+        null,
+        Array.from(bytes.subarray(i, i + chunk)),
+      );
+    }
+    setPfxBase64(window.btoa(binary));
+  }
+
   async function onUpload() {
-    if (!certPem.trim() || !keyPem.trim()) return;
     setUploading(true);
     onError(null);
     try {
-      await api.uploadCertificate(certPem.trim(), keyPem.trim());
+      if (uploadFormat === "pfx") {
+        if (!pfxBase64) return;
+        await api.uploadCertificatePfx(pfxBase64, pfxPassword);
+      } else {
+        if (!certPem.trim() || !keyPem.trim()) return;
+        await api.uploadCertificate(certPem.trim(), keyPem.trim());
+      }
       setShowForm(false);
-      setCertPem("");
-      setKeyPem("");
+      resetForm();
       refresh();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Upload failed.");
@@ -628,38 +664,112 @@ function CertificateCard({
 
         {showForm && (
           <div className="mt-4 flex flex-col gap-3 rounded-md border border-slate-200 bg-slate-50/40 p-4">
-            <p className="text-2xs text-slate-500">
-              Paste the PEM-encoded certificate and the matching
-              RSA private key. The private key is encrypted at rest;
-              the platform only decrypts it in memory during a
-              signing operation.
-            </p>
-            <label className="flex flex-col gap-1 text-2xs font-medium">
-              Certificate (PEM)
-              <textarea
-                value={certPem}
-                onChange={(e) => setCertPem(e.target.value)}
-                rows={5}
-                placeholder={"-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----"}
-                className="rounded-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-[11px] focus:outline-none focus:ring-1 focus:ring-ink"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-2xs font-medium">
-              Private key (PEM)
-              <textarea
-                value={keyPem}
-                onChange={(e) => setKeyPem(e.target.value)}
-                rows={5}
-                placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
-                className="rounded-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-[11px] focus:outline-none focus:ring-1 focus:ring-ink"
-              />
-            </label>
+            <div role="tablist" className="flex gap-1 self-start rounded-md bg-slate-100 p-0.5">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={uploadFormat === "pem"}
+                onClick={() => setUploadFormat("pem")}
+                className={cn(
+                  "rounded px-3 py-1 text-2xs font-medium transition",
+                  uploadFormat === "pem"
+                    ? "bg-white text-ink shadow-sm"
+                    : "text-slate-500 hover:text-slate-700",
+                )}
+              >
+                PEM (cert + key)
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={uploadFormat === "pfx"}
+                onClick={() => setUploadFormat("pfx")}
+                className={cn(
+                  "rounded px-3 py-1 text-2xs font-medium transition",
+                  uploadFormat === "pfx"
+                    ? "bg-white text-ink shadow-sm"
+                    : "text-slate-500 hover:text-slate-700",
+                )}
+              >
+                PFX / P12 (single file)
+              </button>
+            </div>
+
+            {uploadFormat === "pem" ? (
+              <>
+                <p className="text-2xs text-slate-500">
+                  Paste the PEM-encoded certificate and the matching
+                  RSA private key. The private key is encrypted at
+                  rest; the platform only decrypts it in memory during
+                  a signing operation.
+                </p>
+                <label className="flex flex-col gap-1 text-2xs font-medium">
+                  Certificate (PEM)
+                  <textarea
+                    value={certPem}
+                    onChange={(e) => setCertPem(e.target.value)}
+                    rows={5}
+                    placeholder={"-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----"}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-[11px] focus:outline-none focus:ring-1 focus:ring-ink"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-2xs font-medium">
+                  Private key (PEM)
+                  <textarea
+                    value={keyPem}
+                    onChange={(e) => setKeyPem(e.target.value)}
+                    rows={5}
+                    placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-[11px] focus:outline-none focus:ring-1 focus:ring-ink"
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <p className="text-2xs text-slate-500">
+                  Some Malaysian CAs (e.g. Pos Digicert) deliver
+                  certificates as a single password-protected
+                  ``.pfx`` / ``.p12`` file. Upload the file and
+                  enter the password from your CA.
+                </p>
+                <label className="flex flex-col gap-1 text-2xs font-medium">
+                  PFX / P12 file
+                  <input
+                    type="file"
+                    accept=".pfx,.p12,application/x-pkcs12"
+                    onChange={(e) =>
+                      onPfxFileChange(e.target.files?.[0] ?? null)
+                    }
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-2xs file:mr-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-0.5 file:text-2xs file:text-ink"
+                  />
+                  {pfxFileName && (
+                    <span className="text-[10px] text-slate-500">
+                      Selected: {pfxFileName}
+                    </span>
+                  )}
+                </label>
+                <label className="flex flex-col gap-1 text-2xs font-medium">
+                  Bundle password
+                  <input
+                    type="password"
+                    value={pfxPassword}
+                    onChange={(e) => setPfxPassword(e.target.value)}
+                    placeholder="From your CA's email / portal"
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-2xs focus:outline-none focus:ring-1 focus:ring-ink"
+                  />
+                </label>
+              </>
+            )}
+
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
                 onClick={onUpload}
                 disabled={
-                  uploading || !certPem.trim() || !keyPem.trim()
+                  uploading ||
+                  (uploadFormat === "pem"
+                    ? !certPem.trim() || !keyPem.trim()
+                    : !pfxBase64)
                 }
               >
                 {uploading ? "Uploading…" : "Upload certificate"}
@@ -669,8 +779,7 @@ function CertificateCard({
                 variant="ghost"
                 onClick={() => {
                   setShowForm(false);
-                  setCertPem("");
-                  setKeyPem("");
+                  resetForm();
                   onError(null);
                 }}
                 disabled={uploading}

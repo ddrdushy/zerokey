@@ -757,14 +757,23 @@ def organization_certificate(request: Request) -> Response:
     write-only via this surface (matches the API key + webhook
     secret contract).
 
-    POST → upload a PEM cert + private key. Body shape:
+    POST → upload a cert. Two body shapes accepted:
+
+      PEM (cert + key separately):
         {
           "cert_pem": "-----BEGIN CERTIFICATE-----\n...",
           "private_key_pem": "-----BEGIN PRIVATE KEY-----\n..."
         }
+
+      PFX / P12 (CA-delivered single bundle):
+        {
+          "pfx_b64": "<base64-encoded .pfx bytes>",
+          "pfx_password": "<bundle passphrase>"
+        }
+
     Owner / admin only. Validates matched RSA pair before
     persisting; returns 400 with an explanatory message on
-    parsing or pairing failure.
+    parsing, password, or pairing failure.
 
     Note: a self-signed dev cert is auto-minted on the first
     LHDN sign attempt (Slice 58 ``ensure_certificate``) so the
@@ -815,18 +824,49 @@ def organization_certificate(request: Request) -> Response:
             status=status.HTTP_403_FORBIDDEN,
         )
     body = request.data or {}
+    pfx_b64 = str(body.get("pfx_b64") or "").strip()
     cert_pem = str(body.get("cert_pem") or "").strip()
     private_key_pem = str(body.get("private_key_pem") or "").strip()
-    if not cert_pem or not private_key_pem:
-        return Response(
-            {"detail": "Both cert_pem and private_key_pem are required."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
 
     from apps.submission.certificates import (
         CertificateError,
+        pfx_to_pem,
         upload_certificate,
     )
+
+    if pfx_b64:
+        # PFX / P12 path — unwrap to PEM, then funnel into the
+        # standard upload path so the matched-pair check + audit
+        # + persistence are identical.
+        import base64
+        import binascii
+
+        try:
+            pfx_bytes = base64.b64decode(pfx_b64, validate=True)
+        except (binascii.Error, ValueError):
+            return Response(
+                {"detail": "pfx_b64 is not valid base64."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        password = str(body.get("pfx_password") or "")
+        try:
+            cert_pem, private_key_pem = pfx_to_pem(
+                pfx_bytes=pfx_bytes, password=password
+            )
+        except CertificateError as exc:
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+            )
+    elif not cert_pem or not private_key_pem:
+        return Response(
+            {
+                "detail": (
+                    "Provide either pfx_b64 (+ pfx_password) or both "
+                    "cert_pem and private_key_pem."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     try:
         result = upload_certificate(
