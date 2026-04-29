@@ -312,21 +312,22 @@ def poll_invoice_lhdn_view(request: Request, invoice_id: str) -> Response:
     )
 
 
-# --- Slice 61: Issue Credit Note ----------------------------------------
+# --- Slice 61 + 62: Issue amendments (CN / DN / RN) ---------------------
 
 
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def issue_credit_note_view(request: Request, invoice_id: str) -> Response:
-    """Issue a Credit Note against a LHDN-validated invoice.
+def _issue_amendment_view(
+    request: Request,
+    invoice_id: str,
+    *,
+    create_fn,
+    noun: str,
+    response_id_key: str,
+) -> Response:
+    """Shared body for the three amendment endpoints.
 
-    Body: ``{"reason": "...", "line_adjustments": [...]?}``.
-    ``line_adjustments`` is optional — if omitted, the CN credits
-    every line at the source amount (full credit). If supplied,
-    it's a list of ``{"line_number", "quantity", "amount"}`` dicts.
-
-    On success, returns the new Credit Note's Invoice payload so
-    the FE can navigate to the new review page.
+    ``create_fn`` is one of amendments.create_{credit,debit,refund}_note.
+    Same auth + body shape across all three; only the create call
+    + the response key differ.
     """
     organization_id = _active_org(request)
     if not organization_id:
@@ -336,7 +337,7 @@ def issue_credit_note_view(request: Request, invoice_id: str) -> Response:
         )
     if not _can_user_submit_lhdn(request.user, organization_id):
         return Response(
-            {"detail": "You don't have permission to issue credit notes."},
+            {"detail": f"You don't have permission to issue {noun}s."},
             status=status.HTTP_403_FORBIDDEN,
         )
     try:
@@ -361,7 +362,7 @@ def issue_credit_note_view(request: Request, invoice_id: str) -> Response:
     from . import amendments
 
     try:
-        cn = amendments.create_credit_note(
+        new_inv = create_fn(
             source_invoice_id=source.id,
             reason=reason,
             actor_user_id=request.user.id,
@@ -371,12 +372,73 @@ def issue_credit_note_view(request: Request, invoice_id: str) -> Response:
         return Response(
             {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
         )
+
+    number_key = response_id_key.replace("_id", "_number")
     return Response(
         {
-            "credit_note_id": str(cn.id),
-            "credit_note_number": cn.invoice_number,
-            "ingestion_job_id": str(cn.ingestion_job_id),
-            "invoice": InvoiceSerializer(cn).data,
+            response_id_key: str(new_inv.id),
+            number_key: new_inv.invoice_number,
+            "ingestion_job_id": str(new_inv.ingestion_job_id),
+            "invoice": InvoiceSerializer(new_inv).data,
         },
         status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def issue_credit_note_view(request: Request, invoice_id: str) -> Response:
+    """Issue a Credit Note (LHDN type 02) against a Validated invoice.
+
+    Body: ``{"reason": "...", "line_adjustments": [...]?}``.
+    ``line_adjustments`` is optional — if omitted, credits every
+    line at the source amount.
+    """
+    from . import amendments
+
+    return _issue_amendment_view(
+        request,
+        invoice_id,
+        create_fn=amendments.create_credit_note,
+        noun="credit note",
+        response_id_key="credit_note_id",
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def issue_debit_note_view(request: Request, invoice_id: str) -> Response:
+    """Issue a Debit Note (LHDN type 03) against a Validated invoice.
+
+    Used to add charges to a previously-issued invoice (late fees,
+    additional services billed after issue).
+    """
+    from . import amendments
+
+    return _issue_amendment_view(
+        request,
+        invoice_id,
+        create_fn=amendments.create_debit_note,
+        noun="debit note",
+        response_id_key="debit_note_id",
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def issue_refund_note_view(request: Request, invoice_id: str) -> Response:
+    """Issue a Refund Note (LHDN type 04) against a Validated invoice.
+
+    Confirms that a refund payment has been made to the buyer.
+    Distinct from CN: a CN reduces an outstanding receivable; an
+    RN documents an actual money refund.
+    """
+    from . import amendments
+
+    return _issue_amendment_view(
+        request,
+        invoice_id,
+        create_fn=amendments.create_refund_note,
+        noun="refund note",
+        response_id_key="refund_note_id",
     )

@@ -50,34 +50,70 @@ class AmendmentError(Exception):
     """Raised when an amendment can't be created."""
 
 
+# Per-amendment-type config. Each entry maps the public function
+# to its target invoice_type, number suffix, audit action_type,
+# and noun for error messages.
+_AMENDMENT_CONFIGS: dict[str, dict[str, str]] = {
+    "credit_note": {
+        "type": "credit_note",
+        "suffix": "CN",
+        "noun": "credit note",
+        "audit": "submission.amendment.credit_note_created",
+        "lines_field": "lines_credited",
+    },
+    "debit_note": {
+        "type": "debit_note",
+        "suffix": "DN",
+        "noun": "debit note",
+        "audit": "submission.amendment.debit_note_created",
+        "lines_field": "lines_charged",
+    },
+    "refund_note": {
+        "type": "refund_note",
+        "suffix": "RN",
+        "noun": "refund note",
+        "audit": "submission.amendment.refund_note_created",
+        "lines_field": "lines_refunded",
+    },
+}
+
+
 @transaction.atomic
-def create_credit_note(
+def _create_amendment(
     *,
+    config: dict[str, str],
     source_invoice_id: uuid.UUID | str,
     reason: str,
     actor_user_id: uuid.UUID | str,
     line_adjustments: list[dict[str, Any]] | None = None,
 ) -> Invoice:
-    """Create a Credit Note that references a LHDN-validated invoice.
+    """Shared core for creating any LHDN amendment document.
+
+    ``config`` selects the invoice type, number suffix, audit
+    action, and noun used in error messages. The structural shape
+    is identical across CN / DN / RN — only the type code +
+    legal interpretation differ. LHDN's BillingReference contract
+    is the same for all three.
 
     ``source_invoice_id`` must point at an Invoice in
     ``Status.VALIDATED`` with a populated ``lhdn_uuid``. LHDN
-    refuses CN/DN/RN against unsubmitted documents — the
-    BillingReference must point at a real LHDN-issued UUID.
+    refuses amendments against unsubmitted documents — the
+    BillingReference needs a real LHDN-issued UUID to link to.
 
-    ``line_adjustments`` is optional. When omitted, the new CN
-    copies every line item from the source 1:1 (full credit).
-    When provided, it's a list of ``{"line_number", "quantity",
-    "amount"}`` dicts — one per line being credited. Lines not
-    listed are excluded from the CN.
+    ``line_adjustments`` is optional. When omitted, the amendment
+    copies every line item from the source 1:1 (full
+    credit/charge/refund). When provided, it's a list of
+    ``{"line_number", "quantity", "amount"}`` dicts — one per
+    line being amended. Lines not listed are excluded.
 
     ``reason`` is required + lands in ``adjustment_reason``,
     which the JSON generator emits as the document-level
     ``Note``. Surfaced in MyInvois's portal so the buyer can
-    see why the credit was issued.
+    see why the amendment was issued.
     """
+    noun = config["noun"]
     if not reason or not reason.strip():
-        raise AmendmentError("A reason is required for a credit note.")
+        raise AmendmentError(f"A reason is required for a {noun}.")
 
     source = Invoice.objects.filter(id=source_invoice_id).first()
     if source is None:
@@ -87,41 +123,42 @@ def create_credit_note(
 
     if source.status != Invoice.Status.VALIDATED:
         raise AmendmentError(
-            f"Source invoice must be Validated by LHDN before a credit "
-            f"note can be issued (current status: {source.status})."
+            f"Source invoice must be Validated by LHDN before a {noun} "
+            f"can be issued (current status: {source.status})."
         )
     if not source.lhdn_uuid:
         raise AmendmentError(
-            "Source invoice has no LHDN UUID — credit notes require "
-            "the original invoice's LHDN-issued UUID."
+            f"Source invoice has no LHDN UUID — {noun}s require "
+            f"the original invoice's LHDN-issued UUID."
         )
 
-    # Mint a stable invoice number for the CN. Pattern: <orig>-CN-<seq>.
-    # The seq lets multiple CNs against the same invoice coexist.
+    # Number pattern <orig>-CN-NN / -DN-NN / -RN-NN. Sequence is
+    # scoped per (source UUID, target type) so multiple amendments
+    # of the same kind coexist with their own counter.
+    target_type = config["type"]
     sibling_count = Invoice.objects.filter(
         organization_id=source.organization_id,
         original_invoice_uuid=source.lhdn_uuid,
-        invoice_type=Invoice.InvoiceType.CREDIT_NOTE,
+        invoice_type=target_type,
     ).count()
-    cn_number = f"{source.invoice_number}-CN-{sibling_count + 1:02d}"
+    new_number = (
+        f"{source.invoice_number}-{config['suffix']}-{sibling_count + 1:02d}"
+    )
 
     # Build the new Invoice row by copying the source's header
-    # fields. The new row gets a fresh UUID + a fresh
-    # ingestion_job_id (CNs aren't tied to an ingested PDF).
-    cn = Invoice.objects.create(
+    # fields. Fresh UUID + ingestion_job_id (amendments aren't
+    # tied to an ingested PDF).
+    new_inv = Invoice.objects.create(
         organization_id=source.organization_id,
         ingestion_job_id=uuid.uuid4(),
-        invoice_number=cn_number,
+        invoice_number=new_number,
         issue_date=timezone.now().date(),
         due_date=source.due_date,
         currency_code=source.currency_code,
-        # Amendment-specific.
-        invoice_type=Invoice.InvoiceType.CREDIT_NOTE,
+        invoice_type=target_type,
         original_invoice_uuid=source.lhdn_uuid,
         original_invoice_internal_id=source.invoice_number,
         adjustment_reason=reason.strip(),
-        # Parties — same as source. Buyer-issued credit notes flip
-        # supplier/buyer; that's a future Slice 62 (self-billed CN).
         supplier_legal_name=source.supplier_legal_name,
         supplier_tin=source.supplier_tin,
         supplier_registration_number=source.supplier_registration_number,
@@ -141,15 +178,13 @@ def create_credit_note(
         buyer_country_code=source.buyer_country_code,
         buyer_id_type=source.buyer_id_type,
         buyer_id_value=source.buyer_id_value,
-        # Totals — start as a copy of the source. The user can then
-        # adjust them in the review screen if it's a partial credit.
         subtotal=source.subtotal,
         total_tax=source.total_tax,
         grand_total=source.grand_total,
         status=Invoice.Status.READY_FOR_REVIEW,
     )
 
-    # Copy line items (full credit by default) OR apply adjustments.
+    # Copy / adjust line items.
     source_lines = list(source.line_items.all().order_by("line_number"))
     adjustments_by_line = (
         {a["line_number"]: a for a in (line_adjustments or [])}
@@ -168,23 +203,18 @@ def create_credit_note(
             else None
         )
         if adjustments_by_line is not None and adj is None:
-            # Line not in the adjustments list → not credited. Skip.
             continue
 
-        # Default values: copy the source line as-is.
         qty = line.quantity or Decimal("1")
         unit_price = line.unit_price_excl_tax or Decimal("0")
         line_subtotal = line.line_subtotal_excl_tax or Decimal("0")
         line_tax = line.tax_amount or Decimal("0")
         line_total = line.line_total_incl_tax or Decimal("0")
 
-        # Apply caller-supplied adjustments if any.
         if adj is not None:
             if "quantity" in adj and adj["quantity"] is not None:
                 qty = Decimal(str(adj["quantity"]))
             if "amount" in adj and adj["amount"] is not None:
-                # Caller specifies the credit amount directly. Recompute
-                # tax + total proportionally to the source's tax rate.
                 line_subtotal = Decimal(str(adj["amount"]))
                 rate = (line.tax_rate or Decimal("0")) / Decimal("100")
                 line_tax = (line_subtotal * rate).quantize(Decimal("0.01"))
@@ -192,7 +222,7 @@ def create_credit_note(
 
         LineItem.objects.create(
             organization_id=source.organization_id,
-            invoice=cn,
+            invoice=new_inv,
             line_number=line.line_number,
             description=line.description,
             unit_of_measurement=line.unit_of_measurement,
@@ -209,30 +239,97 @@ def create_credit_note(
         new_tax += line_tax
         new_total += line_total
 
-    # If adjustments were supplied, recompute totals to match the
-    # actual line sum (so the review-page total matches the lines).
     if adjustments_by_line is not None:
-        cn.subtotal = new_subtotal
-        cn.total_tax = new_tax
-        cn.grand_total = new_total
-        cn.save(update_fields=["subtotal", "total_tax", "grand_total", "updated_at"])
+        new_inv.subtotal = new_subtotal
+        new_inv.total_tax = new_tax
+        new_inv.grand_total = new_total
+        new_inv.save(
+            update_fields=[
+                "subtotal", "total_tax", "grand_total", "updated_at"
+            ]
+        )
 
     record_event(
-        action_type="submission.amendment.credit_note_created",
+        action_type=config["audit"],
         actor_type=AuditEvent.ActorType.USER,
         actor_id=str(actor_user_id),
         organization_id=str(source.organization_id),
         affected_entity_type="Invoice",
-        affected_entity_id=str(cn.id),
+        affected_entity_id=str(new_inv.id),
         payload={
             "source_invoice_id": str(source.id),
             "source_lhdn_uuid": source.lhdn_uuid,
-            "credit_note_number": cn.invoice_number,
+            f"{noun.replace(' ', '_')}_number": new_inv.invoice_number,
             "reason": reason.strip()[:255],
-            "lines_credited": len(source_lines)
+            config["lines_field"]: len(source_lines)
             if adjustments_by_line is None
             else len([a for a in (line_adjustments or [])]),
         },
     )
 
-    return cn
+    return new_inv
+
+
+def create_credit_note(
+    *,
+    source_invoice_id: uuid.UUID | str,
+    reason: str,
+    actor_user_id: uuid.UUID | str,
+    line_adjustments: list[dict[str, Any]] | None = None,
+) -> Invoice:
+    """Issue a Credit Note (LHDN type 02) against a Validated invoice.
+
+    Reduces the value of the original. Common case: customer
+    returned goods, refund issued, post-issue discount applied.
+    """
+    return _create_amendment(
+        config=_AMENDMENT_CONFIGS["credit_note"],
+        source_invoice_id=source_invoice_id,
+        reason=reason,
+        actor_user_id=actor_user_id,
+        line_adjustments=line_adjustments,
+    )
+
+
+def create_debit_note(
+    *,
+    source_invoice_id: uuid.UUID | str,
+    reason: str,
+    actor_user_id: uuid.UUID | str,
+    line_adjustments: list[dict[str, Any]] | None = None,
+) -> Invoice:
+    """Issue a Debit Note (LHDN type 03) against a Validated invoice.
+
+    Adds value to the original. Common case: late-payment penalty,
+    additional charge billed after issue, freight surcharge.
+    """
+    return _create_amendment(
+        config=_AMENDMENT_CONFIGS["debit_note"],
+        source_invoice_id=source_invoice_id,
+        reason=reason,
+        actor_user_id=actor_user_id,
+        line_adjustments=line_adjustments,
+    )
+
+
+def create_refund_note(
+    *,
+    source_invoice_id: uuid.UUID | str,
+    reason: str,
+    actor_user_id: uuid.UUID | str,
+    line_adjustments: list[dict[str, Any]] | None = None,
+) -> Invoice:
+    """Issue a Refund Note (LHDN type 04) against a Validated invoice.
+
+    Confirms that a refund payment has been issued back to the
+    buyer. Distinct from Credit Note: a CN reduces an outstanding
+    receivable, an RN documents an actual money refund. Some
+    workflows pair them (CN first, RN after the payment goes out).
+    """
+    return _create_amendment(
+        config=_AMENDMENT_CONFIGS["refund_note"],
+        source_invoice_id=source_invoice_id,
+        reason=reason,
+        actor_user_id=actor_user_id,
+        line_adjustments=line_adjustments,
+    )

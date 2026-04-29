@@ -25,7 +25,9 @@ import {
   CheckCircle2,
   ExternalLink,
   FileMinus,
+  FilePlus,
   Loader2,
+  RotateCcw,
   Send,
   Shield,
   ShieldOff,
@@ -35,6 +37,44 @@ import {
 import { api, ApiError, type Invoice } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+type AmendmentType = "credit_note" | "debit_note" | "refund_note";
+
+const AMENDMENT_COPY: Record<
+  AmendmentType,
+  {
+    title: string;
+    blurb: string;
+    placeholder: string;
+    confirmLabel: string;
+    busyLabel: string;
+  }
+> = {
+  credit_note: {
+    title: "Issue a credit note?",
+    blurb:
+      "A credit note credits or refunds value from the original invoice. Common case: customer returned goods, refund issued, or post-issue discount applied.",
+    placeholder: "e.g. customer returned 2 units, refund due",
+    confirmLabel: "Create credit note",
+    busyLabel: "Creating credit note…",
+  },
+  debit_note: {
+    title: "Issue a debit note?",
+    blurb:
+      "A debit note adds value to the original invoice. Common case: late-payment penalty, additional charge billed after issue, freight surcharge.",
+    placeholder: "e.g. 5% late-payment penalty for invoice paid 14 days late",
+    confirmLabel: "Create debit note",
+    busyLabel: "Creating debit note…",
+  },
+  refund_note: {
+    title: "Issue a refund note?",
+    blurb:
+      "A refund note documents that a refund payment has actually been made to the buyer. Distinct from a credit note (which adjusts the receivable).",
+    placeholder: "e.g. RM 30 refunded via FPX on 29-Apr-2026",
+    confirmLabel: "Create refund note",
+    busyLabel: "Creating refund note…",
+  },
+};
 
 type Phase =
   | "preflight"      // not yet submitted
@@ -80,13 +120,13 @@ export function LhdnPanel({
   const router = useRouter();
   const phase = useMemo(() => phaseFor(invoice), [invoice]);
   const [busy, setBusy] = useState<
-    "submit" | "cancel" | "poll" | "credit_note" | null
+    "submit" | "cancel" | "poll" | "amendment" | null
   >(null);
   const [error, setError] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
-  const [creditOpen, setCreditOpen] = useState(false);
-  const [creditReason, setCreditReason] = useState("");
+  const [amendmentType, setAmendmentType] = useState<AmendmentType | null>(null);
+  const [amendmentReason, setAmendmentReason] = useState("");
 
   // Auto-poll while in flight. Light cadence (5s) so the user
   // sees updates without the FE pummeling the worker. The server-
@@ -159,14 +199,19 @@ export function LhdnPanel({
     }
   }
 
-  async function onConfirmCreditNote() {
-    if (!creditReason.trim()) return;
-    setBusy("credit_note");
+  async function onConfirmAmendment() {
+    if (!amendmentType || !amendmentReason.trim()) return;
+    setBusy("amendment");
     setError(null);
+    const issuer = {
+      credit_note: api.issueCreditNote,
+      debit_note: api.issueDebitNote,
+      refund_note: api.issueRefundNote,
+    }[amendmentType];
     try {
-      const result = await api.issueCreditNote(invoice.id, creditReason.trim());
-      // Navigate to the new CN's review page so the user can edit
-      // amounts before submitting it to LHDN.
+      const result = await issuer(invoice.id, amendmentReason.trim());
+      // Navigate to the new amendment's review page so the user can
+      // tweak amounts before submitting it to LHDN.
       router.push(`/dashboard/jobs/${result.ingestion_job_id}`);
     } catch (err) {
       setError(
@@ -174,7 +219,7 @@ export function LhdnPanel({
           ? err.message
           : err instanceof Error
             ? err.message
-            : "Failed to create credit note.",
+            : `Failed to create ${amendmentType.replace("_", " ")}.`,
       );
     } finally {
       setBusy(null);
@@ -222,7 +267,7 @@ export function LhdnPanel({
             invoice={invoice}
             canCancel={withinCancelWindow(invoice)}
             onCancelOpen={() => setCancelOpen(true)}
-            onCreditNoteOpen={() => setCreditOpen(true)}
+            onAmendmentOpen={(t) => setAmendmentType(t)}
             onPoll={onPoll}
             polling={busy === "poll"}
           />
@@ -261,17 +306,18 @@ export function LhdnPanel({
           busy={busy === "cancel"}
         />
       )}
-      {creditOpen && (
-        <CreditNoteDialog
-          reason={creditReason}
-          onChangeReason={setCreditReason}
-          onConfirm={onConfirmCreditNote}
+      {amendmentType !== null && (
+        <AmendmentDialog
+          type={amendmentType}
+          reason={amendmentReason}
+          onChangeReason={setAmendmentReason}
+          onConfirm={onConfirmAmendment}
           onClose={() => {
-            setCreditOpen(false);
-            setCreditReason("");
+            setAmendmentType(null);
+            setAmendmentReason("");
             setError(null);
           }}
-          busy={busy === "credit_note"}
+          busy={busy === "amendment"}
         />
       )}
     </section>
@@ -374,14 +420,14 @@ function ValidatedView({
   invoice,
   canCancel,
   onCancelOpen,
-  onCreditNoteOpen,
+  onAmendmentOpen,
   onPoll,
   polling,
 }: {
   invoice: Invoice;
   canCancel: boolean;
   onCancelOpen: () => void;
-  onCreditNoteOpen: () => void;
+  onAmendmentOpen: (t: AmendmentType) => void;
   onPoll: () => void;
   polling: boolean;
 }) {
@@ -415,15 +461,35 @@ function ValidatedView({
             Cancel invoice
           </Button>
         ) : null}
-        <Button size="sm" variant="ghost" onClick={onCreditNoteOpen}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => onAmendmentOpen("credit_note")}
+        >
           <FileMinus className="mr-1.5 h-3.5 w-3.5" />
-          Issue credit note
+          Credit note
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => onAmendmentOpen("debit_note")}
+        >
+          <FilePlus className="mr-1.5 h-3.5 w-3.5" />
+          Debit note
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => onAmendmentOpen("refund_note")}
+        >
+          <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+          Refund note
         </Button>
       </div>
       {!canCancel && (
         <p className="text-2xs text-slate-400">
           72-hour cancel window has passed. To adjust this invoice,
-          issue a credit note instead.
+          issue a credit/debit/refund note instead.
         </p>
       )}
     </>
@@ -580,19 +646,22 @@ function CancelDialog({
   );
 }
 
-function CreditNoteDialog({
+function AmendmentDialog({
+  type,
   reason,
   onChangeReason,
   onConfirm,
   onClose,
   busy,
 }: {
+  type: AmendmentType;
   reason: string;
   onChangeReason: (v: string) => void;
   onConfirm: () => void;
   onClose: () => void;
   busy: boolean;
 }) {
+  const copy = AMENDMENT_COPY[type];
   return (
     <div
       role="dialog"
@@ -604,11 +673,10 @@ function CreditNoteDialog({
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-md rounded-xl border border-slate-100 bg-white p-5 shadow-xl"
       >
-        <h3 className="text-base font-semibold">Issue a credit note?</h3>
+        <h3 className="text-base font-semibold">{copy.title}</h3>
         <p className="mt-2 text-2xs text-slate-500">
-          A credit note credits/refunds the original invoice. It&apos;s
-          a new LHDN document that links back to this one. After
-          creation, you&apos;ll land on the credit note&apos;s review
+          {copy.blurb} It&apos;s a new LHDN document that links back to
+          this one. After creation, you&apos;ll land on its review
           page where you can adjust amounts before submitting it to
           LHDN.
         </p>
@@ -618,7 +686,7 @@ function CreditNoteDialog({
             value={reason}
             onChange={(e) => onChangeReason(e.target.value)}
             rows={3}
-            placeholder="e.g. customer returned 2 units, refund due"
+            placeholder={copy.placeholder}
             className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-2xs focus:outline-none focus:ring-1 focus:ring-ink"
           />
         </label>
@@ -636,7 +704,7 @@ function CreditNoteDialog({
             onClick={onConfirm}
             disabled={busy || !reason.trim()}
           >
-            {busy ? "Creating…" : "Create credit note"}
+            {busy ? copy.busyLabel : copy.confirmLabel}
           </Button>
         </div>
       </div>

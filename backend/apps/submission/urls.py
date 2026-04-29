@@ -24,10 +24,20 @@ urlpatterns = [
         views.poll_invoice_lhdn_view,
         name="poll-lhdn",
     ),
-    # Slice 61 — issue an amendment (Credit Note today)
+    # Slice 61 + 62 — issue amendments (CN / DN / RN)
     path(
         "<uuid:invoice_id>/issue-credit-note/",
         views.issue_credit_note_view,
         name="issue-credit-note",
+    ),
+    path(
+        "<uuid:invoice_id>/issue-debit-note/",
+        views.issue_debit_note_view,
+        name="issue-debit-note",
+    ),
+    path(
+        "<uuid:invoice_id>/issue-refund-note/",
+        views.issue_refund_note_view,
+        name="issue-refund-note",
     ),
 ]

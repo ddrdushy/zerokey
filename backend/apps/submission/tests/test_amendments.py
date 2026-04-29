@@ -249,3 +249,132 @@ class TestCreditNoteEndpoint:
         assert body["credit_note_number"] == "INV-001-CN-01"
         assert body["invoice"]["invoice_type"] == "credit_note"
         assert body["invoice"]["original_invoice_uuid"] == "LHDN-UUID-XYZ-001"
+
+
+# =============================================================================
+# Debit Note (Slice 62)
+# =============================================================================
+
+
+@pytest.mark.django_db
+class TestCreateDebitNote:
+    def test_emits_correct_type(self, org_user, validated_invoice) -> None:
+        _, user = org_user
+        dn = amendments.create_debit_note(
+            source_invoice_id=validated_invoice.id,
+            reason="Late payment penalty",
+            actor_user_id=user.id,
+        )
+        assert dn.invoice_type == Invoice.InvoiceType.DEBIT_NOTE
+        assert dn.original_invoice_uuid == "LHDN-UUID-XYZ-001"
+        assert dn.adjustment_reason == "Late payment penalty"
+        assert dn.invoice_number == "INV-001-DN-01"
+
+    def test_audit_action_is_debit_note(
+        self, org_user, validated_invoice
+    ) -> None:
+        from apps.audit.models import AuditEvent
+
+        _, user = org_user
+        dn = amendments.create_debit_note(
+            source_invoice_id=validated_invoice.id,
+            reason="extra charge",
+            actor_user_id=user.id,
+        )
+        event = (
+            AuditEvent.objects.filter(
+                action_type="submission.amendment.debit_note_created"
+            )
+            .order_by("-sequence")
+            .first()
+        )
+        assert event is not None
+        assert event.affected_entity_id == str(dn.id)
+        assert event.payload["lines_charged"] == 1
+
+
+# =============================================================================
+# Refund Note (Slice 62)
+# =============================================================================
+
+
+@pytest.mark.django_db
+class TestCreateRefundNote:
+    def test_emits_correct_type(self, org_user, validated_invoice) -> None:
+        _, user = org_user
+        rn = amendments.create_refund_note(
+            source_invoice_id=validated_invoice.id,
+            reason="Refund issued via bank transfer",
+            actor_user_id=user.id,
+        )
+        assert rn.invoice_type == Invoice.InvoiceType.REFUND_NOTE
+        assert rn.original_invoice_uuid == "LHDN-UUID-XYZ-001"
+        assert rn.invoice_number == "INV-001-RN-01"
+
+    def test_dn_and_rn_have_independent_sequences(
+        self, org_user, validated_invoice
+    ) -> None:
+        """Multiple amendment types against the same invoice should
+        each have their own counter (CN-01, DN-01, RN-01)."""
+        _, user = org_user
+        cn = amendments.create_credit_note(
+            source_invoice_id=validated_invoice.id,
+            reason="r1",
+            actor_user_id=user.id,
+        )
+        dn = amendments.create_debit_note(
+            source_invoice_id=validated_invoice.id,
+            reason="r2",
+            actor_user_id=user.id,
+        )
+        rn = amendments.create_refund_note(
+            source_invoice_id=validated_invoice.id,
+            reason="r3",
+            actor_user_id=user.id,
+        )
+        assert cn.invoice_number == "INV-001-CN-01"
+        assert dn.invoice_number == "INV-001-DN-01"
+        assert rn.invoice_number == "INV-001-RN-01"
+
+
+@pytest.mark.django_db
+class TestAmendmentEndpoints:
+    def _client(self, org_user) -> tuple:
+        from django.test import Client
+
+        org, user = org_user
+        client = Client()
+        client.force_login(user)
+        session = client.session
+        session["organization_id"] = str(org.id)
+        session.save()
+        return client, org, user
+
+    def test_debit_note_endpoint(self, org_user, validated_invoice) -> None:
+        import json
+
+        client, _, _ = self._client(org_user)
+        response = client.post(
+            f"/api/v1/invoices/{validated_invoice.id}/issue-debit-note/",
+            data=json.dumps({"reason": "late fee 5%"}),
+            content_type="application/json",
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert "debit_note_id" in body
+        assert body["debit_note_number"] == "INV-001-DN-01"
+        assert body["invoice"]["invoice_type"] == "debit_note"
+
+    def test_refund_note_endpoint(self, org_user, validated_invoice) -> None:
+        import json
+
+        client, _, _ = self._client(org_user)
+        response = client.post(
+            f"/api/v1/invoices/{validated_invoice.id}/issue-refund-note/",
+            data=json.dumps({"reason": "Refund via bank transfer"}),
+            content_type="application/json",
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert "refund_note_id" in body
+        assert body["refund_note_number"] == "INV-001-RN-01"

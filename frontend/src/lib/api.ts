@@ -1018,6 +1018,27 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
+  // Slice 62 — DN + RN follow the same shape, different LHDN type code.
+  issueDebitNote: (invoiceId: string, reason: string) =>
+    request<{
+      debit_note_id: string;
+      debit_note_number: string;
+      ingestion_job_id: string;
+      invoice: Invoice;
+    }>(`/invoices/${invoiceId}/issue-debit-note/`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  issueRefundNote: (invoiceId: string, reason: string) =>
+    request<{
+      refund_note_id: string;
+      refund_note_number: string;
+      ingestion_job_id: string;
+      invoice: Invoice;
+    }>(`/invoices/${invoiceId}/issue-refund-note/`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
   listApiKeys: () =>
     request<{ results: APIKeyRow[] }>(
       "/identity/organization/api-keys/",
