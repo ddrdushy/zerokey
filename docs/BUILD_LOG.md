@@ -7254,6 +7254,118 @@ What's deferred to Slice 77b:
 
 ---
 
+### Slice 77b — Connectors UI: catalog, CSV upload wizard, sync preview, conflict queue (frontend)
+
+Customer-visible end of the connectors initiative. After this
+slice, an owner / admin can drive the entire two-phase sync
+through the browser without touching curl.
+
+Frontend:
+
+- **`/dashboard/connectors`** — landing page. Lists active
+  `IntegrationConfig` rows with last-sync status pill +
+  "Upload CSV" / "Disconnect" actions per row. Catalog grid
+  shows all 7 connector types; CSV is the only "Connect"-
+  enabled card today, the rest render as
+  "Coming soon" badges so customers see the roadmap without
+  being able to mis-configure.
+- **`/dashboard/connectors/<configId>/upload`** — three-step
+  CSV upload wizard:
+  1. Pick file (browser-side `text()` parses headers + first 3
+     data rows for preview).
+  2. Pick target (customers / items) — re-runs the auto-
+     suggest mapping when toggled.
+  3. Map columns. Heuristic auto-suggest based on header
+     substring matching (e.g. "company name" → `legal_name`,
+     "tax id" → `tin`); operator reviews + adjusts via
+     per-row dropdowns. Each ZeroKey field can only be
+     claimed once — selecting one disables the option in
+     other rows.
+  4. Submit → multipart POST to `/sync-csv/` → redirect to
+     proposal preview.
+- **`/dashboard/connectors/proposals/<id>`** — preview
+  screen. Four tabs:
+  - **Will add**: net-new master rows the sync proposes to
+    create.
+  - **Will update**: existing rows + per-field
+    current/proposed diff with strike-through current value.
+  - **Conflicts**: count + link into the conflict queue +
+    inline list of (field, existing, incoming) tuples.
+  - **Skipped**: locked + authority-verified fields that
+    weren't auto-applied, with explanatory copy.
+  Apply button visible while `status=proposed` (owner /
+  admin only via backend gate). Undo button on
+  `status=applied` proposals within 14 days; prompts for a
+  reason that lands on the audit chain.
+- **`/dashboard/connectors/conflicts`** — conflict queue
+  page. Open / Resolved / All tab strip with counts. Each
+  conflict card shows the existing + incoming values
+  side-by-side with provenance pills (re-using the Slice 73
+  `ProvenancePill` component) + four action buttons:
+  Keep existing / Take incoming / Keep both as aliases
+  (only on `legal_name` / `canonical_name`) / Enter custom
+  value. Custom value flow opens a `window.prompt` for the
+  type-it-in step.
+- **Sidebar nav** — "Connectors" item added to the
+  Workflow group between Customers and the Compliance
+  divider.
+- **API client** — full coverage in `lib/api.ts`:
+  `listConnectorConfigs` / `createConnectorConfig` /
+  `deleteConnectorConfig` / `uploadCsvSync` / `getProposal`
+  / `applyProposal` / `revertProposal` / `listConflicts` /
+  `resolveConflict` / `lockMasterField` /
+  `unlockMasterField`. Plus all the relevant types.
+
+Durable design decisions:
+
+- **Three-step wizard on a single page, not a multi-page
+  flow.** The user can go back and forth (re-pick file,
+  re-toggle target) without losing state. A multi-page
+  wizard would need server-side state for resume; the
+  single-page form keeps everything in component state.
+- **Heuristic mapping suggestions, not auto-mapping.** The
+  suggestion is a starting point; the operator confirms. Auto-
+  applying without confirmation would silently corrupt
+  master data on a header-naming convention we didn't
+  anticipate.
+- **Browser-side header preview.** Lets the wizard show the
+  mapping UI without a server round-trip; the same parsed
+  bytes get re-parsed server-side via Python's `csv` module
+  for the actual sync. Two parses, deliberate — the browser
+  preview is for UX only.
+- **One ZeroKey field per source column.** Selecting a field
+  in one row disables it in others. Prevents the
+  silent-overwrite case where two source columns claim the
+  same target field.
+- **Conflict cards use the same `ProvenancePill` from Slice
+  73.** Customers see the same source labelling on the
+  customer detail page + the conflict queue, so the visual
+  vocabulary is consistent.
+- **Apply doesn't block on conflicts.** Auto-resolvable
+  changes still land; conflicts wait their turn in the
+  queue. The preview's "Conflicts" tab makes this explicit
+  with copy: "auto-resolvable changes still land. Resolve
+  these in the conflict queue when you&apos;re ready."
+- **Custom-value flow uses `window.prompt`.** Cheap, native,
+  one-line. A bespoke modal would be 50 lines of UI for a
+  lower-frequency action.
+
+What's still deferred:
+
+- **Items master page provenance pills + lock icons.** Same
+  pattern as the Slice 73 customer-detail wiring, just
+  applied to the Items page. Small follow-up.
+- **Bulk conflict resolution** ("take all incoming for source
+  X"). v1 is one-at-a-time per the spec; bulk lands when we
+  see real conflict patterns.
+- **Inbox conflict-queue lane integration.** The dedicated
+  page is the v1 surface; the spec calls out the Inbox lane
+  but the cross-page navigation works without it for now.
+- **Concrete connectors beyond CSV** (AutoCount, Xero, etc.)
+  — Slice 78+, one per slice.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for

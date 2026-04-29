@@ -9,6 +9,7 @@ import {
   Inbox,
   LayoutDashboard,
   LogOut,
+  Plug,
   Search,
   Settings,
   ShieldCheck,
@@ -48,6 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Inbox", href: "/dashboard/inbox", icon: Inbox },
       { label: "Invoices", href: "/dashboard/invoices", icon: FileText },
       { label: "Customers", href: "/dashboard/customers", icon: Users },
+      { label: "Connectors", href: "/dashboard/connectors", icon: Plug },
     ],
   },
   {

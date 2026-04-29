@@ -700,6 +700,157 @@ async function uploadFile(file: File): Promise<IngestionJob> {
   return body as IngestionJob;
 }
 
+// --- Connectors (Slice 73-77) ----------------------------------------------
+
+export type ConnectorType =
+  | "csv"
+  | "sql_accounting"
+  | "autocount"
+  | "xero"
+  | "quickbooks"
+  | "shopify"
+  | "woocommerce";
+
+export type SyncStatus =
+  | "never"
+  | "proposed"
+  | "applied"
+  | "failed"
+  | "reverted";
+
+export type IntegrationConfigRow = {
+  id: string;
+  connector_type: ConnectorType;
+  sync_cadence: "manual" | "hourly" | "daily";
+  auto_apply: boolean;
+  last_sync_at: string | null;
+  last_sync_status: SyncStatus;
+  last_sync_error: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ProposalStatus =
+  | "proposed"
+  | "applied"
+  | "reverted"
+  | "expired"
+  | "cancelled";
+
+export type SyncDiffEntry = {
+  source_record_id?: string;
+  fields?: Record<string, string>;
+  existing_id?: string;
+  changes?: Record<
+    string,
+    { current: string; proposed: string; verdict: string }
+  >;
+  field?: string;
+  existing_value?: string;
+  existing_provenance?: FieldProvenanceEntry;
+  incoming_value?: string;
+  incoming_provenance?: FieldProvenanceEntry;
+};
+
+export type SyncDiff = {
+  customers: {
+    would_add: SyncDiffEntry[];
+    would_update: SyncDiffEntry[];
+    conflicts: SyncDiffEntry[];
+    skipped_locked: SyncDiffEntry[];
+    skipped_verified: SyncDiffEntry[];
+  };
+  items: {
+    would_add: SyncDiffEntry[];
+    would_update: SyncDiffEntry[];
+    conflicts: SyncDiffEntry[];
+    skipped_locked: SyncDiffEntry[];
+    skipped_verified: SyncDiffEntry[];
+  };
+};
+
+export type SyncProposalRow = {
+  id: string;
+  integration_config: string;
+  actor_user_id: string;
+  status: ProposalStatus;
+  proposed_at: string;
+  expires_at: string;
+  applied_at: string | null;
+  applied_by_user_id: string | null;
+  reverted_at: string | null;
+  reverted_by_user_id: string | null;
+  diff: SyncDiff;
+};
+
+export type ConflictResolution =
+  | "keep_existing"
+  | "take_incoming"
+  | "keep_both_as_aliases"
+  | "enter_custom_value";
+
+export type MasterFieldConflictRow = {
+  id: string;
+  sync_proposal: string;
+  master_type: "customer" | "item";
+  master_id: string;
+  field_name: string;
+  existing_value: string;
+  existing_provenance: FieldProvenanceEntry;
+  incoming_value: string;
+  incoming_provenance: FieldProvenanceEntry;
+  resolution: ConflictResolution | "";
+  custom_value: string;
+  resolved_at: string | null;
+  resolved_by_user_id: string | null;
+  is_open: boolean;
+};
+
+export type MasterFieldLockRow = {
+  id: string;
+  master_type: "customer" | "item";
+  master_id: string;
+  field_name: string;
+  locked_by_user_id: string;
+  locked_at: string;
+  reason: string;
+};
+
+async function uploadCsvSync(args: {
+  configId: string;
+  file: File;
+  columnMapping: Record<string, string>;
+  target?: "customers" | "items";
+}): Promise<SyncProposalRow> {
+  const headers = new Headers();
+  const csrf = readCookie("csrftoken");
+  if (csrf) headers.set("X-CSRFToken", csrf);
+
+  const form = new FormData();
+  form.append("file", args.file);
+  form.append("column_mapping", JSON.stringify(args.columnMapping));
+  form.append("target", args.target ?? "customers");
+
+  const response = await fetch(
+    `${API_BASE}/connectors/configs/${args.configId}/sync-csv/`,
+    {
+      method: "POST",
+      headers,
+      credentials: "include",
+      body: form,
+    },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      (body && typeof body === "object" && "detail" in body && String(body.detail)) ||
+      `HTTP ${response.status}`;
+    throw new ApiError(message, response.status, body);
+  }
+  return body as SyncProposalRow;
+}
+
 export const api = {
   ensureCsrf: () => request<{ detail: string }>("/identity/csrf/"),
   me: () => request<Me>("/identity/me/"),
@@ -1201,4 +1352,61 @@ export const api = {
       `/customers/${id}/invoices/`,
     ).then((r) => r.results),
   uploadFile,
+  // Connectors (Slices 73–77)
+  listConnectorConfigs: () =>
+    request<{ results: IntegrationConfigRow[] }>("/connectors/configs/").then(
+      (r) => r.results,
+    ),
+  createConnectorConfig: (connector_type: ConnectorType) =>
+    request<IntegrationConfigRow>("/connectors/configs/", {
+      method: "POST",
+      body: JSON.stringify({ connector_type }),
+    }),
+  deleteConnectorConfig: (id: string) =>
+    request<IntegrationConfigRow>(`/connectors/configs/${id}/`, {
+      method: "DELETE",
+    }),
+  uploadCsvSync,
+  getProposal: (id: string) =>
+    request<SyncProposalRow>(`/connectors/proposals/${id}/`),
+  applyProposal: (id: string) =>
+    request<SyncProposalRow>(`/connectors/proposals/${id}/apply/`, {
+      method: "POST",
+    }),
+  revertProposal: (id: string, reason: string) =>
+    request<SyncProposalRow>(`/connectors/proposals/${id}/revert/`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  listConflicts: (state: "open" | "resolved" | "all" = "open") =>
+    request<{ results: MasterFieldConflictRow[] }>(
+      `/connectors/conflicts/?state=${state}`,
+    ).then((r) => r.results),
+  resolveConflict: (
+    id: string,
+    body: { resolution: ConflictResolution; custom_value?: string },
+  ) =>
+    request<MasterFieldConflictRow>(
+      `/connectors/conflicts/${id}/resolve/`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  lockMasterField: (body: {
+    master_type: "customer" | "item";
+    master_id: string;
+    field_name: string;
+    reason?: string;
+  }) =>
+    request<MasterFieldLockRow>("/connectors/locks/", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  unlockMasterField: (body: {
+    master_type: "customer" | "item";
+    master_id: string;
+    field_name: string;
+  }) =>
+    request<{ removed: boolean }>("/connectors/locks/unlock/", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };
