@@ -1189,6 +1189,46 @@ export const api = {
       submission_uid: string;
       invoice: Invoice;
     }>(`/invoices/${invoiceId}/submit-to-lhdn/`, { method: "POST" }),
+  // Slice 87 — two-step approval workflow
+  requestApproval: (invoiceId: string, reason: string) =>
+    request<{
+      approval_id: string;
+      status: "pending" | "approved" | "rejected";
+      invoice: Invoice;
+    }>(`/invoices/${invoiceId}/request-approval/`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  approveInvoice: (approvalId: string, note: string) =>
+    request<{ approval_id: string; status: "approved" }>(
+      `/invoices/approvals/${approvalId}/approve/`,
+      {
+        method: "POST",
+        body: JSON.stringify({ note }),
+      },
+    ),
+  rejectInvoice: (approvalId: string, reason: string) =>
+    request<{ approval_id: string; status: "rejected" }>(
+      `/invoices/approvals/${approvalId}/reject/`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    ),
+  listPendingApprovals: () =>
+    request<{
+      results: Array<{
+        approval_id: string;
+        invoice_id: string;
+        invoice_number: string;
+        grand_total: string | null;
+        currency_code: string;
+        buyer_legal_name: string;
+        requested_by_user_id: string;
+        requested_at: string;
+        requested_reason: string;
+      }>;
+    }>("/invoices/approvals/pending/").then((r) => r.results),
   cancelInvoiceLhdn: (invoiceId: string, reason: string) =>
     request<{
       ok: boolean;

@@ -382,3 +382,62 @@ class ExtractionCorrection(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"{self.field_name} on {self.invoice_id} by {self.user_id}"
+
+
+class ApprovalRequest(TenantScopedModel):
+    """A pending or resolved approval gate on an invoice (Slice 87).
+
+    One row per approval cycle on an invoice. The submitter calls
+    ``request_approval`` which moves the invoice to
+    ``AWAITING_APPROVAL`` and creates a row with ``status=pending``.
+    An Approver-role user calls ``approve`` (moves the invoice
+    forward to ``READY_FOR_REVIEW``) or ``reject`` (moves it back
+    with the reason on the row).
+
+    Re-requesting approval after a rejection creates a new row —
+    the chain is the durable record of what was decided when, by
+    whom, and why. Resolved rows are immutable.
+
+    The actor IDs are stored as soft FKs (uuids) so a user
+    deletion or deactivation doesn't cascade-delete the audit
+    trail.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.CASCADE,
+        related_name="approval_requests",
+        db_index=True,
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    requested_by_user_id = models.UUIDField(db_index=True)
+    requested_at = models.DateTimeField(default=timezone.now, db_index=True)
+    requested_reason = models.TextField(blank=True)
+
+    decided_by_user_id = models.UUIDField(null=True, blank=True, db_index=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    # Reason on rejection; optional comment on approval.
+    decision_note = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "submission_approval_request"
+        ordering = ["-requested_at"]
+        indexes = [
+            models.Index(fields=["organization", "status"]),
+            models.Index(fields=["invoice", "-requested_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"approval[{self.status}] for invoice {self.invoice_id}"

@@ -12,6 +12,7 @@ const en: Record<string, string> = {
   "nav.dashboard": "Dashboard",
   "nav.inbox": "Inbox",
   "nav.invoices": "Invoices",
+  "nav.approvals": "Approvals",
   "nav.customers": "Customers",
   "nav.items": "Items",
   "nav.connectors": "Connectors",

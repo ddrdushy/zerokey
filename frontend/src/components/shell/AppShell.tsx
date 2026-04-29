@@ -53,6 +53,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { labelKey: "nav.inbox", href: "/dashboard/inbox", icon: Inbox },
       { labelKey: "nav.invoices", href: "/dashboard/invoices", icon: FileText },
+      { labelKey: "nav.approvals", href: "/dashboard/approvals", icon: ShieldCheck },
       { labelKey: "nav.customers", href: "/dashboard/customers", icon: Users },
       { labelKey: "nav.items", href: "/dashboard/items", icon: Package },
       { labelKey: "nav.connectors", href: "/dashboard/connectors", icon: Plug },

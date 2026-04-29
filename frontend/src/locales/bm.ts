@@ -10,6 +10,7 @@ const bm: Record<string, string> = {
   "nav.dashboard": "Papan Pemuka",
   "nav.inbox": "Peti Masuk",
   "nav.invoices": "Invois",
+  "nav.approvals": "Kelulusan",
   "nav.customers": "Pelanggan",
   "nav.items": "Barang",
   "nav.connectors": "Penyambung",

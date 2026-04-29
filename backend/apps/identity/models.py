@@ -175,6 +175,29 @@ class Organization(TimestampedModel):
     # 16-char URL-safe slug; unique per organization.
     inbox_token = models.CharField(max_length=32, blank=True, default="", db_index=True)
 
+    # Per-tenant approval workflow (Slice 87). Tier-gated at the
+    # service layer (Growth+ for ``always``, Scale+ for
+    # ``threshold``). Default is ``none`` — single-step submit
+    # (the user who creates an invoice is also the one who
+    # submits it). Mirrors ``Domain 7 — Workflow and approvals``
+    # in PRODUCT_REQUIREMENTS.md.
+    class ApprovalPolicy(models.TextChoices):
+        NONE = "none", "No approval"
+        ALWAYS = "always", "Always requires approval"
+        THRESHOLD = "threshold", "Requires approval over threshold"
+
+    approval_policy = models.CharField(
+        max_length=16,
+        choices=ApprovalPolicy.choices,
+        default=ApprovalPolicy.NONE,
+    )
+    # MYR amount above which approval is required when policy = threshold.
+    # Invoices in foreign currencies use grand_total directly; FX
+    # normalisation is a future tightening.
+    approval_threshold_amount = models.DecimalField(
+        max_digits=19, decimal_places=2, null=True, blank=True
+    )
+
     # Per-tenant WhatsApp Business phone-number id (Slice 82). This is
     # Meta Cloud API's ``phone_number_id`` (the integer-as-string id
     # under ``entry[].changes[].value.metadata.phone_number_id`` on

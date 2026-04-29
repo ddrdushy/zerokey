@@ -46,4 +46,21 @@ urlpatterns = [
         views.signed_document_download_view,
         name="signed-document",
     ),
+    # Slice 87 — two-step approval workflow.
+    path("approvals/pending/", views.pending_approvals_view, name="approvals-pending"),
+    path(
+        "<uuid:invoice_id>/request-approval/",
+        views.request_approval_view,
+        name="request-approval",
+    ),
+    path(
+        "approvals/<uuid:approval_id>/approve/",
+        views.approve_invoice_view,
+        name="approval-approve",
+    ),
+    path(
+        "approvals/<uuid:approval_id>/reject/",
+        views.reject_invoice_view,
+        name="approval-reject",
+    ),
 ]

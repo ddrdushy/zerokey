@@ -197,6 +197,24 @@ def submit_invoice_to_lhdn_view(request: Request, invoice_id: str) -> Response:
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    # Slice 87 — approval gate. If the org's policy demands an
+    # approval and this invoice doesn't have an active one, refuse
+    # the submit. The UI surfaces a "Request approval" gesture
+    # alongside, which creates the ApprovalRequest row.
+    from . import approvals
+
+    if approvals.invoice_requires_approval(invoice) and not approvals.has_active_approval(invoice):
+        return Response(
+            {
+                "detail": (
+                    "This invoice requires approval before submission. "
+                    "Request approval from an Approver, Admin, or Owner."
+                ),
+                "needs_approval": True,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     from . import lhdn_submission
 
     result = lhdn_submission.submit_invoice_to_lhdn(invoice.id)
@@ -493,3 +511,130 @@ def signed_document_download_view(request: Request, invoice_id: str) -> Response
         f'attachment; filename="invoice-{invoice.id}-signed.{extension}"'
     )
     return response
+
+
+# --- Slice 87 — two-step approval workflow ------------------------------
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def request_approval_view(request: Request, invoice_id: str) -> Response:
+    """Submitter / owner / admin asks an approver to gate this invoice."""
+    from . import approvals
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+    invoice = services.get_invoice(organization_id=organization_id, invoice_id=invoice_id)
+    if invoice is None:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    reason = str((request.data or {}).get("reason") or "").strip()
+    try:
+        req = approvals.request_approval(
+            invoice_id=invoice.id, actor_user_id=request.user.id, reason=reason
+        )
+    except approvals.ApprovalError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    invoice.refresh_from_db()
+    return Response(
+        {
+            "approval_id": str(req.id),
+            "status": req.status,
+            "invoice": InvoiceSerializer(invoice).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def approve_invoice_view(request: Request, approval_id: str) -> Response:
+    """An approver decides on a pending request."""
+    from .approvals import ApprovalError, approve
+    from .models import ApprovalRequest
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+    # Tenant-scope first so cross-tenant requests 404 (don't leak existence).
+    pending = ApprovalRequest.objects.filter(
+        id=approval_id, organization_id=organization_id
+    ).first()
+    if pending is None:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    note = str((request.data or {}).get("note") or "").strip()
+    try:
+        req = approve(
+            approval_id=approval_id,
+            actor_user_id=request.user.id,
+            note=note,
+        )
+    except ApprovalError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({"approval_id": str(req.id), "status": req.status})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def reject_invoice_view(request: Request, approval_id: str) -> Response:
+    """An approver rejects a pending request."""
+    from .approvals import ApprovalError, reject
+    from .models import ApprovalRequest
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+    pending = ApprovalRequest.objects.filter(
+        id=approval_id, organization_id=organization_id
+    ).first()
+    if pending is None:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    reason = str((request.data or {}).get("reason") or "").strip()
+    try:
+        req = reject(
+            approval_id=approval_id,
+            actor_user_id=request.user.id,
+            reason=reason,
+        )
+    except ApprovalError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({"approval_id": str(req.id), "status": req.status})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def pending_approvals_view(request: Request) -> Response:
+    """List invoices awaiting approval for the active org."""
+    from .models import ApprovalRequest
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response({"results": []})
+    rows = (
+        ApprovalRequest.objects.filter(
+            organization_id=organization_id,
+            status=ApprovalRequest.Status.PENDING,
+        )
+        .select_related("invoice")
+        .order_by("-requested_at")[:200]
+    )
+    results = []
+    for r in rows:
+        results.append(
+            {
+                "approval_id": str(r.id),
+                "invoice_id": str(r.invoice_id),
+                "invoice_number": r.invoice.invoice_number,
+                "grand_total": (
+                    str(r.invoice.grand_total) if r.invoice.grand_total is not None else None
+                ),
+                "currency_code": r.invoice.currency_code,
+                "buyer_legal_name": r.invoice.buyer_legal_name,
+                "requested_by_user_id": str(r.requested_by_user_id),
+                "requested_at": r.requested_at.isoformat(),
+                "requested_reason": r.requested_reason,
+            }
+        )
+    return Response({"results": results})
