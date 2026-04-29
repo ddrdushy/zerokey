@@ -50,9 +50,10 @@ const CATALOG: CatalogEntry[] = [
   {
     type: "autocount",
     label: "AutoCount",
-    description: "Pull debtors + items directly from AutoCount Accounting.",
+    description:
+      "Upload your AutoCount Debtor List or Stock Items export — column mapping is built in.",
     icon: Database,
-    shipped: false,
+    shipped: true,
   },
   {
     type: "sql_accounting",
@@ -120,10 +121,14 @@ export default function ConnectorsPage() {
     setError(null);
     try {
       const config = await api.createConnectorConfig(type);
-      // For CSV, jump straight into the upload wizard. For other
-      // connectors a future slice wires their auth flow.
+      // CSV + AutoCount jump straight into their upload page; other
+      // connectors will wire their auth flow in a later slice.
       if (type === "csv") {
         router.push(`/dashboard/connectors/${config.id}/upload`);
+        return;
+      }
+      if (type === "autocount") {
+        router.push(`/dashboard/connectors/${config.id}/autocount`);
         return;
       }
       await refresh();
@@ -253,6 +258,15 @@ function ActiveConnections({
                       >
                         <Upload className="h-3.5 w-3.5" />
                         Upload CSV
+                      </Link>
+                    )}
+                    {config.connector_type === "autocount" && (
+                      <Link
+                        href={`/dashboard/connectors/${config.id}/autocount`}
+                        className="mr-3 inline-flex items-center gap-1 text-2xs font-medium text-ink hover:underline"
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                        Upload AutoCount
                       </Link>
                     )}
                     <button

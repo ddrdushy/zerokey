@@ -853,6 +853,37 @@ async function uploadCsvSync(args: {
   return body as SyncProposalRow;
 }
 
+// Slice 85 — AutoCount upload. No column-mapping wizard; the
+// adapter applies the standard AutoCount column names.
+async function uploadAutoCountSync(args: {
+  configId: string;
+  file: File;
+  target?: "customers" | "items";
+}): Promise<SyncProposalRow> {
+  const headers = new Headers();
+  const csrf = readCookie("csrftoken");
+  if (csrf) headers.set("X-CSRFToken", csrf);
+
+  const form = new FormData();
+  form.append("file", args.file);
+  form.append("target", args.target ?? "customers");
+
+  const response = await fetch(`${API_BASE}/connectors/configs/${args.configId}/sync-autocount/`, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: form,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      (body && typeof body === "object" && "detail" in body && String(body.detail)) ||
+      `HTTP ${response.status}`;
+    throw new ApiError(message, response.status, body);
+  }
+  return body as SyncProposalRow;
+}
+
 export const api = {
   ensureCsrf: () => request<{ detail: string }>("/identity/csrf/"),
   me: () => request<Me>("/identity/me/"),
@@ -1332,6 +1363,7 @@ export const api = {
       method: "DELETE",
     }),
   uploadCsvSync,
+  uploadAutoCountSync,
   getProposal: (id: string) => request<SyncProposalRow>(`/connectors/proposals/${id}/`),
   applyProposal: (id: string) =>
     request<SyncProposalRow>(`/connectors/proposals/${id}/apply/`, {

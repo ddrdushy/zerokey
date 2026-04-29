@@ -267,6 +267,89 @@ def sync_csv(request: Request, config_id: str) -> Response:
     )
 
 
+# --- AutoCount upload + propose (Slice 85) --------------------------------
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser])
+def sync_autocount(request: Request, config_id: str) -> Response:
+    """Upload an AutoCount CSV export + run propose_sync.
+
+    Body (multipart):
+      file: the AutoCount Debtor / Stock-Item CSV export
+      target: "customers" or "items" (default "customers")
+
+    Unlike the generic CSV endpoint there's no column_mapping —
+    the adapter applies the standard AutoCount column names. If
+    the customer's installation has been customised they should
+    use the generic CSV connector + the column-mapping wizard.
+    """
+    org_or_response = _gate_active_org(request)
+    if isinstance(org_or_response, Response):
+        return org_or_response
+    org_id = org_or_response
+    if not _is_owner_or_admin(request.user, org_id):
+        return Response(
+            {"detail": "Only owners and admins can run a sync."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    config = IntegrationConfig.objects.filter(
+        organization_id=org_id, id=config_id, deleted_at__isnull=True
+    ).first()
+    if config is None:
+        return Response(
+            {"detail": "Connector not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    if config.connector_type != IntegrationConfig.ConnectorType.AUTOCOUNT:
+        return Response(
+            {
+                "detail": (
+                    f"This endpoint only handles AutoCount connectors. Got {config.connector_type}."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    upload = request.FILES.get("file")
+    if upload is None:
+        return Response(
+            {"detail": "Field 'file' is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    target = (request.data.get("target") or "customers").strip()
+
+    try:
+        adapter_class = get_adapter_class(config.connector_type)
+    except ConnectorError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        adapter = adapter_class(csv_bytes=upload.read(), target=target)
+    except ConnectorError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    customer_records = list(adapter.fetch_customers()) if target == "customers" else []
+    item_records = list(adapter.fetch_items()) if target == "items" else []
+
+    try:
+        proposal = sync_services.propose_sync(
+            integration_config_id=config.id,
+            customer_records=customer_records,
+            item_records=item_records,
+            actor_user_id=request.user.id,
+        )
+    except sync_services.SyncError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(
+        SyncProposalSerializer(proposal).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
 # --- Proposal lifecycle -----------------------------------------------------
 
 

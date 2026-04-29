@@ -16,6 +16,12 @@ urlpatterns = [
         views.sync_csv,
         name="sync-csv",
     ),
+    # Slice 85 — AutoCount upload (no column-mapping required).
+    path(
+        "configs/<uuid:config_id>/sync-autocount/",
+        views.sync_autocount,
+        name="sync-autocount",
+    ),
     path(
         "proposals/<uuid:proposal_id>/",
         views.proposal_detail,

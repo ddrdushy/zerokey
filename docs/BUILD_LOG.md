@@ -7720,6 +7720,79 @@ hand-edit `SystemSetting` from `/django-admin/`):
 
 ---
 
+### Slice 85 — AutoCount connector
+
+First concrete connector. Turns the abstract `IntegrationConfig`
++ propose/apply/conflict scaffolding (Slices 73–77) into
+something a Malaysian SME customer can actually plug in by
+exporting their AutoCount Debtor List or Stock Items to CSV
+and uploading it.
+
+The adapter is intentionally CSV-driven, not ODBC: the export-
+and-upload path needs no driver install, no LAN-side agent, no
+per-edition version negotiation. AutoCount's "Export to CSV"
+is a one-click gesture from the standard list views, and its
+column headers are stable across editions for the two reference
+exports we care about. ODBC (always-on pull) is still on the
+roadmap as the SQL_ACCOUNTING / future "AutoCount Direct"
+connector.
+
+Backend:
+
+- **`apps/connectors/adapters/autocount_adapter.py`** —
+  `AutoCountConnector` wraps `CSVConnector` with a baked-in
+  column mapping (`AUTOCOUNT_CUSTOMER_MAPPING` for Debtor List,
+  `AUTOCOUNT_ITEM_MAPPING` for Stock Items). `Tax Reg. No` and
+  `GST Tax Reg. No` (older editions) both map to TIN.
+- **Adapter registry** — `get_adapter_class` now returns
+  `AutoCountConnector` for `connector_type=autocount`.
+- **`POST /api/v1/connectors/configs/<id>/sync-autocount/`** —
+  multipart upload endpoint. No `column_mapping` field
+  required. Owner / admin gated, just like the CSV path.
+
+Frontend:
+
+- **`/dashboard/connectors/<id>/autocount`** — single-step
+  upload page. Pick file, pick target (Debtor List vs Stock
+  Items), submit. Redirects to the SyncProposal preview on
+  201.
+- **Connectors catalog** — AutoCount is now `shipped: true`.
+  `onConnect("autocount")` jumps into the AutoCount upload
+  page after creating the config; the per-row Upload affordance
+  on the configured-connectors table gets an AutoCount variant
+  alongside CSV.
+- **`api.uploadAutoCountSync`** — typed client method.
+
+Tests: 13 new (column mapping, alias header, item export,
+unknown-column drop, target validation, empty-CSV rejection,
+blank-row skip, mapping disjointness, no-op authenticate,
+endpoint upload happy path, wrong-type rejection, missing-file
+rejection, dispatch table). 948 total, was 935.
+
+Durable design decisions:
+
+- **CSV adapter wraps the generic CSV adapter, doesn't fork
+  it.** All the encoding-fallback / whitespace-normalisation /
+  empty-row-skip logic stays in one place. AutoCount's
+  contribution is a column mapping; the iteration semantics
+  shouldn't drift between connectors.
+- **Two header variants for TIN.** Older AutoCount editions
+  emit "GST Tax Reg. No"; current emit "Tax Reg. No". Both map
+  to the same target field. Without this, customers on legacy
+  editions would silently lose TIN data on every sync.
+- **Customised AutoCount installations fall back to generic
+  CSV.** The mapping assumes vanilla columns. We document the
+  fallback in the connector's description rather than silently
+  producing partial proposals — if a user renames "Company
+  Name" to "Customer Name", the proposal would be empty under
+  AutoCount, which would be confusing.
+- **No ODBC in v1.** ODBC requires a sidecar agent + Windows-
+  side driver install + version matrix. CSV upload covers the
+  90% case for Malaysian SMEs (their bookkeeper does the
+  monthly export anyway) at zero install cost.
+
+---
+
 ### Slice 84 — Signed-XML at rest
 
 The `signed_xml_s3_key` column has been a free column since
@@ -8135,6 +8208,9 @@ state isn't confused):
   signed bytes (XML or JSON) persisted to S3 on submission;
   decrypt-on-read download endpoint with digest verification
   and audited reads.
+- ~~**AutoCount connector**~~ — Slice 85. CSV-driven adapter
+  with baked-in AutoCount Debtor List / Stock Item column
+  mapping; no column-mapping wizard required.
 - ~~**Billing + Stripe**~~ — Slice 63 + Slice 65 (Subscribe
   UI). FPX is part of Stripe checkout; nothing else needed.
 - ~~**PII field-level encryption**~~ — covered by Slice 55's
