@@ -4,9 +4,12 @@
 > and the design calls made along the way. ROADMAP.md describes intent;
 > this document describes reality.
 
-Current state: **Phase 1 complete, Phase 2 in flight.** Eight commits shipped.
-The system boots end-to-end via `make up` and a user can sign up, drop a
-PDF, and watch it auto-extract and auto-structure into LHDN-shape fields.
+Current state: **Phases 1–4 complete, Phase 5 in flight.** Customer can sign
+up, drop a PDF (or forward an email), watch it extract, review the
+extracted fields, submit it to LHDN MyInvois (sandbox or production), get
+back a QR-verifiable Valid status, and issue Credit / Debit / Refund
+notes against it. Stripe self-serve checkout is wired. The system boots
+end-to-end via `make up`.
 
 ---
 
@@ -6099,6 +6102,432 @@ What's deferred (Slice 60+):
 
 ---
 
+### Slice 60 — LHDN doc-type matrix: CN, DN, RN + Self-Billed (`d0e15c3` + `e4425f1` + `1d9ab10`)
+
+Slice 58/59 only did standard B2B invoices (LHDN doc type
+`01`). Real customers issue Credit Notes, Debit Notes, and
+Refund Notes against prior invoices, and some flows
+(self-billed) reverse the buyer/seller relationship. Slice
+60 covers the full LHDN type matrix.
+
+LHDN doc types ZeroKey now emits:
+
+| Code | Type                       | BillingReference required |
+|------|----------------------------|---------------------------|
+| 01   | Invoice                    | no                         |
+| 02   | Credit Note                | yes                        |
+| 03   | Debit Note                 | yes                        |
+| 04   | Refund Note                | yes                        |
+| 11   | Self-Billed Invoice        | no                         |
+| 12   | Self-Billed Credit Note    | yes                        |
+| 13   | Self-Billed Debit Note     | yes                        |
+| 14   | Self-Billed Refund Note    | yes                        |
+
+Backend:
+
+- **`Invoice.invoice_type`** enum extended to 9 entries
+  (the 8 LHDN codes + the existing `tax_invoice` shorthand).
+  `max_length` bumped 16 → 32 to fit `self_billed_credit_note`.
+- **`apps.submission.lhdn_json`** — single source of truth for
+  the LHDN UBL JSON shape. `LHDN_TYPE_CODES` maps internal
+  enum → LHDN code. `TYPES_REQUIRING_BILLING_REFERENCE`
+  drives the BillingReference block emission. The same
+  builder is used for all 8 doc types — the only branches
+  are inside `_build_party()` (party ID scheme) and the
+  amendment block.
+- **Party identification** — LHDN's BIP requires the seller
+  AND buyer to identify themselves with one of:
+  `NRIC` (Malaysian national ID), `PASSPORT` (foreign
+  individuals), `BRN` (Malaysian company registration), or
+  `ARMY` (military ID, very rare). The wrong scheme is
+  ERR206 in HITS validation. New columns
+  `Invoice.{supplier,buyer}_id_type` + `_id_value` capture
+  the choice; serializers + the JSON builder emit the
+  right `<schemeID>` everywhere.
+- **`Invoice.original_invoice_uuid`** + `original_invoice_internal_id`
+  + `adjustment_reason` — populated on CN/DN/RN rows so the
+  BillingReference block can link to the source invoice in
+  LHDN's portal.
+
+Frontend:
+
+- **Invoice type field** — review screen now shows the
+  doc-type as an editable field with a dropdown of all 9
+  values.
+- **ID-type picker** — replaces the old free-text TIN-only
+  parties. Each party row gets a 2-column "ID type" dropdown
+  + "ID value" input. Defaults to NRIC (most common SME case);
+  the picker makes the foreign-individual / company /
+  military cases addressable without a free-text trap.
+
+Migration: 0007 (doc types + amendment columns) + 0008
+(party id type/value).
+
+Durable design decisions:
+
+- **One JSON builder for all 8 doc types** — keeping the
+  matrix in code (lookup tables + a single function) rather
+  than 8 sibling builders means the next LHDN spec update
+  touches one file. The branches are small enough that the
+  reader can hold them in their head.
+- **`adjustment_reason` is free-text on the row, not an
+  enum.** LHDN accepts arbitrary text in the description;
+  forcing customers to pick from a dropdown is a worse UX
+  than letting them type "Customer returned 5 units of SKU-42".
+- **Default `id_type=NRIC`** for both parties on existing
+  rows. Backfill data isn't great (real party IDs need
+  collection), but NRIC is the right default and the field
+  is now editable from the review screen.
+
+What's deferred:
+
+- **HITS-validation against the real ID** — we send what
+  the customer typed, LHDN validates upstream. Pre-flight
+  validation against an LHDN-published taxpayer registry
+  is a future slice.
+- **ARMY ID format check** — accepted as plain text today.
+  Format rules will land if a customer hits the rejection.
+
+---
+
+### Slice 61 — Issue Credit Note from a Validated invoice (`717b6d3`)
+
+The Credit Note button on the LhdnPanel — first amendment
+flow now wired end-to-end.
+
+Backend:
+
+- **`apps.submission.amendments`** — `create_credit_note(*,
+  source_invoice_id, reason, ...)`. Refuses unvalidated
+  source invoices (no UUID = nothing to credit). Refuses
+  empty reason (LHDN requires it). Copies parties + lines
+  from the source. Generates a per-source sequence so
+  multiple CNs against the same invoice get
+  `<INV>-CN1`, `<INV>-CN2`, etc.
+- **Endpoint** `POST /api/v1/invoices/<id>/credit-note/`
+  with `{reason}` body. Returns the new draft invoice
+  payload so the FE can navigate straight into review.
+
+Frontend:
+
+- **"Issue credit note" button** on the validated-state
+  LhdnPanel (alongside Cancel). Disabled outside the 72h
+  window? No — credit notes have no time limit (that's
+  why they exist). Always available once the source is
+  Valid.
+- **AmendmentDialog** — modal with reason textarea +
+  honest copy ("This creates a new draft invoice that
+  reverses the original. You'll review and submit it as
+  usual.").
+- On confirm: navigate to the new draft's review page;
+  the user picks up there.
+
+Durable design decisions:
+
+- **CN is its own Invoice row, not a reference on the
+  source.** The data model treats every doc as a first-class
+  Invoice with `invoice_type` distinguishing kind. This
+  keeps the validation/signing/submission paths uniform.
+- **Reason required even though LHDN's API accepts blank
+  in some doc-types.** Customers thank us in audit later
+  when we have a paper trail of why each CN was issued.
+
+---
+
+### Slice 62 — Debit Note + Refund Note flows (`aa3aef6`)
+
+Slice 61 wired one amendment type; Slice 62 generalises
+to all three.
+
+Backend:
+
+- **`amendments._create_amendment(*, config, source_invoice_id,
+  reason, ...)`** — shared core. The `_AMENDMENT_CONFIGS`
+  dict maps each amendment type (`credit_note`, `debit_note`,
+  `refund_note`) to its suffix (CN/DN/RN), audit
+  action_type, and lines field. `create_credit_note`,
+  `create_debit_note`, `create_refund_note` are now
+  one-liner wrappers around `_create_amendment`.
+- **Endpoints**:
+  `POST /api/v1/invoices/<id>/credit-note/` (existed)
+  `POST /api/v1/invoices/<id>/debit-note/` (new)
+  `POST /api/v1/invoices/<id>/refund-note/` (new)
+  All take `{reason}`, all return the new draft invoice.
+
+Frontend:
+
+- **Three buttons** on validated-state LhdnPanel — Credit /
+  Debit / Refund. `AMENDMENT_COPY` config dict drives
+  per-type messaging.
+- **Generic AmendmentDialog** — same component, different
+  copy + which API endpoint it dispatches to. The user-
+  facing distinction is small (the button + dialog title)
+  but the legal/accounting distinction is real:
+  - **Credit note** = reduces the original invoice's
+    amount (e.g. discount applied after the fact).
+  - **Debit note** = increases it (e.g. additional charges).
+  - **Refund note** = money actually returned to buyer.
+
+Durable design decisions:
+
+- **Three endpoints, not one polymorphic.** The LHDN doc
+  types are different, the BillingReference handling is
+  different in some specs, and the URL surface tells the
+  audit reader what was happening at a glance. Worth the
+  three-line endpoint definitions.
+- **Config-as-dict, not class hierarchy.** Each amendment
+  type is 4 fields (suffix, action_type, lines_field,
+  doc_type). A dict is more honest than a base class +
+  three subclasses.
+
+---
+
+### Slice 63 — Stripe checkout + webhook (`7c0e865`)
+
+End-to-end Stripe wiring for the Subscribe → Pay → Activated
+flow. No SDK; thin httpx wrapper.
+
+Backend:
+
+- **`apps.billing.stripe_client`** — direct httpx wrapper
+  exposing `create_customer`, `create_checkout_session`,
+  `get_subscription`, `verify_webhook_signature`. The
+  webhook verifier implements Stripe's HMAC-SHA256 spec
+  (timestamp + raw body + secret), 5-min replay window.
+  Form-encoding helper handles nested keys like
+  `metadata[org_id]` that Stripe's API expects.
+- **`apps.billing.checkout`** — orchestration:
+  - `start_checkout(*, organization_id, plan_id,
+    billing_cycle, success_url, cancel_url)` — creates a
+    Stripe customer for the org if missing, then a
+    Checkout Session that hands the user to Stripe's
+    hosted page.
+  - `handle_webhook(*, event)` — dispatches:
+    - `checkout.session.completed` → `_handle_checkout_completed`
+      activates the Subscription.
+    - `customer.subscription.updated` →
+      `_handle_subscription_updated` reconciles status +
+      period dates.
+    - `customer.subscription.deleted` →
+      `_handle_subscription_deleted` marks cancelled.
+    - `invoice.payment_failed` → `_handle_payment_failed`
+      marks past_due (org gets a banner).
+  - `_map_stripe_status` translates Stripe's lifecycle
+    enum to ours (active / trialing / past_due / cancelled
+    / etc).
+- **Endpoints**:
+  - `POST /api/v1/billing/checkout/` — owner / admin only,
+    body validates `plan_id` + `success_url` + `cancel_url`,
+    returns `{checkout_url, session_id, stripe_customer_id}`.
+  - `POST /api/v1/billing/stripe-webhook/` — CSRF-exempt,
+    no auth (Stripe is the caller, identified by the
+    HMAC signature header). Returns 200 on supported
+    events + on unsupported events too (Stripe retries
+    forever on non-2xx).
+- **Plan + Subscription** rows already existed (Slice 36
+  area); this slice adds `Subscription.stripe_subscription_id`
+  + `stripe_customer_id` so we can correlate webhook
+  events back to the org. Plan.slug is used as the
+  metadata Stripe round-trips for us.
+
+Tests: ~25 new (Stripe form-encoding, webhook signature
+verify with valid/invalid timestamp/secret, every webhook
+handler branch, Stripe API error → 502 mapping).
+
+Durable design decisions:
+
+- **No Stripe SDK.** The SDK is large + Python-only +
+  carries breaking changes. A 200-line httpx wrapper is
+  more honest about what we depend on (just the public
+  REST API + the documented signature scheme).
+- **Webhook handler returns 200 even for unsupported
+  events.** Stripe retries forever on non-2xx; logging
+  the unknown event + returning 200 is the right pattern.
+- **Subscription activation is webhook-driven, not
+  redirect-driven.** The `success_url` redirect can race
+  the webhook on slow networks. The webhook is the source
+  of truth; the redirect is just a UX courtesy.
+
+---
+
+### Slice 64 — Email-forward ingestion (`4b09b18`)
+
+Customers forward invoice emails to a magic per-tenant
+address; each PDF/image attachment becomes an
+IngestionJob, identical downstream to a web upload.
+
+Backend:
+
+- **`apps.ingestion.email_forward`** — provider-agnostic
+  module. Mailgun / SES + Lambda / SendGrid / Postmark
+  all POST a parsed dict + base64 attachments into the
+  same shape (`InboundEmail` dataclass).
+  - `resolve_tenant_from_address(address)` — extracts the
+    tenant token from `invoices+<token>@inbox.zerokey.symprio.com`
+    and looks up the Organization.
+  - `process_inbound_email(email)` — guards (mime allowlist,
+    size ≤ 25MB, ≤ 10 attachments per email), promotes
+    `application/octet-stream` PDFs (some scanners send
+    PDFs without the right Content-Type), creates one
+    IngestionJob per attachment, audits the inbound +
+    skipped reasons.
+  - `ensure_inbox_token(org_id)` — lazy 16-char URL-safe
+    slug mint on first call.
+  - `inbox_address_for_org(org_id)` — builds the full
+    magic address.
+  - `_redact_email(address)` — masks the local-part for
+    audit safety (`billing@vendor` → `b******@vendor`).
+- **`Organization.inbox_token`** — `max_length=32`,
+  db-indexed, lazy-minted. Migration 0014.
+- **`SystemSetting('email_inbound')`** — `webhook_token`
+  credential field for the shared bearer secret the email
+  provider presents on the inbound webhook.
+- **Endpoints**:
+  - `GET /api/v1/ingestion/inbox/address/` — auth-gated,
+    returns `{address}`.
+  - `POST /api/v1/ingestion/inbox/email-forward/` —
+    CSRF-exempt, bearer-token auth via
+    `X-ZeroKey-Inbound-Token` header. Body:
+    `{to, from, subject, message_id, attachments: [...]}`.
+    `message_id` carries forward as the IngestionJob's
+    `source_identifier` for downstream dedup.
+
+Tests: 20 new (727 total). Cover tenant resolution + token
+generation idempotency + per-attachment job creation +
+mime/size/count guards + octet-stream PDF promotion +
+empty-forward audit + sender-email redaction + endpoint
+auth + unknown-inbox 404.
+
+Durable design decisions:
+
+- **Provider-agnostic module + thin adapter per provider.**
+  Today only the JSON-body adapter is wired (works for
+  the four common providers). Switching providers is a
+  config change, not code.
+- **The address itself is the auth.** No per-sender
+  whitelist — anyone can email the address and it works.
+  This matches customer mental model ("forward this
+  email to invoices@...") and makes onboarding trivial.
+  The token is unguessable (96 bits of entropy).
+- **`message_id` → `source_identifier`** so duplicate
+  forwards (user CCs the address + then forwards) can
+  be deduped at the IngestionJob level later. Not yet
+  enforced; the column is db-indexed and ready.
+- **Octet-stream PDF magic-byte sniff.** Customers using
+  scan-to-email apps often see octet-stream content type;
+  silently dropping those would be the wrong default.
+
+---
+
+### Slice 65 — Settings UI for Stripe checkout + inbound email address (`54d7ced`)
+
+Surfaces the Slice 63 + 64 backends so the customer can
+actually use them.
+
+Frontend:
+
+- **Subscribe button** on each plan card in Settings →
+  Billing. Posts to `/billing/checkout/`, hard-redirects
+  to Stripe-hosted checkout. Disabled on the customer's
+  current plan ("Current plan" badge instead). Custom
+  tier shows "Talk to sales" mailto link.
+- **Inbox address card** in Settings → Integrations.
+  Calls `GET /ingestion/inbox/address/` (lazy-mints the
+  token), shows the magic address with a one-click Copy
+  button + the limits + accepted formats inline.
+
+Drive-by: fixed `m.role.name` typecheck error on the
+Members page (same shape bug fixed for Integrations in
+`649dce1`).
+
+Durable design decisions:
+
+- **Hard redirect to Stripe, not embedded.** Stripe's
+  hosted checkout handles every payment-method edge case
+  (3DS, FPX bank dropdown, Apple Pay) for free. Embedding
+  costs us all that.
+- **Per-plan pending state.** When 4 plans are visible
+  and the user clicks Subscribe, only that card shows
+  the spinner. Avoids the global-spinner pattern that
+  obscures which action is in flight.
+
+---
+
+### Slice 66 — LHDN cert expiry banner (`9084540`)
+
+A failed signature at submit time is the worst possible
+discovery moment. The banner surfaces upcoming expiry early
+so renewal can start with the CA before signing breaks.
+
+Frontend:
+
+- **`CertExpiryBanner`** mounts in `AppShell` once `me`
+  has loaded; calls `getCertificate()` once.
+- **Tiers** — chosen because CA renewal at MSC Trustgate /
+  Pos Digicert / TAB Bhd takes 5–10 business days:
+  - 30+ days → silent
+  - 14–30 days → amber notice
+  - 1–14 days → amber warning
+  - today / past → red error
+- **Self-signed dev certs are excluded** — they auto-rotate
+  on next signing operation, so showing them here would
+  be noise. Only `kind == "uploaded"` triggers the banner.
+- **Dismissal is sticky for 4h** via sessionStorage so the
+  banner re-asserts within the same session — too important
+  to bury behind a single click.
+
+Durable design decisions:
+
+- **30-day threshold, not 7.** CA renewal is slow. By 7
+  days you're already in panic territory. 30 days gives
+  honest lead time.
+- **In-shell, not modal.** Modals for non-blocking
+  warnings train users to dismiss-without-reading.
+  An always-visible banner respects attention.
+
+---
+
+### Slice 67 — Split submission_uid off the signed_xml_s3_key kludge (`8c4112d`)
+
+Slice 58 stashed LHDN's submission UID inside
+`signed_xml_s3_key` with the prefix `submission_uid=` so
+the submit path could ship without an extra migration.
+The kludge worked but blocked the column from being used
+for its actual purpose (the encrypted-XML S3 key). Slice
+67 gives the UID a proper home.
+
+Backend:
+
+- **`Invoice.submission_uid`** — `max_length=64`, db-indexed.
+- **Migration 0009** — adds the column + RunPython backfill
+  that walks any rows still carrying the kludge prefix,
+  copies the value to `submission_uid`, clears
+  `signed_xml_s3_key`. Reversible.
+- **Submit path** writes to the new column directly.
+- **Poll path** reads from `submission_uid` first, falls
+  back to the legacy kludge column read-only. The fallback
+  is a runtime safety net for any in-flight invoice that
+  was submitted under Slice 58 between migration apply +
+  cache invalidation; future slice can remove it.
+- **Editable-field allowlist** invariant test extended to
+  exclude `submission_uid` alongside `lhdn_uuid` etc.
+
+Tests: existing 727 still pass; modified 4 tests that
+referenced the old kludge column.
+
+Durable design decisions:
+
+- **Backfill in-place rather than dual-write window.**
+  Three rows in dev + zero in prod (this is pre-launch).
+  The migration is fast + the read-fallback covers the
+  one-instance-restart window.
+- **Don't drop `signed_xml_s3_key`.** The column still
+  has a job — it's the future home of the encrypted-at-
+  rest signed-XML S3 key. Repurposing instead of dropping
+  saves a future migration.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -6203,7 +6632,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 461 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 727 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
