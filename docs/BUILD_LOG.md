@@ -6900,6 +6900,103 @@ Durable design decisions:
 
 ---
 
+### Slice 74 — SyncProposal + MasterFieldConflict + MasterFieldLock + classify_merge matrix
+
+The merge-classification backbone for the connectors initiative.
+This slice ships only models + the pure classifier; the
+orchestration that USES them (`propose_sync`, `apply_sync_proposal`,
+`revert_sync_proposal`, `resolve_field_conflict`) lands in
+Slice 75.
+
+Backend:
+
+- **`SyncProposal`** model — durable record of a sync run
+  (proposed → applied → reverted/expired/cancelled). Holds the
+  classified diff, expires after 14 days for the revert window,
+  records actor / applier / reverter as soft FKs. ON DELETE
+  PROTECT against IntegrationConfig deletion (customers
+  soft-delete the config; historical proposals stay readable).
+- **`MasterFieldLock`** — per-field pin. Unique by
+  (org, master_type, master_id, field_name); same UUID can
+  appear under both CustomerMaster and ItemMaster type
+  discriminators independently.
+- **`MasterFieldConflict`** — field-level conflicts created
+  during propose_sync when the classifier returns `conflict`.
+  Cascades from SyncProposal so a hard-delete of a proposal
+  cleans up its open conflicts. Resolution enum:
+  `keep_existing` / `take_incoming` / `keep_both_as_aliases` /
+  `enter_custom_value`.
+- **Polymorphic master reference via discriminator**
+  (`master_type` + `master_id`) instead of Django's
+  GenericForeignKey. Cleaner RLS, no content_type table
+  dependency, only two master types so the discriminator
+  stays small.
+
+The merge classifier:
+
+- **`apps.connectors.merge_classifier.classify_merge(inputs)`** —
+  pure function, no DB reads, no time, no env. Takes a
+  `ClassifyInputs` dataclass (existing value + provenance,
+  incoming value + source, lock + authority-verified flags) and
+  returns one of six `Verdict` values:
+
+  | existing state                         | incoming               | result               |
+  | -------------------------------------- | ---------------------- | -------------------- |
+  | locked                                 | any                    | `skipped_locked`     |
+  | authority-verified (e.g. LHDN TIN)     | any                    | `skipped_verified`   |
+  | empty                                  | empty                  | `noop`               |
+  | empty                                  | non-empty              | `auto_populate`      |
+  | identical (post-trim)                  | any                    | `noop`               |
+  | `synced_X` provenance                  | `synced_X` (same src)  | `auto_overwrite`     |
+  | `synced_X` provenance                  | `synced_Y` (diff src)  | `conflict`           |
+  | `extracted` provenance                 | any external           | `conflict`           |
+  | `manual` / `manually_resolved`         | any external           | `conflict`           |
+  | provenance dict missing the field      | non-empty different    | `conflict` (safe)    |
+
+  Locks beat everything; authority-verified beats provenance.
+  Identical values are noop regardless of source. Same-source
+  synced overwrite is auto (the customer's source-of-truth
+  changed); cross-source is conflict (human disposes).
+
+Tests: 28 new (20 classifier matrix + 8 model invariants). 808
+backend, was 780.
+
+Durable design decisions:
+
+- **`classify_merge` is pure.** No DB reads, no time, no env.
+  Caller pre-fetches lock state + verification state once per
+  master record + caches across the field loop. Makes audit
+  replay trivial — same inputs always return the same verdict.
+- **Frozen `ClassifyInputs` dataclass instead of positional
+  args.** ``existing_value`` and ``incoming_value`` are both
+  ``str``; positional swaps are the silent-bug pattern this
+  initiative explicitly rejects. The dataclass forces named
+  args at every call site.
+- **Whitespace-trimmed equality.** "ACME" vs " ACME " is the
+  same value to the customer; routing the latter to a
+  conflict would be UX noise.
+- **Missing-provenance defaults to conflict, not silent
+  overwrite.** Pre-Slice-73 rows that the backfill missed (or
+  future fields the migration didn't cover) take the safe
+  path. Better to ask the user once than to silently corrupt
+  a master.
+- **Polymorphic via discriminator, not GenericFK.**
+  GenericForeignKey makes RLS policies + cross-app migrations
+  awkward; we have only two master types so the
+  `(master_type, master_id)` pair is simpler.
+- **Locks are CASCADE-independent of conflicts.** Hard-deleting
+  a SyncProposal cleans up its conflicts (CASCADE) but never
+  its locks — locks are durable user intent that outlives any
+  individual proposal.
+- **Authority-verified is the minimum viable abstraction.**
+  Today TIN-via-LHDN is the only authority; tomorrow other
+  fields might gain their own (SSL-verified email, BRN-verified
+  registration). The classifier doesn't know about TINs
+  specifically — callers tell it "is this field
+  authority-verified" and it acts.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -7004,7 +7101,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 780 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 808 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
