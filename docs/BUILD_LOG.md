@@ -6997,6 +6997,107 @@ Durable design decisions:
 
 ---
 
+### Slice 75 — Sync orchestration services (propose / apply / revert / resolve / lock)
+
+The orchestration layer sitting on top of Slice 74's classifier
++ models. After this slice, the entire two-phase sync flow works
+end-to-end at the service level — Slice 77 wires the first
+concrete connector (CSV) + the UI on top.
+
+Backend (`apps.connectors.sync_services`):
+
+- **`propose_sync(*, integration_config_id, customer_records,
+  item_records, actor_user_id)`** — match-or-add per record;
+  classify-merge per (record × field). Materialises a
+  `SyncProposal` with the full diff JSON + persists
+  `MasterFieldConflict` rows for every conflict so the queue UI
+  has durable state to query. Updates `IntegrationConfig.last_*`
+  cursors. Emits `integration.sync_proposed` with per-master
+  bucket counts.
+- **`apply_sync_proposal(*, proposal_id, actor_user_id)`** —
+  writes every `would_add` (creates new master rows with
+  `tin_verification_state=unverified_external_source`) +
+  `would_update` (overlays new value + new provenance entry).
+  Captures the pre-apply value of every changed field in
+  `applied_changes` so revert can walk it back. Refuses
+  double-apply. Emits `integration.sync_applied` +
+  triggers re-match (Slice 76 stub).
+- **`revert_sync_proposal(*, proposal_id, actor_user_id, reason)`**
+  — within the 14-day window, deletes rows we created and
+  restores prior values + provenance for rows we updated.
+  Refuses past `expires_at` (and flips status to `EXPIRED`).
+  Emits `integration.sync_reverted`.
+- **`resolve_field_conflict(*, conflict_id, resolution,
+  actor_user_id, custom_value=None)`** — applies the user's
+  choice from the conflict-queue UI. Four resolutions:
+  `keep_existing` (provenance flips to `manually_resolved`),
+  `take_incoming` (master adopts incoming, provenance carries
+  source tag + `applied_via_conflict_id`),
+  `keep_both_as_aliases` (only on `legal_name` /
+  `canonical_name`; appends to aliases),
+  `enter_custom_value` (master adopts user-typed value;
+  provenance `manually_resolved`). TIN resolutions flip
+  `tin_verification_state` to `manually_resolved` per
+  Slice 73's enum. Emits `master_record.conflict_resolved`.
+- **`lock_field` / `unlock_field`** — idempotent lock writes,
+  audit-emitting. Re-locking returns the existing row without
+  duplicate audit churn; unlocking a non-existent lock no-ops.
+
+Connector record shape — what fetchers (Slice 77+) emit:
+
+```python
+ConnectorRecord(
+    source_record_id="DEBT-00482",
+    fields={
+        "legal_name": "Acme Sdn Bhd",
+        "tin": "C9999999999",
+        "address": "Level 5, KL Sentral",
+        ...
+    },
+)
+```
+
+Tests: 23 new (6 propose + 4 apply + 3 revert + 6 resolve + 4
+lock/unlock). 831 backend, was 808.
+
+Durable design decisions:
+
+- **Conflict rows are durable, not just diff-JSON.** The diff
+  blob carries the same data, but the conflict-queue UI needs
+  to query open vs resolved conflicts efficiently — that's a
+  WHERE-clause job, not a JSON-walk job. So we materialise.
+- **`applied_changes` records the prior value, not the prior
+  state of the master row.** Revert needs to know what to
+  restore at field-level granularity. Storing the whole row
+  would bloat the JSON for syncs that touch one field per
+  record; storing per-field is exactly what we walk back.
+- **`unverified_external_source` for sync-created TINs.**
+  Slice 73 introduced this state for exactly this case — the
+  customer trusts where it came from, but LHDN hasn't
+  confirmed yet. The Slice 70 verification task picks it up
+  on the next pass and flips it to `verified` or `failed`.
+- **No cross-context model imports.** `apps.connectors`
+  imports `apps.enrichment.models.{CustomerMaster,ItemMaster}`
+  — that's intentional + matches the cross-context-coupling
+  rule (services may import sibling-context models when
+  necessary; the inverse — enrichment importing connectors
+  models — is forbidden and isn't needed today).
+- **`_trigger_rematch_after_apply` is a stub.** Slice 76
+  wires the actual `rematch_pending_invoices` pass that lifts
+  `ready_for_review` invoices to `ready_for_submission` when
+  a sync filled in the buyer the LLM missed. Today the apply
+  / revert path logs the trigger fired so Slice 76 has a
+  visible seam.
+- **Idempotent lock writes.** Re-locking is common when the
+  UI's "lock this field" button is clicked twice (network
+  retry, double-tap). Returning the existing row is
+  cheaper than recreating + re-auditing.
+- **`SELECT FOR UPDATE` on proposal load for write paths.**
+  Apply + revert hold a row lock so two operators clicking
+  "Apply" simultaneously can't double-apply.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -7101,7 +7202,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 808 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 831 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
