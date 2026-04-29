@@ -6580,6 +6580,53 @@ Durable design decisions:
 
 ---
 
+### Slice 69 — Beat-scheduled sweep for stuck-SUBMITTING invoices (`b746330`)
+
+The per-invoice poll chain in ``poll_invoice_status`` covers the
+happy path: submit → poll every 2/4/8/16/30s up to ~3 minutes.
+But the chain breaks if the worker restarts mid-sequence, the
+retry budget exhausts, or LHDN takes longer than the spec window
+(rare but observed under load). Without a sweep, those invoices
+sit in SUBMITTING forever from the customer's perspective even
+though LHDN has long since validated them.
+
+Backend:
+
+- **`submission.sweep_inflight_polls`** task — finds invoices in
+  SUBMITTING with `submission_uid` set + `updated_at` older than
+  `SWEEP_STALE_AFTER_SECONDS` (120s). Re-queues
+  `poll_invoice_status` for up to `SWEEP_MAX_PER_RUN` (100) per
+  cycle.
+- **Beat schedule entry** — runs every 60s (tunable via
+  `SUBMISSION_SWEEP_SECONDS` env).
+- The sweep itself is cheap — just a query + enqueues. The work
+  happens in `poll_invoice_status` which obeys the LHDN cadence.
+
+Tests: 5 new (re-queues stale, skips fresh, skips
+no-submission_uid, skips terminal states, caps at MAX). 736
+total, was 731.
+
+Durable design decisions:
+
+- **2-minute stale threshold, not 1 minute.** The per-invoice
+  chain plateaus at 30s polls. By 120s a healthy chain has
+  done ~5 polls already; a stale one is genuinely stuck. Lower
+  thresholds would step on a healthy chain's toes.
+- **Idempotent by construction.** Re-queueing a poll for an
+  invoice that just hit a terminal state inside
+  `poll_invoice_status` is a no-op — the function returns
+  early. Worst case is one extra LHDN GET per invoice per
+  sweep cycle.
+- **`updated_at` is the staleness signal, not a dedicated
+  `last_polled_at`.** Every state transition updates
+  `updated_at`; an invoice that just polled successfully won't
+  match the cutoff. Saves a column.
+- **Cap at 100 per run.** A backlog past this size is its
+  own incident worth alerting on; the sweep shouldn't try to
+  drain a runaway queue.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -6684,7 +6731,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 731 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 736 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
