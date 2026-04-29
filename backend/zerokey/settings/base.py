@@ -236,6 +236,14 @@ AUDIT_CHAIN_VERIFY_SECONDS = env.int("AUDIT_CHAIN_VERIFY_SECONDS", default=6 * 6
 # LHDN cadence.
 SUBMISSION_SWEEP_SECONDS = env.int("SUBMISSION_SWEEP_SECONDS", default=60)
 
+# LHDN reference catalog refresh (Slice 71). Monthly is right per
+# LHDN_INTEGRATION.md — the catalogs change on quarterly-ish cadence.
+# Keeping this looser than monthly risks running stale codes; tighter
+# wastes operator review cycles on no-op runs.
+CATALOG_REFRESH_SECONDS = env.int(
+    "CATALOG_REFRESH_SECONDS", default=30 * 24 * 60 * 60
+)
+
 CELERY_BEAT_SCHEDULE = {
     "audit.verify_audit_chain": {
         "task": "audit.verify_audit_chain",
@@ -245,6 +253,11 @@ CELERY_BEAT_SCHEDULE = {
     "submission.sweep_inflight_polls": {
         "task": "submission.sweep_inflight_polls",
         "schedule": float(SUBMISSION_SWEEP_SECONDS),
+        "options": {"queue": "low"},
+    },
+    "administration.refresh_reference_catalogs": {
+        "task": "administration.refresh_reference_catalogs",
+        "schedule": float(CATALOG_REFRESH_SECONDS),
         "options": {"queue": "low"},
     },
 }
