@@ -19,10 +19,12 @@
 //       credit note for further changes" hint.
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
   ExternalLink,
+  FileMinus,
   Loader2,
   Send,
   Shield,
@@ -75,11 +77,16 @@ export function LhdnPanel({
   onInvoiceChanged: (next: Invoice) => void;
   blockingIssues: number;
 }) {
+  const router = useRouter();
   const phase = useMemo(() => phaseFor(invoice), [invoice]);
-  const [busy, setBusy] = useState<"submit" | "cancel" | "poll" | null>(null);
+  const [busy, setBusy] = useState<
+    "submit" | "cancel" | "poll" | "credit_note" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [creditOpen, setCreditOpen] = useState(false);
+  const [creditReason, setCreditReason] = useState("");
 
   // Auto-poll while in flight. Light cadence (5s) so the user
   // sees updates without the FE pummeling the worker. The server-
@@ -152,6 +159,28 @@ export function LhdnPanel({
     }
   }
 
+  async function onConfirmCreditNote() {
+    if (!creditReason.trim()) return;
+    setBusy("credit_note");
+    setError(null);
+    try {
+      const result = await api.issueCreditNote(invoice.id, creditReason.trim());
+      // Navigate to the new CN's review page so the user can edit
+      // amounts before submitting it to LHDN.
+      router.push(`/dashboard/jobs/${result.ingestion_job_id}`);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Failed to create credit note.",
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <section className="rounded-xl border border-slate-100 bg-white">
       <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-slate-100 px-5 py-4">
@@ -193,6 +222,7 @@ export function LhdnPanel({
             invoice={invoice}
             canCancel={withinCancelWindow(invoice)}
             onCancelOpen={() => setCancelOpen(true)}
+            onCreditNoteOpen={() => setCreditOpen(true)}
             onPoll={onPoll}
             polling={busy === "poll"}
           />
@@ -229,6 +259,19 @@ export function LhdnPanel({
             setError(null);
           }}
           busy={busy === "cancel"}
+        />
+      )}
+      {creditOpen && (
+        <CreditNoteDialog
+          reason={creditReason}
+          onChangeReason={setCreditReason}
+          onConfirm={onConfirmCreditNote}
+          onClose={() => {
+            setCreditOpen(false);
+            setCreditReason("");
+            setError(null);
+          }}
+          busy={busy === "credit_note"}
         />
       )}
     </section>
@@ -331,12 +374,14 @@ function ValidatedView({
   invoice,
   canCancel,
   onCancelOpen,
+  onCreditNoteOpen,
   onPoll,
   polling,
 }: {
   invoice: Invoice;
   canCancel: boolean;
   onCancelOpen: () => void;
+  onCreditNoteOpen: () => void;
   onPoll: () => void;
   polling: boolean;
 }) {
@@ -369,13 +414,18 @@ function ValidatedView({
             <ShieldOff className="mr-1.5 h-3.5 w-3.5" />
             Cancel invoice
           </Button>
-        ) : (
-          <span className="text-2xs text-slate-400">
-            72-hour cancel window has passed — issue a credit note for
-            changes.
-          </span>
-        )}
+        ) : null}
+        <Button size="sm" variant="ghost" onClick={onCreditNoteOpen}>
+          <FileMinus className="mr-1.5 h-3.5 w-3.5" />
+          Issue credit note
+        </Button>
       </div>
+      {!canCancel && (
+        <p className="text-2xs text-slate-400">
+          72-hour cancel window has passed. To adjust this invoice,
+          issue a credit note instead.
+        </p>
+      )}
     </>
   );
 }
@@ -523,6 +573,70 @@ function CancelDialog({
             disabled={busy || !reason.trim()}
           >
             {busy ? "Cancelling…" : "Confirm cancellation"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreditNoteDialog({
+  reason,
+  onChangeReason,
+  onConfirm,
+  onClose,
+  busy,
+}: {
+  reason: string;
+  onChangeReason: (v: string) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 grid place-items-center bg-ink/40 px-4"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-xl border border-slate-100 bg-white p-5 shadow-xl"
+      >
+        <h3 className="text-base font-semibold">Issue a credit note?</h3>
+        <p className="mt-2 text-2xs text-slate-500">
+          A credit note credits/refunds the original invoice. It&apos;s
+          a new LHDN document that links back to this one. After
+          creation, you&apos;ll land on the credit note&apos;s review
+          page where you can adjust amounts before submitting it to
+          LHDN.
+        </p>
+        <label className="mt-4 block text-2xs font-medium">
+          Reason (required, sent to LHDN)
+          <textarea
+            value={reason}
+            onChange={(e) => onChangeReason(e.target.value)}
+            rows={3}
+            placeholder="e.g. customer returned 2 units, refund due"
+            className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-2xs focus:outline-none focus:ring-1 focus:ring-ink"
+          />
+        </label>
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onClose}
+            disabled={busy}
+          >
+            Never mind
+          </Button>
+          <Button
+            size="sm"
+            onClick={onConfirm}
+            disabled={busy || !reason.trim()}
+          >
+            {busy ? "Creating…" : "Create credit note"}
           </Button>
         </div>
       </div>

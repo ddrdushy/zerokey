@@ -1007,6 +1007,17 @@ export const api = {
       lhdn_uuid: string;
       invoice: Invoice;
     }>(`/invoices/${invoiceId}/poll-lhdn/`, { method: "POST" }),
+  // Slice 61 — issue a credit note against a Validated invoice.
+  issueCreditNote: (invoiceId: string, reason: string) =>
+    request<{
+      credit_note_id: string;
+      credit_note_number: string;
+      ingestion_job_id: string;
+      invoice: Invoice;
+    }>(`/invoices/${invoiceId}/issue-credit-note/`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
   listApiKeys: () =>
     request<{ results: APIKeyRow[] }>(
       "/identity/organization/api-keys/",

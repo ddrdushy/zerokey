@@ -310,3 +310,73 @@ def poll_invoice_lhdn_view(request: Request, invoice_id: str) -> Response:
             "invoice": InvoiceSerializer(invoice).data,
         }
     )
+
+
+# --- Slice 61: Issue Credit Note ----------------------------------------
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def issue_credit_note_view(request: Request, invoice_id: str) -> Response:
+    """Issue a Credit Note against a LHDN-validated invoice.
+
+    Body: ``{"reason": "...", "line_adjustments": [...]?}``.
+    ``line_adjustments`` is optional — if omitted, the CN credits
+    every line at the source amount (full credit). If supplied,
+    it's a list of ``{"line_number", "quantity", "amount"}`` dicts.
+
+    On success, returns the new Credit Note's Invoice payload so
+    the FE can navigate to the new review page.
+    """
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not _can_user_submit_lhdn(request.user, organization_id):
+        return Response(
+            {"detail": "You don't have permission to issue credit notes."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    try:
+        source = Invoice.objects.get(
+            id=invoice_id, organization_id=organization_id
+        )
+    except Invoice.DoesNotExist:
+        return Response(
+            {"detail": "Invoice not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    body = request.data or {}
+    reason = str(body.get("reason") or "").strip()
+    line_adjustments = body.get("line_adjustments")
+    if line_adjustments is not None and not isinstance(line_adjustments, list):
+        return Response(
+            {"detail": "line_adjustments must be an array."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    from . import amendments
+
+    try:
+        cn = amendments.create_credit_note(
+            source_invoice_id=source.id,
+            reason=reason,
+            actor_user_id=request.user.id,
+            line_adjustments=line_adjustments,
+        )
+    except amendments.AmendmentError as exc:
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+    return Response(
+        {
+            "credit_note_id": str(cn.id),
+            "credit_note_number": cn.invoice_number,
+            "ingestion_job_id": str(cn.ingestion_job_id),
+            "invoice": InvoiceSerializer(cn).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )

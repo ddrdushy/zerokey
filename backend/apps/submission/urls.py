@@ -24,4 +24,10 @@ urlpatterns = [
         views.poll_invoice_lhdn_view,
         name="poll-lhdn",
     ),
+    # Slice 61 — issue an amendment (Credit Note today)
+    path(
+        "<uuid:invoice_id>/issue-credit-note/",
+        views.issue_credit_note_view,
+        name="issue-credit-note",
+    ),
 ]

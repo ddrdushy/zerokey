@@ -175,6 +175,10 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "lhdn_qr_code_url",
             "validation_timestamp",
             "cancellation_timestamp",
+            # Amendment fields (Slice 60/61)
+            "original_invoice_uuid",
+            "original_invoice_internal_id",
+            "adjustment_reason",
             "error_message",
             "line_items",
             "validation_issues",
