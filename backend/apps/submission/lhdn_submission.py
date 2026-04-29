@@ -233,6 +233,30 @@ def submit_invoice_to_lhdn(invoice_id: uuid.UUID | str, *, format: str = "json")
         ]
     )
 
+    # Slice 84 — persist the signed bytes that LHDN accepted to
+    # S3, envelope-encrypted with the platform's at-rest crypto.
+    # Best-effort: a storage failure does not unwind the
+    # submission (LHDN already accepted it). The call audits its
+    # own success / failure either way.
+    from . import signed_blob
+
+    if format == "json":
+        # ``doc_bytes`` is the UBL-JSON we put on the wire (built
+        # in the format=='json' branch above). For the JSON path
+        # there's no XML-DSig — the bytes are the signed payload
+        # in the LHDN-JSON sense (digest pinned in the envelope).
+        signed_blob.persist_signed_bytes(
+            invoice_id=invoice.id,
+            signed_bytes=doc_bytes,
+            format="json",
+        )
+    else:
+        signed_blob.persist_signed_bytes(
+            invoice_id=invoice.id,
+            signed_bytes=sign_result["signed_xml_bytes"],
+            format="xml",
+        )
+
     # If the response already echoes a UUID for our document (some
     # LHDN environments do this on the synchronous response, others
     # require a poll), capture it.

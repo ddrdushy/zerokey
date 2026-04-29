@@ -167,6 +167,22 @@ def put_object(
     )
 
 
+def get_object_bytes(*, bucket: str, key: str) -> bytes:
+    """Read an object's body into memory.
+
+    Use sparingly — small artefacts only. Streaming readers
+    should call ``_client().get_object`` directly.
+    """
+    try:
+        resp = _client().get_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        raise StorageError(f"failed to read s3://{bucket}/{key}: {exc}") from exc
+    body = resp.get("Body")
+    if body is None:
+        raise StorageError(f"empty body on s3://{bucket}/{key}")
+    return body.read()
+
+
 def presigned_download_url(*, bucket: str, key: str, ttl: int = DEFAULT_PRESIGNED_URL_TTL) -> str:
     """Mint a short-lived signed URL the browser can redirect to."""
     try:

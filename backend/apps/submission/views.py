@@ -424,3 +424,72 @@ def issue_refund_note_view(request: Request, invoice_id: str) -> Response:
         noun="refund note",
         response_id_key="refund_note_id",
     )
+
+
+# --- Slice 84 — signed-document download (decrypted) ---------------------
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def signed_document_download_view(request: Request, invoice_id: str) -> Response:
+    """Download the decrypted signed bytes for a submitted invoice.
+
+    Returns the document with the appropriate content-type
+    (``application/xml`` for the XML path, ``application/json``
+    for the JSON path). The audit chain records the read so a
+    later auditor can see who pulled the bytes.
+
+    A 404 is returned for invoices that have no stored blob yet
+    (Phase 2 invoices that submitted before Slice 84 landed, or
+    invoices where the persist step failed). Cross-tenant
+    requests return 404 — same opacity rule the rest of the
+    invoice API uses.
+    """
+    from django.http import HttpResponse
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    from . import signed_blob
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+
+    invoice = services.get_invoice(organization_id=organization_id, invoice_id=invoice_id)
+    if invoice is None:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    if not invoice.signed_xml_s3_key:
+        return Response(
+            {"detail": "No signed document on file for this invoice."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        result = signed_blob.fetch_signed_bytes(invoice_id=invoice.id)
+    except signed_blob.SignedBlobError as exc:
+        return Response(
+            {"detail": f"Could not retrieve signed document: {exc}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    record_event(
+        action_type="submission.signed_blob.read",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(request.user.id),
+        organization_id=str(organization_id),
+        affected_entity_type="Invoice",
+        affected_entity_id=str(invoice.id),
+        payload={
+            "format": result["format"],
+            "digest_sha256": result["digest_sha256"],
+        },
+    )
+
+    content_type = "application/xml" if result["format"] == "xml" else "application/json"
+    extension = "xml" if result["format"] == "xml" else "json"
+    response = HttpResponse(result["signed_bytes"], content_type=content_type)
+    response["Content-Disposition"] = (
+        f'attachment; filename="invoice-{invoice.id}-signed.{extension}"'
+    )
+    return response

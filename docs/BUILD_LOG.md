@@ -7720,6 +7720,89 @@ hand-edit `SystemSetting` from `/django-admin/`):
 
 ---
 
+### Slice 84 — Signed-XML at rest
+
+The `signed_xml_s3_key` column has been a free column since
+Slice 67 with nothing populating it. Slice 84 closes that gap:
+on every accepted LHDN submission, we envelope-encrypt the
+signed bytes (XML for the v1.1 path, UBL-JSON for the v1.0
+path), persist them to S3 under a per-tenant prefix, and stash
+the key on the Invoice. A decrypt-on-read download endpoint
+serves them back to authorised users for audit + dispute use
+cases.
+
+Envelope shape (small JSON wrapper around Fernet ciphertext):
+
+  - `v` schema version (currently `1`)
+  - `format` — `"xml"` or `"json"`
+  - `digest_sha256` — SHA-256 of the *plaintext* signed bytes
+    (the same digest LHDN saw on `documentHash`)
+  - `encrypted_b64` — Fernet ciphertext of the signed bytes,
+    base64-encoded
+  - `written_at` — ISO 8601
+
+Backend:
+
+- **`apps/submission/signed_blob.py`** — `persist_signed_bytes`
+  builds the envelope + writes to `S3_BUCKET_SIGNED`;
+  `fetch_signed_bytes` round-trips the envelope back, verifies
+  the digest, and returns plaintext + format. A digest
+  mismatch is audited and raised — the chain reader can detect
+  tamper without trusting the envelope.
+- **`get_object_bytes` helper** added to
+  `apps.integrations.storage` for in-memory reads of small
+  artefacts.
+- **`signed_document_download_view`** at
+  `GET /api/v1/invoices/<id>/signed-document/` — returns the
+  decrypted bytes with the appropriate Content-Type
+  (`application/xml` or `application/json`) and a `Content-
+  Disposition` attachment header. The read is audited
+  (`submission.signed_blob.read`) so a future reviewer can see
+  who pulled the bytes.
+- **Submission orchestrator** (`lhdn_submission.py`) calls
+  `persist_signed_bytes` after LHDN accepts the submission —
+  for both the JSON and XML paths. Failure is best-effort: a
+  storage outage doesn't unwind the submission (LHDN already
+  has the document); the failure is audited so an operator can
+  backfill.
+
+Tests: 9 new (envelope shape, audit chain, format validation,
+storage-failure path, round-trips, no-blob-on-file, digest
+mismatch). 935 total, was 926.
+
+Durable design decisions:
+
+- **JSON envelope, not raw ciphertext on S3.** The plaintext
+  digest + format are operational metadata an audit reader
+  needs without decrypting. Putting them next to the
+  ciphertext keeps the round-trip atomic and the bucket
+  policy uniform (`application/json` regardless of format).
+- **Re-use `apps.administration.crypto`.** Same DEK derivation
+  the platform already uses for SystemSetting.values +
+  Engine.credentials. The KMS swap point stays a single
+  function (`crypto._dek()`); this module never sees the key.
+- **Persist post-acceptance, not post-sign.** Persisting
+  before LHDN accepts would store rejected drafts that don't
+  match what's on file at LHDN. Persisting after acceptance
+  guarantees the stored bytes are exactly what the regulator
+  has.
+- **Best-effort persist.** Storage failures must not unwind
+  an accepted submission — LHDN has the document, the
+  customer's tax obligation is met. An audited
+  `persist_failed` event lets an operator backfill from the
+  LHDN copy.
+- **Digest mismatch fails closed.** Returning silently-corrupt
+  bytes is the worst outcome for an auditor. Raising +
+  auditing the mismatch makes integrity violations visible at
+  the chain layer.
+- **Decrypt-on-read, not pre-signed URL.** The bytes are
+  sensitive — a pre-signed URL leaks plaintext to anyone with
+  the link until the TTL expires. Streaming through the
+  application server keeps the audit + auth gates in front of
+  the bytes.
+
+---
+
 ### Slice 83 — Items page (closes the master-data lock loop)
 
 Slice 81 shipped lock icons on the Customer detail page; the
@@ -8048,6 +8131,10 @@ state isn't confused):
 - ~~**Items page with provenance + locks**~~ — Slice 83.
   Symmetric to the customer detail editor: list page, detail
   + PATCH, lock toggles, alias filing on rename.
+- ~~**Signed-XML at rest**~~ — Slice 84. Envelope-encrypted
+  signed bytes (XML or JSON) persisted to S3 on submission;
+  decrypt-on-read download endpoint with digest verification
+  and audited reads.
 - ~~**Billing + Stripe**~~ — Slice 63 + Slice 65 (Subscribe
   UI). FPX is part of Stripe checkout; nothing else needed.
 - ~~**PII field-level encryption**~~ — covered by Slice 55's

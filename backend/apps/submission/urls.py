@@ -40,4 +40,10 @@ urlpatterns = [
         views.issue_refund_note_view,
         name="issue-refund-note",
     ),
+    # Slice 84 — signed-document download (decrypted bytes).
+    path(
+        "<uuid:invoice_id>/signed-document/",
+        views.signed_document_download_view,
+        name="signed-document",
+    ),
 ]
