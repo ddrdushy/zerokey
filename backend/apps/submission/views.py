@@ -638,3 +638,47 @@ def pending_approvals_view(request: Request) -> Response:
             }
         )
     return Response({"results": results})
+
+
+# --- Slice 88 — submission CSV export ----------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def export_invoices_csv_view(request: Request) -> Response:
+    """Stream the active org's submission stream as CSV.
+
+    Query params (all optional):
+      ?since=<iso8601>   — created_at >=
+      ?until=<iso8601>   — created_at <=
+      ?status=<exact>    — exact invoice status filter
+    """
+    from django.http import StreamingHttpResponse
+
+    from . import exports
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        since = exports.parse_iso_or_400(request.query_params.get("since"))
+        until = exports.parse_iso_or_400(request.query_params.get("until"))
+    except ValueError as exc:
+        return Response(
+            {"detail": f"Invalid timestamp: {exc}"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    status_filter = request.query_params.get("status") or None
+
+    response = StreamingHttpResponse(
+        exports.stream_invoices_csv(
+            organization_id=organization_id,
+            since=since,
+            until=until,
+            status=status_filter,
+            actor_user_id=request.user.id,
+        ),
+        content_type="text/csv; charset=utf-8",
+    )
+    response["Content-Disposition"] = 'attachment; filename="zerokey-invoices-export.csv"'
+    return response

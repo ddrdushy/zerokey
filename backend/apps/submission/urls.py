@@ -46,6 +46,8 @@ urlpatterns = [
         views.signed_document_download_view,
         name="signed-document",
     ),
+    # Slice 88 — submission CSV export.
+    path("export.csv", views.export_invoices_csv_view, name="export-invoices-csv"),
     # Slice 87 — two-step approval workflow.
     path("approvals/pending/", views.pending_approvals_view, name="approvals-pending"),
     path(

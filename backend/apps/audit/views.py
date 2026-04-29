@@ -134,3 +134,52 @@ def list_action_types(request: Request) -> Response:
     return Response(
         {"results": services.list_action_types_for_organization(organization_id=organization_id)}
     )
+
+
+# --- Slice 88 — audit CSV export ----------------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def export_audit_csv_view(request: Request) -> Response:
+    """Stream the active org's audit chain as CSV.
+
+    Query params (all optional): ``since``, ``until`` (ISO-8601),
+    ``action_type``, ``actor_id``. Hashes are hex-encoded so the
+    export is text-only and a downstream verifier can re-derive
+    integrity.
+    """
+    from django.http import StreamingHttpResponse
+
+    from apps.submission.exports import parse_iso_or_400, stream_audit_csv
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        since = parse_iso_or_400(request.query_params.get("since"))
+        until = parse_iso_or_400(request.query_params.get("until"))
+    except ValueError as exc:
+        return Response(
+            {"detail": f"Invalid timestamp: {exc}"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    action_type = request.query_params.get("action_type") or None
+    actor_id = request.query_params.get("actor_id") or None
+
+    response = StreamingHttpResponse(
+        stream_audit_csv(
+            organization_id=organization_id,
+            since=since,
+            until=until,
+            action_type=action_type,
+            actor_id=actor_id,
+            requested_by_user_id=request.user.id,
+        ),
+        content_type="text/csv; charset=utf-8",
+    )
+    response["Content-Disposition"] = 'attachment; filename="zerokey-audit-export.csv"'
+    return response

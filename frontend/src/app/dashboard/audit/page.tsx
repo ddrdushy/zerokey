@@ -166,13 +166,23 @@ export default function AuditLogPage() {
               Every business action, hash-chained, append-only
             </p>
           </div>
-          <ChainStatus
-            total={total}
-            result={verifyResult}
-            latest={latestVerification}
-            verifying={verifying}
-            onVerify={onVerifyChain}
-          />
+          <div className="flex items-center gap-2">
+            {/* Slice 88 — CSV export. Anchor link triggers
+             * StreamingHttpResponse + browser-managed download. */}
+            <a
+              href="/api/v1/audit/export.csv"
+              className="text-2xs font-medium text-ink underline-offset-4 hover:underline"
+            >
+              Export CSV
+            </a>
+            <ChainStatus
+              total={total}
+              result={verifyResult}
+              latest={latestVerification}
+              verifying={verifying}
+              onVerify={onVerifyChain}
+            />
+          </div>
         </header>
 
         {error && (

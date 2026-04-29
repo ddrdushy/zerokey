@@ -124,9 +124,18 @@ export default function InvoicesListPage() {
               Every invoice your organization has produced
             </p>
           </div>
-          <span className="text-2xs uppercase tracking-wider text-slate-400">
-            {total.toLocaleString()} total
-          </span>
+          <div className="flex items-center gap-3">
+            {/* Slice 88 — CSV export. */}
+            <a
+              href="/api/v1/invoices/export.csv"
+              className="text-2xs font-medium text-ink underline-offset-4 hover:underline"
+            >
+              Export CSV
+            </a>
+            <span className="text-2xs uppercase tracking-wider text-slate-400">
+              {total.toLocaleString()} total
+            </span>
+          </div>
         </header>
 
         {error && (
