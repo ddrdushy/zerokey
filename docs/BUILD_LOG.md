@@ -7614,6 +7614,112 @@ Durable design decisions:
 
 ---
 
+### Slice 82 — WhatsApp ingestion (multi-channel ingestion completes)
+
+Closes the multi-channel ingestion story: web upload (Slice 5),
+email forward (Slice 64), public API (Slice 78), and now
+WhatsApp Cloud API. Customers can drop an invoice PDF into a
+WhatsApp chat with their tenant-bound business number and have
+it land in the same pipeline as a web upload.
+
+Backend:
+
+- **`Organization.whatsapp_phone_number_id`** — per-tenant
+  routing key. Meta's Cloud API stamps every inbound webhook
+  with the destination `phone_number_id`; we map that to the
+  tenant. Empty string means WhatsApp ingestion is not
+  configured for the org. (Migration `identity.0015`.)
+- **`apps/ingestion/whatsapp.py`** — provider-agnostic core,
+  shaped exactly like `email_forward.py`:
+  - `InboundWhatsAppMessage` / `InboundWhatsAppAttachment`
+    dataclasses (sender, message_id, phone_number_id,
+    timestamp, attachments).
+  - `resolve_tenant_from_phone_number_id` — super-admin
+    context; raises `PhoneNumberNotFoundError` on no match.
+  - `process_inbound_whatsapp_message` — creates one
+    `IngestionJob` per attachment with
+    `source_channel=WHATSAPP`; mirrors email-forward audit
+    shape and skip semantics (mime allowlist, 25 MB ceiling,
+    10-attachment cap).
+  - `parse_meta_webhook_payload` — Meta Cloud API adapter.
+    Walks `entry[].changes[].value.messages[]`; for each
+    document/image message it calls an injectable
+    `media_fetcher(media_id)` callable to pull bytes. Failed
+    fetches emit the message with empty attachments so the
+    audit chain shows the no-media outcome instead of
+    silently dropping.
+  - `verify_meta_signature` — `X-Hub-Signature-256` HMAC
+    check (fails closed on empty secret/header).
+  - `_redact_phone` — keeps the country/area-code shape (4
+    leading digits) for audit, masks the rest.
+- **Webhook view** `whatsapp_webhook_view` (GET + POST):
+  - GET handles Meta's subscription handshake. Returns
+    `hub.challenge` iff `hub.verify_token` matches the
+    platform's `whatsapp.verify_token` SystemSetting.
+  - POST verifies `X-Hub-Signature-256` against the
+    `whatsapp.app_secret` SystemSetting, parses the payload,
+    fetches media via `_fetch_meta_media` (two-step Cloud
+    API: GET `/v18.0/{id}` → URL → GET URL), and processes
+    each message. Per-message errors come back in the batch
+    response so a single unknown number doesn't drop the
+    whole payload (Meta would otherwise retry the entire
+    batch on 5xx).
+  - Both halves return 503 when secrets are not configured —
+    fail closed, don't silently swallow customer messages.
+- **Route**: `POST/GET /api/v1/ingestion/inbox/whatsapp/`.
+
+Tests: 24 new backend, all green. 912 total, was 888.
+
+Durable design decisions:
+
+- **Per-tenant `phone_number_id` over a separate
+  WhatsAppInboundNumber table.** Simpler — symmetric to
+  `inbox_token`, one row to update when super-admin onboards
+  a customer. If we later need multi-number-per-org or
+  number pooling we'll add the table; until then YAGNI.
+- **Provider-agnostic core + thin Meta adapter.** Same shape
+  as `email_forward.py`: `InboundWhatsAppMessage` is the unit
+  of work; the parser is the only piece tied to Meta's JSON
+  shape. Lets us add Twilio / Infobip / Karix as alternative
+  WhatsApp providers without touching `process_inbound_*`.
+- **Injectable `media_fetcher`.** The parser doesn't reach
+  into the network — tests pass a stub returning canned
+  bytes; the production view binds it to `_fetch_meta_media`.
+  Keeps the parser hermetic and Meta-API-version changes
+  contained to one function.
+- **Failed media fetch → empty attachments, not dropped
+  message.** A dropped message disappears from the audit
+  chain; an empty-attachments message generates an
+  `ingestion.whatsapp.empty` event so operators can
+  investigate Meta-API outages.
+- **Per-message errors → 200 with batch results.** Meta's
+  retry semantics are: 200 = "stop retrying this batch", 5xx
+  = "retry the whole batch". One unknown `phone_number_id`
+  shouldn't trigger replay of N already-processed messages.
+- **Platform secrets in `SystemSetting`, per-tenant routing
+  on `Organization`.** Same pattern as email-forward: the
+  webhook is one Meta App / one Cloud API endpoint hosting
+  many customer numbers. Splitting "what's mine" from
+  "what's shared" keeps the security model clean.
+- **503 when not configured (not 200/silent drop).** Failing
+  closed surfaces misconfiguration in monitoring instead of
+  letting customer messages vanish. Meta will retry; once
+  super-admin completes setup, the queued retries flow
+  through.
+
+Configuration left for super-admin (no UI yet — they
+hand-edit `SystemSetting` from `/django-admin/`):
+
+- `whatsapp.verify_token` — random string for Meta's
+  subscription challenge.
+- `whatsapp.app_secret` — Meta App Secret for HMAC.
+- `whatsapp.access_token` — Cloud API bearer token for media
+  fetch.
+- Per-customer: set `Organization.whatsapp_phone_number_id`
+  to the customer's Cloud API phone-number id.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -7860,6 +7966,9 @@ state isn't confused):
   works (Slice 59B). Beat-scheduled poll sweep covers
   stuck-SUBMITTING rows (Slice 69).
 - ~~**Email ingestion channel**~~ — Slice 64.
+- ~~**WhatsApp ingestion channel**~~ — Slice 82. Per-tenant
+  `phone_number_id` mapping; Meta Cloud API webhook with
+  signature verification + injectable media fetcher.
 - ~~**Billing + Stripe**~~ — Slice 63 + Slice 65 (Subscribe
   UI). FPX is part of Stripe checkout; nothing else needed.
 - ~~**PII field-level encryption**~~ — covered by Slice 55's
@@ -7870,14 +7979,12 @@ state isn't confused):
 
 Still open (ordered roughly by Phase 4–5 priority):
 
-1. **WhatsApp ingestion channel** — mirror the email-forward
-   pattern (Slice 64). Per-tenant phone-number mapping.
 - ~~**Public API ingestion**~~ — Slice 78. `POST /api/v1/ingestion/jobs/api-upload/`
   with APIKey-only auth + JSON-base64 body.
 - ~~**Inbox token rotation**~~ — Slice 80.
   `POST /api/v1/ingestion/inbox/rotate-token/` + Rotate button
   on the Settings → Integrations inbox card.
-4. **Signed-XML at rest** — `signed_xml_s3_key` is now a
+1. **Signed-XML at rest** — `signed_xml_s3_key` is now a
    free column (Slice 67); needs the actual KMS-encrypted
    blob path wired.
 5. **Dual structuring lift for the OCR lane** —

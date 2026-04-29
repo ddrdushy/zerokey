@@ -24,4 +24,10 @@ urlpatterns = [
         views.email_forward_webhook_view,
         name="email-forward-webhook",
     ),
+    # Slice 82 — WhatsApp Cloud API webhook (verify GET + events POST).
+    path(
+        "inbox/whatsapp/",
+        views.whatsapp_webhook_view,
+        name="whatsapp-webhook",
+    ),
 ]

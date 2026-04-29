@@ -175,6 +175,17 @@ class Organization(TimestampedModel):
     # 16-char URL-safe slug; unique per organization.
     inbox_token = models.CharField(max_length=32, blank=True, default="", db_index=True)
 
+    # Per-tenant WhatsApp Business phone-number id (Slice 82). This is
+    # Meta Cloud API's ``phone_number_id`` (the integer-as-string id
+    # under ``entry[].changes[].value.metadata.phone_number_id`` on
+    # the inbound webhook). Super-admin assigns this when onboarding
+    # a customer to the WhatsApp ingestion channel — it routes
+    # incoming media messages on that number to this org. Empty
+    # string means WhatsApp ingestion is not configured for the org.
+    whatsapp_phone_number_id = models.CharField(
+        max_length=64, blank=True, default="", db_index=True
+    )
+
     # Per-tenant extraction lane (Slice 54). Default is the AI lane —
     # accuracy first, customer can opt down to the cost-saver. The
     # extraction pipeline reads this at run_extraction() and branches

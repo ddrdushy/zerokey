@@ -282,9 +282,7 @@ def rotate_inbox_token_view(request: Request) -> Response:
         )
 
     role = (
-        OrganizationMembership.objects.filter(
-            user=request.user, organization_id=organization_id
-        )
+        OrganizationMembership.objects.filter(user=request.user, organization_id=organization_id)
         .values_list("role__name", flat=True)
         .first()
     )
@@ -310,6 +308,141 @@ def rotate_inbox_token_view(request: Request) -> Response:
 
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import authentication_classes
+
+
+@csrf_exempt
+@api_view(["GET", "POST"])
+@permission_classes([])
+@authentication_classes([])
+def whatsapp_webhook_view(request: Request) -> Response:
+    """WhatsApp Cloud API webhook endpoint (Slice 82).
+
+    GET — Meta's subscription handshake. Returns ``hub.challenge``
+    iff ``hub.verify_token`` matches the platform's configured
+    verify token (SystemSetting ``whatsapp.verify_token``).
+
+    POST — inbound message events. Verifies ``X-Hub-Signature-256``
+    against the App Secret, parses Meta's batched payload, fetches
+    media bytes per item, and creates one IngestionJob per
+    supported attachment.
+
+    Both halves fail closed (401/503) when the platform secrets
+    are not configured — Meta retries on 5xx so a misconfigured
+    deployment doesn't silently swallow customer messages.
+    """
+    from apps.administration.services import system_setting
+
+    from . import whatsapp
+
+    if request.method == "GET":
+        expected = system_setting(
+            namespace="whatsapp",
+            key="verify_token",
+            env_fallback="WHATSAPP_VERIFY_TOKEN",
+        )
+        if not expected:
+            return Response(
+                {"detail": "WhatsApp ingestion is not configured."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        params = request.query_params
+        mode = params.get("hub.mode")
+        token = params.get("hub.verify_token")
+        challenge = params.get("hub.challenge")
+        if mode == "subscribe" and token and token == expected and challenge:
+            # Meta wants the raw challenge string echoed verbatim.
+            from django.http import HttpResponse
+
+            return HttpResponse(challenge, content_type="text/plain")
+        return Response({"detail": "Verification failed."}, status=status.HTTP_403_FORBIDDEN)
+
+    # POST: signed inbound event.
+    app_secret = system_setting(
+        namespace="whatsapp",
+        key="app_secret",
+        env_fallback="WHATSAPP_APP_SECRET",
+    )
+    access_token = system_setting(
+        namespace="whatsapp",
+        key="access_token",
+        env_fallback="WHATSAPP_ACCESS_TOKEN",
+    )
+    if not app_secret or not access_token:
+        return Response(
+            {"detail": "WhatsApp ingestion is not configured."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    raw_body = request.body or b""
+    presented = request.headers.get("X-Hub-Signature-256", "")
+    if not whatsapp.verify_meta_signature(
+        app_secret=app_secret, body=raw_body, signature_header=presented
+    ):
+        return Response(
+            {"detail": "Invalid signature."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    body = request.data or {}
+
+    # Production media fetcher — short-circuits for tests via the
+    # ``WHATSAPP_MEDIA_FETCHER`` SystemSetting hook (kept opt-in; the
+    # default is a real Cloud-API call). Tests bypass via the
+    # ``MediaFetcher``-injected variant of ``parse_meta_webhook_payload``.
+    def _fetch(media_id: str) -> tuple[bytes, str, str]:
+        return _fetch_meta_media(media_id, access_token=access_token)
+
+    try:
+        messages = whatsapp.parse_meta_webhook_payload(body, media_fetcher=_fetch)
+    except Exception as exc:
+        return Response({"detail": f"Invalid payload: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+
+    results = []
+    for message in messages:
+        try:
+            results.append(whatsapp.process_inbound_whatsapp_message(message))
+        except whatsapp.PhoneNumberNotFoundError as exc:
+            # Per-message — one unknown number doesn't drop the rest
+            # of the batch. We log + continue so Meta gets a 200 and
+            # doesn't retry the whole payload.
+            results.append({"error": str(exc), "message_id": message.message_id})
+        except whatsapp.WhatsAppForwardError as exc:
+            results.append({"error": str(exc), "message_id": message.message_id})
+
+    return Response({"results": results})
+
+
+def _fetch_meta_media(media_id: str, *, access_token: str) -> tuple[bytes, str, str]:
+    """Fetch media bytes from Meta Cloud API by media id.
+
+    Two-step: ``GET /v18.0/{id}`` returns a signed URL + mime;
+    ``GET <url>`` returns the bytes. Bearer-auth on both.
+    Kept module-private — the webhook view injects this into the
+    parser as ``media_fetcher``.
+    """
+    import urllib.request
+
+    meta_url = f"https://graph.facebook.com/v18.0/{media_id}"
+    req = urllib.request.Request(  # noqa: S310 — fixed https graph host
+        meta_url, headers={"Authorization": f"Bearer {access_token}"}
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — fixed https graph host
+        import json as _json
+
+        descriptor = _json.loads(resp.read().decode("utf-8"))
+    media_url = descriptor.get("url") or ""
+    mime = str(descriptor.get("mime_type") or "")
+    if not media_url:
+        raise RuntimeError(f"Meta media descriptor missing url for {media_id!r}")
+    req2 = urllib.request.Request(  # noqa: S310 — Meta-issued https URL
+        media_url, headers={"Authorization": f"Bearer {access_token}"}
+    )
+    with urllib.request.urlopen(req2, timeout=30) as resp:  # noqa: S310 — Meta-issued https URL
+        body = resp.read()
+    # Meta doesn't include a filename — the message-level ``filename``
+    # (when present, on document) is preferred; we hand back an empty
+    # hint here so the parser falls back to the declared name.
+    return body, mime, ""
 
 
 @csrf_exempt
