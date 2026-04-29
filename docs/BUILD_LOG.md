@@ -4799,6 +4799,141 @@ What's deferred:
   on rejections by default" preset would land as another
   layer in ``get_preferences``.
 
+### Slice 52 — Email delivery wiring (SMTP + dispatch + test-send)
+
+The four prior slices on the notifications track (Slice 28
+in-app bell, Slice 41 SMTP creds namespace, Slice 47 per-event
+preferences) all built the *persistence + UI* surface for email
+notifications. None of them actually sent a byte over SMTP.
+Slice 52 closes the loop: a real email goes out when an invoice
+clears validation, and the operator can verify SMTP creds work
+from the admin shell.
+
+Backend:
+
+- **`apps.notifications` app** — was previously empty. Now
+  hosts:
+  - `email.py` — stdlib `smtplib` + `EmailMessage` wrapper.
+    No new dependency. `is_email_configured()` cheap precheck;
+    `send_email(*, to, subject, body, html_body=None)` returns
+    a structured `EmailDeliveryResult` (ok / detail / duration_ms
+    / smtp_response_code). SMTP errors are caught — class name
+    only is recorded in `detail`, never `str(exc)`. SMTP
+    servers can echo credentials in error strings (LDAP-bind-
+    style auth failures especially), so swallowing the message
+    text is a deliberate security move. Tested explicitly:
+    `assert "nope" not in result.detail`.
+  - `services.py` — `_EMAIL_TEMPLATES` dict keyed by event_key
+    (`invoice.validated`, `invoice.lhdn_rejected`, `test.ping`).
+    `_SafeFormatDict` makes missing context vars render as
+    empty string instead of `KeyError` — better to send a
+    slightly-wrong email than crash the dispatcher. Two entry
+    points:
+    - `deliver_for_event(*, organization_id, event_key, context)` —
+      fans out to active members of the org. For each, reads
+      `NotificationPreference` (Slice 47), defaults to
+      email=True if no row exists yet (matches the auto-
+      materialise contract). Queues `send_email_task.delay()`
+      per recipient. Returns a summary
+      `{recipients_email_queued, no_template, no_recipients}`.
+      Reads under `super_admin_context(reason="notifications:fanout")`
+      because the caller is typically a Celery task with no
+      session-org binding.
+    - `send_test_email(*, to, actor_user_id)` — synchronous
+      test send for the admin "send test" button. Bypasses
+      preferences (admin is verifying SMTP, not asking the
+      recipient). Audited as `notifications.email.test_sent`
+      or `notifications.email.test_failed` so platform support
+      can see who tested when.
+  - `tasks.py` — `send_email_task` Celery shared_task with
+    `max_retries=3, retry_backoff=True, retry_backoff_max=300`.
+    Records `notifications.email.sent` / `notifications.email.failed`
+    audit events with ok/duration/event_key only — no
+    recipient PII in payload.
+- **`submission/services._sync_validation_inbox`** — when an
+  invoice transitions out of `error` to a clean state, fires
+  `deliver_for_event(event_key="invoice.validated", ...)`
+  with invoice_number + filename + invoice_url context. Wrapped
+  in try/except with audit: notification failures never break
+  validation — the invoice is still saved, the user still sees
+  it in the UI, the email simply doesn't go.
+- **Admin endpoint `POST /api/v1/admin/system-settings/email/test/`** —
+  body `{"to": "ops@example.com"}`, returns the SMTP outcome
+  synchronously so the operator sees the round-trip happen.
+  Validates the recipient, gates on `IsPlatformStaff`, audits.
+  URL placed before the catchall slug pattern so it doesn't
+  resolve as a namespace named `email`.
+
+Frontend:
+
+- **`/admin/settings` → `TestEmailPanel`** — renders only when
+  the `email` namespace is selected. Email input + Send button
+  + result panel (success-green or error-red). Calls
+  `api.adminTestEmail(to)`. The operator can sanity-check
+  their AWS SES creds in 5 seconds without leaving the admin
+  shell.
+
+Tests: 18 new (515 passing, was 497). Cover: SMTP-not-configured
+path, invalid recipient, successful smtplib mock, SMTP exception
+handling (and the credential-leak guard explicitly), HTML
+alternative, test-send audit (success + failure), template
+rendering with missing context, dispatch fan-out skipping
+opted-out users + inactive members, admin endpoint auth gate
+(401, 403, 400, 200).
+
+Verified live: configured SMTP creds in admin (Slice 41
+namespace), sent a test from the admin shell, observed the
+round-trip succeed in under 400ms; uploaded an invoice that
+extracted clean and saw the `invoice.validated` audit event
+land with the email queued.
+
+Durable design decisions:
+
+- **stdlib `smtplib`, not Django's email backend.** Django's
+  backend reads from settings.EMAIL_*, which we'd have to
+  rewire to the database-stored namespace anyway. Using
+  smtplib directly + reading the namespace per-call lets
+  the SMTP creds be live-edited in the admin and pick up
+  on the next send without restarting. One layer of
+  abstraction, not two.
+- **No `str(exc)` in SMTP error detail.** Some SMTP servers
+  echo the username on auth failures, and a few echo the
+  full bind credentials. The class name is enough to diagnose;
+  the bytes that come back are not safe to surface or log.
+- **Templates inline as constants.** Three events today.
+  When this hits ten, move to `templates/notifications/*.txt`
+  — but premature jinja2 / django-templates infrastructure
+  for three short strings is the wrong tradeoff right now.
+- **Audit at the task layer, not the dispatcher.** The
+  dispatcher records "queued N"; each delivery audits
+  itself with the actual outcome. So a fan-out to 12 users
+  produces 12 sent / 12 failed / mixed audits, not one
+  rolled-up event with a buried failure count. Per-recipient
+  observability is what an operator actually wants.
+- **`is_email_configured()` ≠ "test it works".** It only
+  checks that host + port + from_address are present. The
+  admin test button is the actual liveness check, because
+  SMTP creds can be present but wrong (typo, expired,
+  rate-limited). Two-stage validation matches reality.
+- **Notification failures don't block business logic.**
+  Every `deliver_for_event` call from a state-machine
+  transition is in a try/except. The invoice MUST get
+  saved even if SES is down — losing a notification is
+  recoverable; losing the invoice itself is not.
+
+What's deferred:
+
+- **HTML email templates.** Plain text only today. When
+  marketing wants branded emails, swap `body` for `html_body`
+  in the templates — `send_email` already supports both.
+- **Per-event opt-out for outbound webhooks.** Webhook
+  fan-out (Slice 53) will read the same NotificationPreference
+  row but for the `webhook` channel, not email.
+- **Bounce + complaint handling.** SES sends bounce/complaint
+  to an SNS topic; we don't subscribe yet. When we do, an
+  `apps.notifications.bounces` view ingests them and flips
+  the recipient's email-channel preference off automatically.
+
 ---
 
 ## Architectural decisions worth preserving

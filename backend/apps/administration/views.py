@@ -128,6 +128,28 @@ def admin_list_system_settings(request: Request) -> Response:
     )
 
 
+@api_view(["POST"])
+@permission_classes([IsPlatformStaff])
+def admin_test_email(request: Request) -> Response:
+    """POST /api/v1/admin/system-settings/email/test/
+
+    Body: ``{"to": "ops@example.com"}``. Sends a synchronous test
+    email using the configured SMTP creds. Returns the SMTP outcome
+    so the operator sees whether the creds are working.
+    """
+    body = request.data or {}
+    to = str(body.get("to") or "").strip()
+    if not to or "@" not in to:
+        return Response(
+            {"detail": "Provide a valid 'to' address."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    from apps.notifications.services import send_test_email
+
+    result = send_test_email(to=to, actor_user_id=request.user.id)
+    return Response(result)
+
+
 @api_view(["PATCH"])
 @permission_classes([IsPlatformStaff])
 def admin_update_system_setting(request: Request, namespace: str) -> Response:

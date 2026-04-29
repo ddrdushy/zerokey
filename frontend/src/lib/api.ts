@@ -738,6 +738,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  adminTestEmail: (to: string) =>
+    request<{ ok: boolean; detail: string; duration_ms: number }>(
+      "/admin/system-settings/email/test/",
+      { method: "POST", body: JSON.stringify({ to }) },
+    ),
   adminUpdateEngine: (
     engineId: string,
     body: {

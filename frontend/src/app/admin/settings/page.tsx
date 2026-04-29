@@ -331,7 +331,67 @@ function NamespaceEditor({
           </Button>
         </div>
       </footer>
+      {ns.namespace === "email" && <TestEmailPanel onError={onError} />}
     </section>
+  );
+}
+
+function TestEmailPanel({
+  onError,
+}: {
+  onError: (msg: string | null) => void;
+}) {
+  const [to, setTo] = useState("");
+  const [sending, setSending] = useState(false);
+  const [last, setLast] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  async function onSend() {
+    onError(null);
+    if (!to.trim() || !to.includes("@")) {
+      onError("Enter a valid email address to test.");
+      return;
+    }
+    setSending(true);
+    try {
+      const result = await api.adminTestEmail(to.trim());
+      setLast({ ok: result.ok, detail: result.detail });
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Test send failed.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-slate-100 bg-slate-50 px-5 py-4">
+      <p className="mb-2 text-[11px] text-slate-500">
+        Send a test email to verify the SMTP credentials are working.
+        The recipient gets a short ZeroKey test message.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="email"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+          placeholder="ops@example.com"
+          className="flex-1 min-w-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+        />
+        <Button size="sm" onClick={onSend} disabled={sending}>
+          {sending ? "Sending…" : "Send test"}
+        </Button>
+      </div>
+      {last && (
+        <div
+          className={
+            "mt-2 text-[11px] " +
+            (last.ok ? "text-success" : "text-error")
+          }
+        >
+          {last.ok ? "✓ Sent: " : "✗ "}
+          {last.detail}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -56,6 +56,11 @@ urlpatterns = [
         name="admin-list-system-settings",
     ),
     path(
+        "system-settings/email/test/",
+        views.admin_test_email,
+        name="admin-test-email",
+    ),
+    path(
         "system-settings/<slug:namespace>/",
         views.admin_update_system_setting,
         name="admin-update-system-setting",

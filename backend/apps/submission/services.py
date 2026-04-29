@@ -1175,6 +1175,11 @@ def _sync_validation_inbox(
             },
         )
     else:
+        was_open = ExceptionInboxItem.objects.filter(
+            invoice=invoice,
+            reason=ExceptionInboxItem.Reason.VALIDATION_FAILURE,
+            status=ExceptionInboxItem.Status.OPEN,
+        ).exists()
         resolve_for_reason(
             invoice=invoice,
             reason=ExceptionInboxItem.Reason.VALIDATION_FAILURE,
@@ -1185,6 +1190,43 @@ def _sync_validation_inbox(
             ),
             actor_user_id=actor_user_id,
         )
+        # First time the invoice goes clean (or transitions from
+        # error → ready) → fire the "invoice validated" notification
+        # so the operator's preferred channels know.
+        if was_open or actor_user_id is None:
+            try:
+                from apps.notifications.services import deliver_for_event
+
+                # Use ingestion job filename as a friendly handle when
+                # the invoice number isn't yet populated.
+                from apps.ingestion.models import IngestionJob
+
+                filename = ""
+                try:
+                    filename = (
+                        IngestionJob.objects.filter(id=invoice.ingestion_job_id)
+                        .values_list("original_filename", flat=True)
+                        .first()
+                        or ""
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                deliver_for_event(
+                    organization_id=invoice.organization_id,
+                    event_key="invoice.validated",
+                    context={
+                        "invoice_number": invoice.invoice_number or "(no number)",
+                        "filename": filename,
+                        "invoice_url": (
+                            f"/dashboard/jobs/{invoice.ingestion_job_id}"
+                        ),
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                # Notification failures must never break the
+                # validation path; the audit chain already records
+                # the inbox-clear event regardless.
+                pass
 
 
 def list_invoices_for_organization(
