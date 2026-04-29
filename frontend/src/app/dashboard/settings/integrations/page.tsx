@@ -64,7 +64,7 @@ export default function IntegrationsSettingsPage() {
       me
         ? me.memberships.find(
             (m) => m.organization.id === me.active_organization_id,
-          )?.role.name ?? null
+          )?.role ?? null
         : null,
     [me],
   );
