@@ -6528,6 +6528,58 @@ Durable design decisions:
 
 ---
 
+### Slice 68 — PFX / P12 cert upload (`6ea7898`)
+
+Some Malaysian CAs (notably Pos Digicert) deliver the issued
+certificate as a single password-protected ``.pfx`` / ``.p12``
+file instead of separate PEM blocks. Customers shouldn't
+have to run ``openssl pkcs12 -in cert.pfx -nodes ...`` to
+onboard.
+
+Backend:
+
+- **`certificates.pfx_to_pem(*, pfx_bytes, password)`** —
+  unwraps via `cryptography.hazmat.primitives.serialization.
+  pkcs12.load_key_and_certificates`. Emits PEM cert + PKCS#8
+  PEM key. Helpful error messages on wrong-password /
+  missing-cert / non-RSA key.
+- **`POST /identity/organization/certificate/`** accepts
+  `{pfx_b64, pfx_password}` alongside the existing
+  `{cert_pem, private_key_pem}` shape. PFX path funnels
+  into the same `upload_certificate` service so the
+  matched-pair check + audit + persistence are identical.
+
+Frontend:
+
+- **PEM / PFX tab toggle** in the cert upload form. PFX
+  tab takes a `<input type="file">` + password field. File
+  is base64-encoded in the browser then posted as
+  `pfx_b64` (chunk-loop avoids stack overflow on large
+  bundles).
+- File input accepts `.pfx`, `.p12`,
+  `application/x-pkcs12`.
+
+Tests: 4 new (happy path, wrong password, malformed
+base64, neither shape provided). 731 total, was 727.
+
+Durable design decisions:
+
+- **Don't try to disambiguate "wrong password" from
+  "corrupt file".** The cryptography library raises the
+  same `ValueError` for both cases. The error message
+  surfaces both possibilities — falsely confirming
+  corruption would send the customer down the wrong
+  troubleshooting path.
+- **Unwrap on the server, not in the browser.** A
+  WebCrypto PFX-unwrap path was tempting (avoids the cert
+  + key briefly leaving the customer's machine in
+  base64 form). Rejected: the password is travelling
+  over the wire either way (TLS), and the server-side
+  path keeps the matched-pair check + key-format
+  validation in one place.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -6632,7 +6684,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 727 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 731 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
