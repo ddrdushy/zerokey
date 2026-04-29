@@ -7166,6 +7166,94 @@ Durable design decisions:
 
 ---
 
+### Slice 77a — BaseConnector + CSVConnector + REST endpoints (backend)
+
+The first concrete connector + the API surface that drives the
+upcoming preview / conflict-queue UI (Slice 77b).
+
+Backend:
+
+- **`apps.connectors.adapters.base.BaseConnector`** abstract
+  interface — `authenticate()`, `fetch_customers()`,
+  `fetch_items()`, `health_check()`. Concrete adapters yield
+  `ConnectorRecord` instances; orchestration calls into the
+  adapter, never the other way around.
+- **`apps.connectors.adapters.csv_adapter.CSVConnector`** — first
+  concrete adapter. Zero auth (the upload is the boundary).
+  Operator-supplied column mapping translates source CSV column
+  headers to ZeroKey master field names. Encoding fallback chain
+  (UTF-8-with-BOM, UTF-8, CP1252, latin-1) so an Excel export
+  doesn't bounce at the door. Skips blank rows. Optional
+  `source_record_id` column → carried into provenance.
+- **`get_adapter_class(connector_type)`** — dispatch table.
+  Today: CSV. Slice 78+: AutoCount, Xero, etc. Unknown types
+  raise so a misconfigured `IntegrationConfig` fails explicitly
+  rather than silently producing empty proposals.
+- **REST endpoints** under `/api/v1/connectors/`:
+  - `GET / POST /configs/` — list + create (idempotent on
+    re-create of an active config).
+  - `DELETE /configs/<id>/` — soft-delete via `deleted_at`.
+  - `POST /configs/<id>/sync-csv/` — multipart upload (file +
+    column_mapping JSON + target). Owner/admin only. Calls
+    `propose_sync` and returns the SyncProposal payload.
+  - `GET /proposals/<id>/` — read.
+  - `POST /proposals/<id>/apply/` and `/revert/` — owner/admin.
+  - `GET /conflicts/?state=open|resolved|all` — list filtered.
+  - `POST /conflicts/<id>/resolve/` — owner/admin. Body:
+    `{resolution, custom_value?}`.
+  - `POST /locks/` and `/locks/unlock/` — owner/admin.
+- **DRF serializers** for `IntegrationConfig`, `SyncProposal`,
+  `MasterFieldConflict`, `MasterFieldLock`. Read-only at the
+  serializer level — write paths go through services so the
+  audit + provenance writes happen.
+
+Tests: 31 new (12 CSV adapter + 19 endpoint coverage). 869
+backend, was 838.
+
+Durable design decisions:
+
+- **CSV is the universal escape hatch + the test fixture for
+  the propose / apply / conflict flows.** Ships first
+  intentionally — no auth, no external service to mock,
+  exercises every classifier verdict via test fixtures.
+- **Operator-supplied column mapping, not auto-detection.**
+  Auto-detection is a research project; operator-mapped is a
+  five-minute wizard. The Slice 77b UI ships the wizard.
+- **Encoding fallback chain.** Excel-exported CSVs in Malaysia
+  often arrive with BOM or CP1252; rejecting them on first
+  byte would have been a silent UX cliff.
+- **Endpoints owner/admin gated for writes; any active member
+  can read.** Matches the rest of the codebase. The conflict
+  queue + proposal preview are read-only for viewers — they
+  can SEE what was synced + what conflicts remain even if they
+  can't act.
+- **`POST /configs/` returns the existing row when one exists.**
+  Avoids leaking the UniqueConstraint into the API surface
+  (would 500 on the second click). Idempotent — caller gets
+  the same id either way.
+- **Soft-delete for IntegrationConfig.** History (which
+  connectors did this customer use, when did they disconnect)
+  outlives any single config row. Slice 73 already shipped
+  the conditional UniqueConstraint that lets a customer
+  reconnect after disconnecting.
+- **Adapter dispatch via class, not instance.** The view
+  instantiates the adapter once per request with
+  request-specific args (uploaded bytes + mapping); a
+  registered instance would have to be re-configured per
+  request, which gets messy.
+
+What's deferred to Slice 77b:
+
+- Settings → Connectors UI for create / list / disconnect.
+- CSV upload wizard with column-mapping picker.
+- Sync preview screen (Will-add / Will-update / Conflicts
+  tabs).
+- Conflict queue lane in the Inbox.
+- Lock icons + provenance pills already shipped on the
+  customer detail page (Slice 73); items page gets them in 77b.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -7270,7 +7358,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 838 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 869 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
