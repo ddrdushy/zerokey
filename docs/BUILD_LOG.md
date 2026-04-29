@@ -7098,6 +7098,74 @@ Durable design decisions:
 
 ---
 
+### Slice 76 — Re-match pass for ready_for_review invoices
+
+The pay-off step of the connectors initiative: the moment where
+the customer's review queue actually shrinks. After every
+`apply_sync_proposal` (and every `revert_sync_proposal`), this
+pass walks every Invoice in `ready_for_review` for the org and
+re-runs the customer-master match. Newly-matched invoices get
+the master's auto-filled fields applied + the audit chain
+records the lift individually.
+
+Backend (`apps.enrichment.rematch`):
+
+- **`rematch_pending_invoices(*, organization_id, triggered_by)`** —
+  walks `Invoice.objects.filter(status=READY_FOR_REVIEW)`,
+  re-uses `_find_customer_master` + `_autofill_buyer` from the
+  existing enrichment service. For invoices where the auto-fill
+  actually filled blanks, emits one
+  `invoice.master_match_lifted_by_sync` audit event per
+  invoice with the connector trigger + filled fields +
+  matched master id in the payload.
+- **Idempotent.** Calling twice with no DB changes between runs
+  yields zero new lifts on the second pass — already-filled
+  invoices have nothing left to lift.
+- **Read-only on extracted data.** Auto-fill never overwrites
+  invoice fields the LLM already populated. Only fills blanks.
+  Re-match never UN-fills (extracted data is durable; revert of
+  a sync that filled an invoice doesn't roll the invoice back).
+
+Wired into Slice 75:
+
+- `_trigger_rematch_after_apply` (formerly a stub) now calls
+  `rematch_pending_invoices`. If the run lifted ≥ 1 invoice,
+  emits a follow-up `connectors.rematch_completed` audit event
+  with the totals so a chain reader can correlate "this
+  proposal applied + lifted N invoices" without walking every
+  per-invoice event.
+- Apply path passes `triggered_by="connectors.sync_apply"`;
+  revert passes `connectors.sync_revert`. Same function, same
+  audit event tag — the `triggered_by` payload distinguishes.
+
+Tests: 7 new (no-pending counts, no-buyer skip, lift-when-master-
+matches, audit-on-lift with right payload, idempotent on second
+pass, skips non-ready_for_review invoices, cross-tenant
+isolation). 838 backend, was 831.
+
+Durable design decisions:
+
+- **Re-match runs on apply AND revert.** Revert can flip what
+  an invoice matches (the master row that lifted it may be
+  gone). The re-match function is idempotent + safe to call.
+- **Audit event per invoice + one summary event.** A bulk
+  proposal touching 50 invoices emits 50
+  `invoice.master_match_lifted_by_sync` events plus one
+  `connectors.rematch_completed` summary. The per-invoice
+  events let the customer see "this specific invoice changed
+  because of that sync"; the summary lets operators see "the
+  apply lifted 27/50 invoices" at a glance.
+- **`triggered_by` is a string, not an enum.** Keeps the
+  function open for non-sync triggers later (e.g. customer
+  master detail page might want a "re-evaluate this customer's
+  pending invoices" button).
+- **No item-master rematch in this slice.** Customer master is
+  the dominant lift case. Item-master rematch (would lift
+  line-item codes when a sync filled in MSIC defaults) is a
+  follow-up.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -7202,7 +7270,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 831 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 838 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

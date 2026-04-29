@@ -757,6 +757,7 @@ def revert_sync_proposal(
     _trigger_rematch_after_apply(
         organization_id=proposal.organization_id,
         proposal_id=proposal.id,
+        triggered_by="connectors.sync_revert",
     )
     return proposal
 
@@ -1021,18 +1022,32 @@ def _trigger_rematch_after_apply(
     *,
     organization_id: uuid.UUID,
     proposal_id: uuid.UUID,
+    triggered_by: str = "connectors.sync_apply",
 ) -> None:
-    """Hook for Slice 76's rematch_pending_invoices.
+    """Run the post-apply / post-revert re-match pass.
 
-    Today this is a no-op — the function logs that an apply / revert
-    happened so an operator can see the trigger fired, but the
-    actual re-match pass that lifts ``ready_for_review`` invoices
-    into ``ready_for_submission`` lands in Slice 76.
+    Walks every ``ready_for_review`` invoice for the org + tries to
+    re-match against the (now-updated) customer master set. Lifts
+    get audited individually with
+    ``invoice.master_match_lifted_by_sync``.
     """
-    logger.info(
-        "connectors.rematch_after_apply.todo",
-        extra={
-            "organization_id": str(organization_id),
-            "proposal_id": str(proposal_id),
-        },
+    from apps.enrichment.rematch import rematch_pending_invoices
+
+    result = rematch_pending_invoices(
+        organization_id=organization_id, triggered_by=triggered_by
     )
+    if result.lifted:
+        record_event(
+            action_type="connectors.rematch_completed",
+            actor_type=AuditEvent.ActorType.SERVICE,
+            actor_id="connectors.sync",
+            organization_id=str(organization_id),
+            affected_entity_type="SyncProposal",
+            affected_entity_id=str(proposal_id),
+            payload={
+                "triggered_by": triggered_by,
+                "rematched": result.rematched,
+                "lifted": result.lifted,
+                "fields_filled_total": result.fields_filled_total,
+            },
+        )
