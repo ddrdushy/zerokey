@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Globe, Phone, ShieldCheck } from "lucide-react";
+import { Building2, Globe, Phone, ShieldCheck, Sparkles } from "lucide-react";
 
 import { api, ApiError, type OrganizationDetail } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
@@ -25,7 +25,8 @@ type EditableOrgField =
   | "contact_phone"
   | "language_preference"
   | "timezone"
-  | "logo_url";
+  | "logo_url"
+  | "extraction_mode";
 
 type Draft = Partial<Record<EditableOrgField, string>>;
 
@@ -197,6 +198,21 @@ export default function OrganizationSettingsPage() {
         </Section>
 
         <Section
+          title="Extraction mode"
+          icon={<Sparkles className="h-4 w-4" />}
+        >
+          <ExtractionModeCard
+            value={
+              (valueOf("extraction_mode") as
+                | "ai_vision"
+                | "ocr_only") || "ai_vision"
+            }
+            dirty={isDirty("extraction_mode")}
+            onChange={(value) => onChangeField("extraction_mode", value)}
+          />
+        </Section>
+
+        <Section
           title="Subscription + certificate"
           icon={<ShieldCheck className="h-4 w-4" />}
         >
@@ -335,5 +351,107 @@ function SaveBar({
 function Pad({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid place-items-center py-24 text-slate-400">{children}</div>
+  );
+}
+
+// Extraction-mode picker — Slice 54. Two radio cards explaining the
+// quality / cost tradeoff. The OCR-only lane is honest about its
+// limitations rather than hiding them behind marketing language.
+function ExtractionModeCard({
+  value,
+  dirty,
+  onChange,
+}: {
+  value: "ai_vision" | "ocr_only";
+  dirty: boolean;
+  onChange: (value: "ai_vision" | "ocr_only") => void;
+}) {
+  return (
+    <div
+      className={[
+        "grid gap-3 md:grid-cols-2",
+        dirty ? "rounded-xl ring-1 ring-amber-200" : "",
+      ].join(" ")}
+    >
+      <ModeRadio
+        active={value === "ai_vision"}
+        title="AI extraction"
+        subtitle="Recommended"
+        priceLabel="~RM0.10–0.30 per invoice"
+        bullets={[
+          "Highest accuracy — handles handwriting, mixed languages, exotic layouts",
+          "Vision-LLM reads + structures the document directly",
+          "Best when document quality is unpredictable",
+        ]}
+        onClick={() => onChange("ai_vision")}
+      />
+      <ModeRadio
+        active={value === "ocr_only"}
+        title="OCR only"
+        subtitle="Cost-saver"
+        priceLabel="No per-document cost"
+        bullets={[
+          "Local OCR + deterministic field extraction; no AI calls",
+          "Best for clean PDFs and standard scans",
+          "May need more manual review on poor-quality or handwritten inputs",
+        ]}
+        onClick={() => onChange("ocr_only")}
+      />
+    </div>
+  );
+}
+
+function ModeRadio({
+  active,
+  title,
+  subtitle,
+  priceLabel,
+  bullets,
+  onClick,
+}: {
+  active: boolean;
+  title: string;
+  subtitle: string;
+  priceLabel: string;
+  bullets: string[];
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={[
+        "flex flex-col gap-2 rounded-xl border px-4 py-4 text-left transition",
+        active
+          ? "border-ink bg-ink/[0.03] ring-1 ring-ink/20"
+          : "border-slate-200 bg-white hover:border-slate-300",
+      ].join(" ")}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span
+            aria-hidden
+            className={[
+              "h-3 w-3 rounded-full border",
+              active ? "border-ink bg-ink" : "border-slate-300 bg-white",
+            ].join(" ")}
+          />
+          <span className="text-base font-semibold">{title}</span>
+        </div>
+        <span className="text-2xs uppercase tracking-wider text-slate-400">
+          {subtitle}
+        </span>
+      </div>
+      <div className="text-2xs font-medium text-slate-600">{priceLabel}</div>
+      <ul className="mt-1 space-y-1.5 text-2xs text-slate-500">
+        {bullets.map((b) => (
+          <li key={b} className="flex gap-2">
+            <span aria-hidden className="mt-1 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
+            <span>{b}</span>
+          </li>
+        ))}
+      </ul>
+    </button>
   );
 }

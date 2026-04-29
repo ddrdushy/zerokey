@@ -116,6 +116,16 @@ class Organization(TimestampedModel):
         SUSPENDED = "suspended", "Suspended"
         CANCELLED = "cancelled", "Cancelled"
 
+    class ExtractionMode(models.TextChoices):
+        # Vision-LLM lane (Claude / Gemini / Ollama-vision) reads the
+        # document and structures it directly. Highest accuracy, per-doc
+        # cost. Default for new organizations.
+        AI_VISION = "ai_vision", "AI extraction"
+        # OCR-only lane (pdfplumber → EasyOCR → regex/LayoutLMv3 floor).
+        # No per-doc cost; lower accuracy on handwriting / low-quality
+        # scans. Best for cost-sensitive customers with clean PDFs.
+        OCR_ONLY = "ocr_only", "OCR only"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     legal_name = models.CharField(max_length=255)
     tin = models.CharField(max_length=32, unique=True)
@@ -143,6 +153,16 @@ class Organization(TimestampedModel):
     logo_url = models.URLField(blank=True)
     language_preference = models.CharField(max_length=10, default="en-MY")
     timezone = models.CharField(max_length=64, default="Asia/Kuala_Lumpur")
+
+    # Per-tenant extraction lane (Slice 54). Default is the AI lane —
+    # accuracy first, customer can opt down to the cost-saver. The
+    # extraction pipeline reads this at run_extraction() and branches
+    # before vision escalation + structurer selection.
+    extraction_mode = models.CharField(
+        max_length=16,
+        choices=ExtractionMode.choices,
+        default=ExtractionMode.AI_VISION,
+    )
 
     class Meta:
         db_table = "identity_organization"

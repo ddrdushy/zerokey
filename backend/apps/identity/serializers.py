@@ -57,6 +57,7 @@ class OrganizationDetailSerializer(serializers.ModelSerializer):
             "logo_url",
             "language_preference",
             "timezone",
+            "extraction_mode",
             "created_at",
             "updated_at",
         ]

@@ -124,6 +124,14 @@ def structure_invoice(invoice_id: UUID | str) -> StructuringResult:
 
     invoice = Invoice.objects.get(id=invoice_id)
 
+    # Slice 54: OCR-only mode never invokes the LLM structurer; it
+    # uses the deterministic regex floor (PaddleOCR table reader +
+    # LayoutLMv3 KIE replace this in Slices 55-56). Branch BEFORE
+    # the engine pick so the LLM-route adapters aren't even
+    # consulted for cost-saver tenants.
+    if _is_ocr_only_org(invoice.organization_id):
+        return _structure_via_regex_floor(invoice=invoice)
+
     try:
         decision = pick_engine(
             capability=Engine.Capability.FIELD_STRUCTURE,
@@ -325,6 +333,53 @@ def _materialise_line_items(invoice: Invoice, raw: Any) -> int:
 
 
 @transaction.atomic
+def _is_ocr_only_org(organization_id) -> bool:
+    """Check the org's extraction mode (Slice 54).
+
+    Lazy import to avoid extraction → submission → identity coupling
+    surfacing at module load. Reads under super_admin elevation —
+    same pattern as the extraction-pipeline lookup.
+    """
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="submission.mode_lookup"):
+        mode = (
+            Organization.objects.filter(id=organization_id)
+            .values_list("extraction_mode", flat=True)
+            .first()
+        )
+    return mode == "ocr_only"
+
+
+def _structure_via_regex_floor(*, invoice: Invoice) -> StructuringResult:
+    """OCR-only lane structurer (Slice 54).
+
+    Calls the regex floor adapter directly — no engine-router lookup,
+    no EngineCall row (cost is zero, latency negligible). Behaves
+    like a regular structuring success for the rest of the pipeline:
+    fields land via ``apply_structured_fields``, line items materialise,
+    enrichment + validation run, validation inbox syncs. The
+    ``invoice.structured`` audit event records ``engine="regex-floor-
+    structurer"`` so operators can tell the lane apart from LLM
+    structurings in the chain.
+    """
+    from apps.extraction.adapters.regex_adapter import RegexFloorStructurer
+
+    target_schema = [*INVOICE_HEADER_FIELDS, LINE_ITEMS_KEY]
+    structurer = RegexFloorStructurer()
+    result = structurer.structure_fields(
+        text=invoice.raw_extracted_text, target_schema=target_schema
+    )
+    return apply_structured_fields(
+        invoice=invoice,
+        engine_name=structurer.name,
+        fields=result.fields,
+        per_field_confidence=result.per_field_confidence,
+        overall_confidence=result.overall_confidence,
+    )
+
+
 def finalize_invoice_without_structuring(
     *, invoice: Invoice, reason: str
 ) -> StructuringResult:

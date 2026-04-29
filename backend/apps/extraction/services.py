@@ -213,12 +213,28 @@ def run_extraction(job_id: UUID | str) -> ExtractionResult:
     else:
         recorded_engine_name = decision.engine.name
 
-    vision_outcome = _maybe_escalate_to_vision(
-        job=job,
-        primary_engine=decision.engine,
-        primary_confidence=result.confidence,
-        body=body,
-    )
+    # Slice 54: respect the per-tenant extraction mode. ``ocr_only`` mode
+    # short-circuits the vision-escalation path so customers in the
+    # cost-saver lane never pay for an LLM vision call. The
+    # FieldStructure step (downstream of _complete) reads the same flag
+    # and uses the regex floor structurer instead of Claude/Ollama.
+    if _extraction_mode_for_org(job.organization_id) == "ocr_only":
+        vision_outcome = VisionEscalationOutcome(
+            attempted=False,
+            applied=False,
+            engine_name="",
+            fields={},
+            per_field_confidence={},
+            overall_confidence=0.0,
+            reason="ocr_only_mode",
+        )
+    else:
+        vision_outcome = _maybe_escalate_to_vision(
+            job=job,
+            primary_engine=decision.engine,
+            primary_confidence=result.confidence,
+            body=body,
+        )
 
     _complete(
         job,
@@ -235,6 +251,29 @@ def run_extraction(job_id: UUID | str) -> ExtractionResult:
         confidence=result.confidence,
         text_length=len(result.text),
     )
+
+
+# --- extraction-mode lookup (Slice 54) ----------------------------------------------
+
+
+def _extraction_mode_for_org(organization_id) -> str:
+    """Return the org's chosen extraction lane (``ai_vision`` | ``ocr_only``).
+
+    Lazy import + super-admin elevation so the worker (which has just
+    ``set_tenant`` to this org) can always read the row regardless of
+    its RLS policy. Falls back to ``ai_vision`` if the org row is
+    missing — same default as the model field.
+    """
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="extraction.mode_lookup"):
+        mode = (
+            Organization.objects.filter(id=organization_id)
+            .values_list("extraction_mode", flat=True)
+            .first()
+        )
+    return mode or "ai_vision"
 
 
 # --- OCR escalation (Slice 32) -------------------------------------------------------

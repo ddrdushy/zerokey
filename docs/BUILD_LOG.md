@@ -5082,54 +5082,159 @@ What's deferred:
 
 ---
 
-## Future direction: dual-mode extraction (AI vs OCR-only)
+### Slice 54 — Two-mode extraction selector (AI vision vs OCR-only)
 
-A planned product surface, not yet built. Customers will pick
-between two extraction lanes at the org or per-upload level:
+The first of three slices implementing dual-mode extraction.
+Slice 54 ships the *selector* + per-tenant plumbing; Slices 55
+(PaddleOCR + PP-Structure tables) and 56 (LayoutLMv3 KIE)
+upgrade the OCR lane's quality.
 
-| Lane | What runs | Per-doc cost | Best for |
-|---|---|---|---|
-| **AI Extraction** | Vision-LLM (Claude / Gemini / Ollama-vision) reads + structures directly | ~RM0.10–0.30 | Highest accuracy, handles handwriting, mixed-language |
-| **OCR Only** | pdfplumber → PaddleOCR → PP-Structure (tables) → LayoutLMv3 (key fields) | RM0 | Clean PDFs / scans, cost-sensitive customers |
+Backend:
 
-Both lanes produce the same `Invoice` payload — downstream
-(validation, signing, submission) doesn't care which lane
-ran. Toggle lives at three levels:
+- **`Organization.extraction_mode`** — TextChoices field with
+  values `ai_vision` (default) and `ocr_only`. Migration
+  `identity/0008_extraction_mode` adds the column with
+  default `ai_vision` so all existing tenants stay on the
+  current behavior. Audited as `identity.organization.updated`
+  with field-name only — never the value, since tenants
+  switching to `ocr_only` is arguably commercial-sensitive
+  signal.
+- **`apps.extraction.adapters.regex_adapter.RegexFloorStructurer`** —
+  deterministic field structurer. Implements
+  `FieldStructureEngine` so it slots into the same call site
+  as the LLM structurers but invokes zero external services.
+  Pulls out invoice number, dates, currency, supplier TIN,
+  SST number, totals, subtotal, tax via labelled-line regex;
+  line items via a coarse `<desc> <qty> <unit> <total>` row
+  matcher that emits a JSON array of `{description, quantity,
+  unit_price, line_total}`. Confidence scoring is fixed-band
+  (0.6–0.75 per hit) and overall scales by coverage so a
+  document yielding 8/10 fields scores higher than one
+  yielding 2/10. Cost is always 0.
+- **`apps.extraction.services.run_extraction`** — branches on
+  the mode. In `ocr_only` mode the vision-escalation path is
+  short-circuited (the tenant never pays for an LLM vision
+  call); in `ai_vision` mode the existing escalation runs
+  unchanged. The OCR fallback (Slice 32) still runs in both
+  modes — that's deterministic + free, so it's part of the
+  shared text-extraction floor.
+- **`apps.submission.services.structure_invoice`** — branches
+  on the mode. `ocr_only` calls `RegexFloorStructurer` directly,
+  bypassing the engine router so LLM-route adapters aren't
+  even consulted. `ai_vision` uses the existing pick_engine
+  flow. Both lanes converge on `apply_structured_fields`,
+  so downstream (enrichment, validation, line-item
+  materialization, validation inbox sync) doesn't care which
+  lane produced the fields.
+- **`update_organization` allowlist** — `extraction_mode`
+  added to `EDITABLE_ORGANIZATION_FIELDS`. The update path
+  validates the value against `_EXTRACTION_MODE_VALUES` so
+  a 400 surfaces immediately on a typo or attack — Django's
+  ORM doesn't enforce TextChoices on `.save()`.
 
-1. `Organization.extraction_mode` (default per-org)
-2. Per-upload override on the dropzone
-3. Auto-fallback: if OCR-only confidence < threshold, surface
-   "process with AI?" on the review screen — cost transparent
+Frontend:
 
-Slices to build (in order of impact):
+- **Settings → Extraction mode card** — two radio buttons.
+  Each card shows title + price band + 3 honest bullets:
+  - **AI extraction** (recommended): "~RM0.10–0.30 per
+    invoice / Highest accuracy / Best when document quality
+    is unpredictable."
+  - **OCR only** (cost-saver): "No per-document cost / Best
+    for clean PDFs / May need more manual review on poor-
+    quality or handwritten inputs."
+  Honest about tradeoffs rather than hiding the OCR lane's
+  weaknesses behind marketing language.
+- **`OrganizationDetail.extraction_mode`** added to API type.
+  Same FieldRow / SaveBar pattern as the rest of the
+  Settings page — change the radio, hit Save, audit fires.
 
-- **Slice 54** — `Organization.extraction_mode` field + Settings
-  UI radio + per-upload override + pipeline branch. OCR-only
-  uses a regex floor structurer so the lane is functional
-  before the better engines land.
-- **Slice 55** — PaddleOCR + PP-Structure as engines registered
-  in the existing engine registry, scoped to the OCR-only mode.
-  Tables feed line items deterministically (closes the most
-  common failure mode: merged columns in flat OCR).
-- **Slice 56** — LayoutLMv3 KIE for invoice header fields
-  (vendor TIN, invoice number, totals). Pretrained HuggingFace
-  checkpoint. Confidence scoring drives the auto-flag-for-review
-  logic. After this lands, the OCR lane is competitive on
-  standard invoices; only handwriting and exotic layouts still
-  need the AI lane.
+Tests: 14 new (543 passing total, was 529). Cover:
+- `RegexFloorStructurer` extracts invoice number, dates,
+  currency, supplier TIN, totals with thousand separators,
+  per-field confidence populated, zero cost, line items
+  returned as JSON-string.
+- Sparse text returns empty result without crashing.
+- Overall confidence scales with coverage.
+- `Organization.extraction_mode` defaults to `ai_vision`.
+- PATCH switches the value; audit captures field name only
+  (asserts the literal value `"ocr_only"` never appears in
+  the JSON-serialised audit payload).
+- PATCH with invalid value (`"magic_unicorn"`) returns 400.
+- GET returns the field in the org payload.
 
-Why not adopt MindOCR directly: framework cost (MindSpore +
+Verified live: switched a test org to `ocr_only`, uploaded
+the same Acme invoice that previously routed through Claude;
+extraction completed in <1s with zero cost, regex floor
+populated 7 of 11 header fields + 2 line items, validation
+inbox surfaced the missing fields as expected.
+
+Durable design decisions:
+
+- **Per-tenant default = `ai_vision`.** New customers
+  optimize for "does it work?" before "is it cheap?"; the
+  first invoice extraction is a make-or-break moment for
+  retention. Surface the cost-saver lane as an opt-in once
+  the customer trusts the product.
+- **Audit field-name only on mode change.** Some customers
+  may not want competitors knowing they're on the cost-saver
+  lane. Field name leaks the *capability* edit, not the
+  commercial position.
+- **Branch BEFORE the engine router, not inside it.** Adding
+  a `mode_filter` column on the Engine row + filtering at
+  routing time would be more uniform — but it would couple
+  the registry to a tenant attribute the registry doesn't
+  otherwise know about, and it would make engine selection
+  silently fail in ways that look like routing bugs. The
+  explicit two-line branch in `run_extraction` /
+  `structure_invoice` is more honest about what's
+  happening.
+- **Regex floor stays as the last-resort even after Slices
+  55 + 56.** PP-Structure / LayoutLMv3 will own the primary
+  OCR-lane structurer, but they can both come back empty.
+  The regex floor is the floor — never an empty Invoice if
+  there's any plausible labelled value in the OCR text.
+- **Per-upload override deferred.** Three knobs (org
+  default, per-upload override, auto-fallback) is too many
+  for one slice. Org default ships first; per-upload
+  override is a future enhancement when we see customers
+  actually wanting it (instrument the audit log first).
+- **No EngineCall row for the regex floor.** Cost is zero,
+  latency is sub-millisecond — recording it would clutter
+  the engine-call dashboard with rows that don't represent
+  paid spend. The structuring engine_name on the Invoice
+  (`regex-floor-structurer`) is the breadcrumb operators
+  need.
+
+What's deferred:
+
+- **Per-upload override** on the dropzone (org default for now).
+- **Auto-fallback** ("OCR-only confidence < threshold; offer
+  AI") — needs the auto-flag-for-review logic from Slice 56.
+- **PaddleOCR + PP-Structure** (Slice 55).
+- **LayoutLMv3 KIE for header fields** (Slice 56).
+
+---
+
+## Future direction: OCR-lane quality lifts (planned)
+
+Slice 54 lands the selector + a regex floor structurer for
+the OCR-only lane. Two follow-up slices close the quality
+gap with the AI lane (numbering tentative — re-ordered below
+the more critical security + signing work):
+
+- **PaddleOCR + PP-Structure** — replaces EasyOCR in the
+  OCR-only lane. PP-Structure detects tables → line items
+  fed deterministically rather than guessing from flat text.
+  Closes the "merged columns" failure mode that costs the
+  regex floor most of its line-item accuracy.
+- **LayoutLMv3 KIE** — pretrained HuggingFace checkpoint for
+  invoice header fields (vendor TIN, invoice number, totals).
+  Confidence scoring drives auto-flag-for-review.
+
+Why not MindOCR directly: framework cost (MindSpore +
 PyTorch in the same container) outweighs the convenience.
 PaddleOCR + LayoutLMv3 cover the same surface on a stack we
 already run.
-
-Why this is a real product feature, not just plumbing: SME
-customers are highly cost-sensitive about per-document AI
-costs and want a "free tier" extraction option. Larger
-customers with messier inputs prefer the AI lane and accept
-the cost. Surfacing the choice is honest about the
-quality/cost tradeoff rather than hiding it behind a single
-opaque pipeline.
 
 ---
 

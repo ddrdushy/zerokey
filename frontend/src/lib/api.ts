@@ -507,6 +507,8 @@ export type OrganizationDetail = {
   logo_url: string;
   language_preference: string;
   timezone: string;
+  /** "ai_vision" (default) | "ocr_only" — Slice 54 extraction lane. */
+  extraction_mode: "ai_vision" | "ocr_only";
   created_at: string;
   updated_at: string;
 };

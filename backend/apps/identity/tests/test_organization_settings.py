@@ -17,6 +17,8 @@ Covers the contract the customer's settings page relies on:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from django.test import Client
 
@@ -224,3 +226,51 @@ class TestOrganizationDetailEndpoint:
 
         response = client.get("/api/v1/identity/organization/")
         assert response.status_code == 403
+
+
+@pytest.mark.django_db
+class TestExtractionMode:
+    """Slice 54: per-tenant extraction lane (ai_vision | ocr_only)."""
+
+    def test_default_is_ai_vision(self, org_user) -> None:
+        org, _ = org_user
+        # Org freshly created — never set the field — default applies.
+        assert org.extraction_mode == "ai_vision"
+
+    def test_patch_sets_ocr_only(self, authed) -> None:
+        client, org, _ = authed
+        response = client.patch(
+            "/api/v1/identity/organization/",
+            data=json.dumps({"extraction_mode": "ocr_only"}),
+            content_type="application/json",
+        )
+        assert response.status_code == 200
+        org.refresh_from_db()
+        assert org.extraction_mode == "ocr_only"
+        # Audit recorded with field-name only (PII-clean).
+        from apps.audit.models import AuditEvent
+
+        event = (
+            AuditEvent.objects.filter(action_type="identity.organization.updated")
+            .order_by("-sequence")
+            .first()
+        )
+        assert event is not None
+        assert "extraction_mode" in event.payload["changed_fields"]
+        # Value MUST NOT appear in payload.
+        assert "ocr_only" not in json.dumps(event.payload)
+
+    def test_patch_invalid_value_400(self, authed) -> None:
+        client, _, _ = authed
+        response = client.patch(
+            "/api/v1/identity/organization/",
+            data=json.dumps({"extraction_mode": "magic_unicorn"}),
+            content_type="application/json",
+        )
+        assert response.status_code == 400
+
+    def test_extraction_mode_in_get_payload(self, authed) -> None:
+        client, _, _ = authed
+        response = client.get("/api/v1/identity/organization/")
+        body = response.json()
+        assert body["extraction_mode"] in {"ai_vision", "ocr_only"}

@@ -173,8 +173,16 @@ EDITABLE_ORGANIZATION_FIELDS: frozenset[str] = frozenset(
         "language_preference",
         "timezone",
         "logo_url",
+        # Slice 54 — pick the extraction lane (AI vs OCR-only).
+        "extraction_mode",
     }
 )
+
+# extraction_mode is constrained to one of these literal values; the
+# update path validates explicitly so an attacker can't poke through
+# arbitrary strings (the model field is choices-constrained but
+# Django's ORM doesn't enforce that on .save()).
+_EXTRACTION_MODE_VALUES: frozenset[str] = frozenset({"ai_vision", "ocr_only"})
 
 
 class OrganizationUpdateError(Exception):
@@ -211,6 +219,11 @@ def update_organization(
         new_value = "" if raw_value is None else str(raw_value)
         if field_name == "legal_name" and not new_value.strip():
             raise OrganizationUpdateError("legal_name cannot be empty.")
+        if field_name == "extraction_mode" and new_value not in _EXTRACTION_MODE_VALUES:
+            raise OrganizationUpdateError(
+                f"extraction_mode must be one of {sorted(_EXTRACTION_MODE_VALUES)}; "
+                f"got {new_value!r}."
+            )
         previous = getattr(org, field_name) or ""
         if previous == new_value:
             continue
