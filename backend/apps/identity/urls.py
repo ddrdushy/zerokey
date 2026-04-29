@@ -22,6 +22,8 @@ urlpatterns = [
     path("login/", views.login_view, name="login"),
     path("logout/", views.logout_view, name="logout"),
     path("me/", views.me, name="me"),
+    # Slice 86 — UI preferences (preferred_language for now).
+    path("me/preferences/", views.update_preferences, name="me-preferences"),
     path("switch-organization/", views.switch_organization, name="switch-organization"),
     path("organization/", views.organization_detail, name="organization-detail"),
     path(

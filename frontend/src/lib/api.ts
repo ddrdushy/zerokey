@@ -1364,6 +1364,12 @@ export const api = {
     }),
   uploadCsvSync,
   uploadAutoCountSync,
+  // Slice 86 — UI preferences (preferred_language).
+  updatePreferences: (updates: { preferred_language?: string }) =>
+    request<{ ok: boolean; changed_fields: string[]; preferred_language: string }>(
+      "/identity/me/preferences/",
+      { method: "PATCH", body: JSON.stringify(updates) },
+    ),
   getProposal: (id: string) => request<SyncProposalRow>(`/connectors/proposals/${id}/`),
   applyProposal: (id: string) =>
     request<SyncProposalRow>(`/connectors/proposals/${id}/apply/`, {

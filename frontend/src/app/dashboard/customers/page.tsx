@@ -12,9 +12,11 @@ import { CheckCircle2, ShieldQuestion, Users } from "lucide-react";
 
 import { api, ApiError, type Customer } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
+import { useT } from "@/lib/i18n";
 
 export default function CustomersPage() {
   const router = useRouter();
+  const t = useT();
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,14 +39,16 @@ export default function CustomersPage() {
       <div className="flex flex-col gap-6">
         <header className="flex items-end justify-between">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight">Customers</h1>
+            <h1 className="font-display text-2xl font-bold tracking-tight">
+              {t("customers.title")}
+            </h1>
             <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
-              Buyers ZeroKey has learned from your invoices
+              {t("customers.subtitle")}
             </p>
           </div>
           {customers && customers.length > 0 && (
             <span className="text-2xs uppercase tracking-wider text-slate-400">
-              {customers.length} total
+              {t("customers.count", { count: customers.length })}
             </span>
           )}
         </header>

@@ -7720,6 +7720,75 @@ hand-edit `SystemSetting` from `/django-admin/`):
 
 ---
 
+### Slice 86 — i18n scaffold + Bahasa Malaysia
+
+VISUAL_IDENTITY.md commits the platform to four first-class
+locales (EN, BM, ZH, TA). Slice 86 ships the scaffold plus
+translated strings for the highest-traffic surfaces: nav, dashboard
+top, customers / items list pages, common actions. ZH + TA are
+listed as supported but fall back to EN until their tables land
+(no behaviour change vs today; the scaffold is in place when
+translators arrive).
+
+Architectural choice: a small client-side translation layer
+instead of route-segment-based i18n. SME users don't need
+locale-tagged URLs, and adopting `/[locale]/...` would have been
+a high-blast-radius restructure of the entire dashboard tree.
+
+Frontend:
+
+- **`frontend/src/lib/i18n.ts`** — `useT()` hook + `translate()`
+  function + `getLocale()` / `setLocale()`. Resolution order:
+  localStorage → server `preferred_language` → `navigator.language`
+  → `en-MY`. Variable substitution via `{name}` syntax. Dev-mode
+  warning on missing keys.
+- **`frontend/src/locales/en.ts`** + **`bm.ts`** — translation
+  tables, dot-namespaced keys (`nav.*`, `dashboard.*`,
+  `customers.*`, `auth.*`, `action.*`).
+- **AppShell sidebar** — `NAV_GROUPS` migrated from `label` to
+  `labelKey`; renders via `useT()`.
+- **Language switcher** in the user-avatar dropdown — flips
+  immediately + best-effort persists via the new preferences
+  endpoint.
+- **Customers list page** — translated header strings.
+
+Backend:
+
+- **`PATCH /api/v1/identity/me/preferences/`** —
+  `update_preferences` view. Allowlist: `preferred_language`
+  ∈ {en-MY, bm-MY, zh-MY, ta-MY}. No-op when the value matches
+  what's already on file.
+
+Tests: 5 new backend (happy path, unsupported locale rejection,
+no-op same-value, unauthenticated 401/403, all four supported
+locales accepted). 953 total, was 948.
+
+Durable design decisions:
+
+- **Client-side strings, not route-segment locales.** SME
+  customers don't share locale-tagged URLs and the whole
+  dashboard tree would need to move under `/[locale]/...` —
+  cost outweighs benefit at our scale.
+- **Server source of truth + localStorage cache.** Local flip
+  is instant (no round-trip on every nav); the server save is
+  best-effort + fires-and-forgets so the persistence call
+  doesn't block the UI. Re-sign-in re-reads server state.
+- **EN fallback for missing keys.** A dev-mode warning makes
+  untranslated strings visible without breaking production.
+  Better than throwing — partial translation is better than no
+  translation.
+- **ZH + TA listed but unstyled.** The scaffold supports them;
+  the tables are placeholder-empty (fall back to EN). This
+  marks them as known TODO without committing to ship dates we
+  can't keep.
+- **`labelKey`, not `label`.** Migrating constants to translation
+  keys at definition time means the translation lookup happens
+  exactly once per render, in the component that decides what
+  to display. No double-translation, no missed strings in
+  dynamic mappings.
+
+---
+
 ### Slice 85 — AutoCount connector
 
 First concrete connector. Turns the abstract `IntegrationConfig`
@@ -8211,6 +8280,10 @@ state isn't confused):
 - ~~**AutoCount connector**~~ — Slice 85. CSV-driven adapter
   with baked-in AutoCount Debtor List / Stock Item column
   mapping; no column-mapping wizard required.
+- ~~**i18n scaffold + Bahasa Malaysia**~~ — Slice 86. Client-
+  side translation layer (`@/lib/i18n`), EN + BM tables
+  (~30 high-traffic keys), language switcher in the user
+  dropdown, persisted via `PATCH /identity/me/preferences/`.
 - ~~**Billing + Stripe**~~ — Slice 63 + Slice 65 (Subscribe
   UI). FPX is part of Stripe checkout; nothing else needed.
 - ~~**PII field-level encryption**~~ — covered by Slice 55's

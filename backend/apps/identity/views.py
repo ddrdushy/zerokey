@@ -107,6 +107,52 @@ def me(request: Request) -> Response:
     return Response(UserSerializer(request.user, context={"request": request}).data)
 
 
+# Slice 86 — locale supported by ZeroKey's i18n scaffold. Keep this
+# list aligned with frontend/src/lib/i18n.ts SUPPORTED_LOCALES.
+SUPPORTED_LOCALES = frozenset({"en-MY", "bm-MY", "zh-MY", "ta-MY"})
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def update_preferences(request: Request) -> Response:
+    """Update the active user's UI preferences (Slice 86).
+
+    Currently accepts ``preferred_language`` only. Other UI
+    preferences will share this endpoint as we add them.
+    """
+    body = request.data or {}
+    if not isinstance(body, dict):
+        return Response(
+            {"detail": "Body must be a JSON object."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    changed = []
+    if "preferred_language" in body:
+        lang = str(body["preferred_language"] or "").strip()
+        if lang not in SUPPORTED_LOCALES:
+            return Response(
+                {
+                    "detail": (
+                        f"preferred_language must be one of {sorted(SUPPORTED_LOCALES)}; got {lang!r}."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if request.user.preferred_language != lang:
+            request.user.preferred_language = lang
+            request.user.save(update_fields=["preferred_language"])
+            changed.append("preferred_language")
+
+    return Response(
+        {
+            "ok": True,
+            "changed_fields": changed,
+            "preferred_language": request.user.preferred_language,
+        }
+    )
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def switch_organization(request: Request) -> Response:

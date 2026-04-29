@@ -20,6 +20,7 @@ import {
 
 import { api, type Me } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useT, getLocale, setLocale, SUPPORTED_LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 import { NotificationBell } from "./NotificationBell";
 import { CertExpiryBanner } from "./CertExpiryBanner";
@@ -29,41 +30,44 @@ import { CertExpiryBanner } from "./CertExpiryBanner";
 // built yet are visibly disabled so the user knows what's coming.
 
 type NavItem = {
-  label: string;
+  // Slice 86 — labels resolve through the i18n table at render
+  // time. ``labelKey`` is a translation key (e.g. "nav.invoices");
+  // the EN fallback is kept in en.ts.
+  labelKey: string;
   href?: string;
   icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
 };
 
 type NavGroup = {
-  label?: string;
+  labelKey?: string;
   items: NavItem[];
 };
 
 const NAV_GROUPS: NavGroup[] = [
   {
-    items: [{ label: "Dashboard", href: "/dashboard", icon: LayoutDashboard }],
+    items: [{ labelKey: "nav.dashboard", href: "/dashboard", icon: LayoutDashboard }],
   },
   {
-    label: "Workflow",
+    labelKey: "nav.workflow",
     items: [
-      { label: "Inbox", href: "/dashboard/inbox", icon: Inbox },
-      { label: "Invoices", href: "/dashboard/invoices", icon: FileText },
-      { label: "Customers", href: "/dashboard/customers", icon: Users },
-      { label: "Items", href: "/dashboard/items", icon: Package },
-      { label: "Connectors", href: "/dashboard/connectors", icon: Plug },
+      { labelKey: "nav.inbox", href: "/dashboard/inbox", icon: Inbox },
+      { labelKey: "nav.invoices", href: "/dashboard/invoices", icon: FileText },
+      { labelKey: "nav.customers", href: "/dashboard/customers", icon: Users },
+      { labelKey: "nav.items", href: "/dashboard/items", icon: Package },
+      { labelKey: "nav.connectors", href: "/dashboard/connectors", icon: Plug },
     ],
   },
   {
-    label: "Compliance",
+    labelKey: "nav.compliance",
     items: [
-      { label: "Audit log", href: "/dashboard/audit", icon: ShieldCheck },
-      { label: "Engine activity", href: "/dashboard/engines", icon: Sparkles },
+      { labelKey: "nav.audit", href: "/dashboard/audit", icon: ShieldCheck },
+      { labelKey: "nav.engines", href: "/dashboard/engines", icon: Sparkles },
     ],
   },
   {
-    label: "Settings",
-    items: [{ label: "Organization", href: "/dashboard/settings", icon: Settings }],
+    labelKey: "nav.settings_group",
+    items: [{ labelKey: "nav.settings", href: "/dashboard/settings", icon: Settings }],
   },
 ];
 
@@ -109,6 +113,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
 function Sidebar() {
   const pathname = usePathname();
+  const t = useT();
   return (
     <aside className="hidden w-60 flex-col border-r border-slate-800 bg-ink text-paper md:flex">
       <Link
@@ -120,15 +125,16 @@ function Sidebar() {
       <nav className="flex-1 overflow-y-auto px-3 py-2">
         {NAV_GROUPS.map((group, idx) => (
           <div key={idx} className="mb-6">
-            {group.label && (
+            {group.labelKey && (
               <div className="px-3 py-2 text-2xs font-semibold uppercase tracking-wider text-slate-400">
-                {group.label}
+                {t(group.labelKey)}
               </div>
             )}
             <ul className="space-y-0.5">
               {group.items.map((item) => {
                 const active = item.href === pathname;
                 const Icon = item.icon;
+                const label = t(item.labelKey);
                 const className = cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-xs font-medium transition-colors duration-ack ease-zk",
                   active
@@ -138,10 +144,10 @@ function Sidebar() {
                 );
                 if (item.disabled || !item.href) {
                   return (
-                    <li key={item.label}>
+                    <li key={item.labelKey}>
                       <span className={className} aria-disabled="true">
                         <Icon className="h-4 w-4" />
-                        {item.label}
+                        {label}
                         <span className="ml-auto text-2xs uppercase tracking-wider text-slate-500">
                           soon
                         </span>
@@ -150,10 +156,10 @@ function Sidebar() {
                   );
                 }
                 return (
-                  <li key={item.label}>
+                  <li key={item.labelKey}>
                     <Link href={item.href} className={className}>
                       <Icon className="h-4 w-4" />
-                      {item.label}
+                      {label}
                     </Link>
                   </li>
                 );
@@ -222,6 +228,8 @@ function TopBar({
           </button>
           {menuOpen && (
             <div className="absolute right-0 top-full mt-2 w-56 rounded-md border border-slate-100 bg-white p-1 shadow-md">
+              <LanguageMenu />
+              <div className="my-1 border-t border-slate-100" />
               <button
                 type="button"
                 onClick={onLogout}
@@ -234,5 +242,43 @@ function TopBar({
         </div>
       </div>
     </header>
+  );
+}
+
+// Slice 86 — language switcher in the user dropdown.
+//
+// Stored in localStorage immediately for instant flip + best-
+// effort persisted to the server so it survives a fresh sign-in.
+// Server failure is non-blocking: the local choice still applies
+// for this session (the next sign-in re-reads server state).
+function LanguageMenu() {
+  const t = useT();
+  const [active, setActive] = useState(getLocale());
+  return (
+    <div className="px-2 pb-1 pt-2">
+      <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+        {t("settings.language.title")}
+      </div>
+      <div className="flex flex-col">
+        {SUPPORTED_LOCALES.map((loc) => (
+          <button
+            key={loc}
+            type="button"
+            onClick={() => {
+              setLocale(loc);
+              setActive(loc);
+              api.updatePreferences({ preferred_language: loc }).catch(() => {});
+            }}
+            className={cn(
+              "flex items-center justify-between rounded-md px-2 py-1.5 text-xs hover:bg-slate-50",
+              active === loc ? "font-medium text-ink" : "text-slate-600",
+            )}
+          >
+            <span>{LOCALE_LABELS[loc]}</span>
+            {active === loc && <span className="text-2xs text-success">✓</span>}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
