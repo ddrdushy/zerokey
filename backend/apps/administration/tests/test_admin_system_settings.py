@@ -95,7 +95,10 @@ class TestAdminUpdateSystemSetting:
         assert response.status_code == 200
 
         setting = SystemSetting.objects.get(namespace="stripe")
-        assert setting.values["secret_key"] == "sk_live_rotated"
+        # Slice 55: at-rest ciphertext; decrypt for plaintext compare.
+        from apps.administration.crypto import decrypt_value
+
+        assert decrypt_value(setting.values["secret_key"]) == "sk_live_rotated"
 
         # Audit event records key NAME only, never the value.
         event = (
@@ -120,8 +123,13 @@ class TestAdminUpdateSystemSetting:
         assert response.status_code == 200
         stripe_setting.refresh_from_db()
         assert "secret_key" not in stripe_setting.values
-        # Other fields untouched.
-        assert stripe_setting.values["publishable_key"] == "pk_live_existing"
+        # Other fields untouched. (Slice 55: stored ciphertext.)
+        from apps.administration.crypto import decrypt_value
+
+        assert (
+            decrypt_value(stripe_setting.values["publishable_key"])
+            == "pk_live_existing"
+        )
 
     def test_set_non_credential_value(self, staff_user) -> None:
         client = Client()
@@ -136,7 +144,12 @@ class TestAdminUpdateSystemSetting:
         )
         assert response.status_code == 200
         setting = SystemSetting.objects.get(namespace="lhdn")
-        assert setting.values["base_url"] == "https://api.myinvois.hasil.gov.my"
+        from apps.administration.crypto import decrypt_value
+
+        assert (
+            decrypt_value(setting.values["base_url"])
+            == "https://api.myinvois.hasil.gov.my"
+        )
 
     def test_unknown_namespace_400(self, staff_user) -> None:
         client = Client()
@@ -204,8 +217,11 @@ class TestAdminUpdateSystemSetting:
         )
         assert response.status_code == 200
         setting = SystemSetting.objects.get(namespace="email")
-        assert setting.values["smtp_host"] == "smtp.eu-west-1.amazonaws.com"
-        assert setting.values["smtp_password"] == "secret-rotation-1"
+        # Slice 55: at-rest ciphertext.
+        from apps.administration.crypto import decrypt_value
+
+        assert decrypt_value(setting.values["smtp_host"]) == "smtp.eu-west-1.amazonaws.com"
+        assert decrypt_value(setting.values["smtp_password"]) == "secret-rotation-1"
         # Body wouldn't return the password back.
         body = response.json()
         assert body["credential_keys"]["smtp_password"] is True

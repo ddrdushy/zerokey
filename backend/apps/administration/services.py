@@ -71,9 +71,16 @@ def system_setting(
     """
     setting = SystemSetting.objects.filter(namespace=namespace).first()
     if setting is not None:
-        value = setting.values.get(key)
-        if value not in (None, ""):
-            return str(value)
+        # Slice 55: SystemSetting.values stores ciphertext at rest.
+        # decrypt_value passes legacy plaintext through unchanged so
+        # rows written before the encryption rollout still work.
+        from .crypto import decrypt_value
+
+        raw = setting.values.get(key)
+        if raw not in (None, ""):
+            value = decrypt_value(raw) if isinstance(raw, str) else raw
+            if value not in (None, ""):
+                return str(value)
 
     if env_fallback:
         env_value = os.environ.get(env_fallback, "").strip()
@@ -114,17 +121,24 @@ def upsert_system_setting(
     The audit payload records WHICH keys changed (by name) but never the
     values themselves — credentials must not leak into the audit log.
     """
+    # Slice 55: encrypt-on-write — every string value lands as
+    # ciphertext at rest. Keys stay plaintext (the audit log
+    # records WHICH keys changed by name, which is a feature).
+    from .crypto import encrypt_dict_values
+
+    encrypted_values = encrypt_dict_values(values)
+
     setting, created = SystemSetting.objects.get_or_create(
         namespace=namespace,
         defaults={
-            "values": values,
+            "values": encrypted_values,
             "description": description,
             "updated_by_id": updated_by_id,
         },
     )
     if not created:
         previous_keys = set(setting.values.keys())
-        setting.values = values
+        setting.values = encrypted_values
         if description:
             setting.description = description
         setting.updated_by_id = updated_by_id
@@ -1157,23 +1171,28 @@ def admin_update_system_setting(
                 "updated_by_id": actor_user_id,
             },
         )
-        current = dict(setting.values or {})
+        # Slice 55: stored values are ciphertext; compare in plaintext
+        # so a no-op update doesn't fire false "changed" events, then
+        # re-encrypt on write.
+        from .crypto import decrypt_dict_values, encrypt_dict_values
+
+        current_plain = decrypt_dict_values(dict(setting.values or {}))
         changed_keys: list[str] = []
         for key, value in field_updates.items():
             value_str = "" if value is None else str(value)
             if value_str == "":
-                if key in current:
-                    del current[key]
+                if key in current_plain:
+                    del current_plain[key]
                     changed_keys.append(key)
             else:
-                if current.get(key) != value_str:
-                    current[key] = value_str
+                if current_plain.get(key) != value_str:
+                    current_plain[key] = value_str
                     changed_keys.append(key)
 
         if not changed_keys:
             return _system_setting_admin_dict(setting, schema)
 
-        setting.values = current
+        setting.values = encrypt_dict_values(current_plain)
         setting.updated_by_id = actor_user_id
         setting.save(update_fields=["values", "updated_by_id", "updated_at"])
 
@@ -1197,7 +1216,13 @@ def admin_update_system_setting(
 def _system_setting_admin_dict(
     setting: SystemSetting, schema: dict[str, Any]
 ) -> dict[str, Any]:
-    stored = setting.values or {}
+    # Slice 55: stored values are ciphertext at rest. Decrypt for the
+    # admin-surface readout — non-credential values must round-trip
+    # to the UI in plaintext (host names, region codes, etc.). Credential
+    # *presence* booleans don't need plaintext.
+    from .crypto import decrypt_dict_values
+
+    stored = decrypt_dict_values(setting.values or {})
     cred_keys = {f["key"] for f in schema["fields"] if f["kind"] == "credential"}
     non_cred_values = {
         k: str(v) for k, v in stored.items() if k not in cred_keys
@@ -1783,19 +1808,24 @@ def update_engine(
 
         changed_credential_keys: list[str] = []
         if credential_updates:
-            current = dict(engine.credentials or {})
+            # Slice 55: credentials are ciphertext at rest. Decrypt to
+            # compare in plaintext (so a no-op re-save doesn't show
+            # spurious "changed" entries) then re-encrypt on write.
+            from .crypto import decrypt_dict_values, encrypt_dict_values
+
+            current_plain = decrypt_dict_values(dict(engine.credentials or {}))
             for key, value in credential_updates.items():
                 if not isinstance(key, str) or not key:
                     raise EngineUpdateError("Credential keys must be non-empty strings.")
                 if value == "":
-                    if key in current:
-                        del current[key]
+                    if key in current_plain:
+                        del current_plain[key]
                         changed_credential_keys.append(key)
                 else:
-                    if current.get(key) != value:
-                        current[key] = value
+                    if current_plain.get(key) != value:
+                        current_plain[key] = value
                         changed_credential_keys.append(key)
-            engine.credentials = current
+            engine.credentials = encrypt_dict_values(current_plain)
 
         if not changed_fields and not changed_credential_keys:
             # Nothing actually changed — skip the save + audit so the

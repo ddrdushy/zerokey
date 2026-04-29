@@ -5215,6 +5215,128 @@ What's deferred:
 
 ---
 
+### Slice 55 — KMS envelope encryption bundle
+
+Closes the highest-leverage security gap from the docs audit: the
+`SECURITY.md` design called for envelope encryption on platform
+secrets but `SystemSetting.values` and `Engine.credentials` both
+sat as plaintext JSON in Postgres. Anyone with database access
+could read every customer's LHDN client secret, every vendor API
+key, the SMTP password, the Stripe key.
+
+Slice 55 lands at-rest encryption with a clean KMS swap point.
+
+Backend:
+
+- **`apps.administration.crypto`** — Fernet (AES-128-CBC + HMAC-
+  SHA256, AEAD) with a key derived from `settings.SECRET_KEY` via
+  SHA-256. `encrypt_value` / `decrypt_value` for single strings
+  + `encrypt_dict_values` / `decrypt_dict_values` for the JSON
+  dict columns. Ciphertext carries the `enc1:` marker prefix so
+  the decrypt path distinguishes ciphertext from legacy plaintext
+  on read — no schema column change, no per-row migration mode
+  flag, just a prefix sniff.
+- **Idempotent encrypt** — re-encrypting an already-encrypted
+  value returns it unchanged. The migration that ships with the
+  slice walks every existing row + rewrites; idempotency lets
+  partial-replay safely converge.
+- **Tamper-tolerant decrypt** — flipped-byte ciphertext returns
+  `""` (with a logging warning) rather than raising. The application
+  degrades gracefully to "no value" + the env-fallback path picks
+  up; an operator notices the warning and rotates.
+- **`system_setting` resolver** — decrypts on read.
+- **`upsert_system_setting`** + **`admin_update_system_setting`** —
+  encrypt on write. The latter additionally decrypts the existing
+  values to compare in plaintext (so a no-op resave doesn't fire
+  spurious "changed" entries) then re-encrypts.
+- **`engine_credential` resolver** — same pattern.
+- **`admin update_engine`** + **`_engine_admin_dict`** — same
+  pattern. Note `credential_keys` in the admin readout is just
+  `bool(value)` per key (presence indicator); ciphertext is
+  truthy-non-empty so the contract holds without changes.
+- **Data migration `administration/0005_encrypt_existing_secrets`** —
+  walks every `SystemSetting.values` + `Engine.credentials` row
+  + encrypts plaintext entries. Reversible (decrypt-back) for
+  test-suite migrations; in production a rollback is fine because
+  the read path tolerates ciphertext indefinitely.
+
+Frontend: no changes — the API surface returns plaintext as it
+always did; the encryption is invisible to the customer-facing
+read path.
+
+Tests: 15 new (558 total, was 543). Cover:
+- Single-value roundtrip + idempotent encrypt + tamper detection
+  + ciphertext never contains the plaintext substring.
+- Dict encryption: only string values get encrypted, keys stay
+  plaintext (load-bearing for audit log "WHICH keys changed"
+  semantics), non-strings (ints, bools) pass through unchanged,
+  defensive None handling.
+- Mixed legacy + encrypted dict (the migration-in-progress state)
+  reads correctly.
+- `system_setting` resolver: upsert stores ciphertext at rest +
+  resolver returns plaintext + legacy plaintext rows still resolve.
+- `engine_credential`: same — ciphertext at rest + plaintext
+  on resolve + legacy plaintext compatibility.
+- 7 existing tests updated to decrypt-then-assert (they had been
+  asserting the raw column equalled plaintext; now the row holds
+  ciphertext but the resolver still returns plaintext).
+
+Verified live: dev DB migration ran clean — 5 SystemSetting +
+5 Engine rows transitioned from plaintext to `enc1:`-prefixed
+ciphertext. Re-resaved a webhook test send via the admin UI;
+SMTP password decrypted at delivery time, email landed.
+
+Durable design decisions:
+
+- **Marker prefix, not a column.** Adding `is_encrypted: bool`
+  next to every JSON-typed credential column would have been
+  uniform but noisy + would require a schema migration on every
+  table that gets the treatment. The ciphertext-prefix approach
+  is invisible to the schema; rolling out to a new column is a
+  one-import, one-call change in the consuming service.
+- **Key derived from SECRET_KEY today, KMS-DEK tomorrow.** One
+  less moving piece for dev. Threat-model-correct: an attacker
+  with SECRET_KEY can already forge sessions, signed cookies,
+  password reset tokens — coupling field encryption to the same
+  key doesn't make the situation materially worse. Production
+  swap point is `_dek()` — replace the body with a KMS Decrypt
+  call against an envelope-encrypted DEK. Call sites don't change.
+- **Encrypt values, not keys.** Audit chain records WHICH keys
+  changed when an admin edits a SystemSetting (by name only).
+  That operator-visibility is a feature; encrypting key names
+  would break it without buying confidentiality (the keys are
+  schema-level, not secret).
+- **Idempotent + tamper-tolerant.** Both properties are
+  load-bearing for the operational story: idempotency makes the
+  migration replay-safe, tamper-tolerance turns "DEK rotation
+  half-applied" from a crash into a visible warning + an
+  env-fallback rescue.
+- **Audit field-name only on changes (unchanged).** Existing
+  contract; this slice doesn't alter it. The audit chain still
+  reads "namespace.lhdn keys: [client_id, client_secret] changed"
+  — never the values, never the ciphertext.
+
+What's deferred:
+
+- **Organization PII** (contact_email, contact_phone,
+  registered_address) — these are plaintext today by docs
+  acknowledgement. Encrypting them now would break the cross-
+  tenant lookups the platform does on contact_email (e.g. "find
+  org by contact email" in support flows). Deterministic /
+  searchable encryption is the right tool there + a separate
+  slice.
+- **Audit chain Ed25519 signature column** (also flagged by the
+  docs audit). Distinct cryptographic primitive; deserves its
+  own focused slice rather than bundling with at-rest secrets.
+- **Customer signing certs** (the Phase-3 CSR bundle): those
+  are S3-stored blobs, not DB columns. KMS envelope encryption
+  on the blob path is part of the LHDN signing slice (Slice 57).
+- **Real KMS integration** (`_dek()` swap). One-line change
+  when production deployment lands — gated on having an actual
+  AWS account + IAM policy.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for

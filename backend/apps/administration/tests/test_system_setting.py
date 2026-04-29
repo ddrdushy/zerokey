@@ -93,7 +93,13 @@ class TestUpsertSystemSetting:
 
         rows = SystemSetting.objects.filter(namespace="lhdn")
         assert rows.count() == 1
-        assert rows.first().values == {"client_id": "second", "client_secret": "second-secret"}
+        # Slice 55: values are encrypted at rest. Decrypt to compare.
+        from apps.administration.crypto import decrypt_dict_values
+
+        assert decrypt_dict_values(rows.first().values) == {
+            "client_id": "second",
+            "client_secret": "second-secret",
+        }
 
     def test_upsert_emits_audit_event_with_keys_but_not_values(self) -> None:
         upsert_system_setting(

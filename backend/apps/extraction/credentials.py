@@ -13,9 +13,13 @@ attach metadata to it. Platform-wide integrations (LHDN, Stripe) go through
 ``apps.administration.services.system_setting`` instead; that's the single-
 namespace surface, this is the per-engine surface.
 
-Plaintext storage today; KMS envelope encryption lands with the signing
-service. The redaction filter excludes ``Engine.credentials`` so the
-field never reaches logs.
+At-rest encryption (Slice 55): values are stored as ciphertext via
+``apps.administration.crypto`` and decrypted transparently here on
+read. Legacy plaintext rows pass through unchanged so the migration
+to encrypted storage is gradual; the migration that ships with
+Slice 55 walks existing rows and rewrites them. The redaction
+filter still excludes ``Engine.credentials`` so even decrypted
+values never reach logs.
 """
 
 from __future__ import annotations
@@ -47,9 +51,15 @@ def engine_credential(
     """
     engine = Engine.objects.filter(name=engine_name).first()
     if engine is not None:
-        value = engine.credentials.get(key) if isinstance(engine.credentials, dict) else None
-        if value not in (None, ""):
-            return str(value)
+        # Slice 55: credentials live as ciphertext at rest.
+        # decrypt_value passes legacy plaintext through unchanged.
+        from apps.administration.crypto import decrypt_value
+
+        raw = engine.credentials.get(key) if isinstance(engine.credentials, dict) else None
+        if raw not in (None, ""):
+            value = decrypt_value(raw) if isinstance(raw, str) else raw
+            if value not in (None, ""):
+                return str(value)
 
     if env_fallback:
         env_value = os.environ.get(env_fallback, "").strip()

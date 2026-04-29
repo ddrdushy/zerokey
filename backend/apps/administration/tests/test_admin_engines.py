@@ -132,7 +132,10 @@ class TestAdminUpdateEngine:
         )
         assert response.status_code == 200
         engine.refresh_from_db()
-        assert engine.credentials["api_key"] == "sk-rotated"
+        # Slice 55: credentials are encrypted at rest.
+        from apps.administration.crypto import decrypt_value
+
+        assert decrypt_value(engine.credentials["api_key"]) == "sk-rotated"
 
         # Audit lists the credential key NAME, not the value.
         event = (
@@ -158,9 +161,11 @@ class TestAdminUpdateEngine:
         assert response.status_code == 200
         engine.refresh_from_db()
         assert "host" not in engine.credentials
-        # Other keys untouched.
-        assert engine.credentials["api_key"] == "ollama-secret"
-        assert engine.credentials["model"] == "gpt-oss:120b"
+        # Other keys untouched. (Slice 55: stored ciphertext.)
+        from apps.administration.crypto import decrypt_value
+
+        assert decrypt_value(engine.credentials["api_key"]) == "ollama-secret"
+        assert decrypt_value(engine.credentials["model"]) == "gpt-oss:120b"
 
     def test_reject_non_editable_field(self, staff_user, some_engines) -> None:
         engine = some_engines[0]
