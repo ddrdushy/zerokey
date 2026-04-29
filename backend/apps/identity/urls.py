@@ -49,4 +49,25 @@ urlpatterns = [
         views.notification_preferences,
         name="notification-preferences",
     ),
+    # Slice 56 — invitations
+    path(
+        "organization/invitations/",
+        views.organization_invitations,
+        name="organization-invitations",
+    ),
+    path(
+        "organization/invitations/<uuid:invitation_id>/",
+        views.revoke_organization_invitation,
+        name="organization-invitation-revoke",
+    ),
+    path(
+        "invitations/accept/",
+        views.accept_invitation_view,
+        name="invitation-accept",
+    ),
+    path(
+        "invitations/preview/",
+        views.preview_invitation_view,
+        name="invitation-preview",
+    ),
 ]

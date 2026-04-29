@@ -150,6 +150,18 @@ export type OrganizationMemberRow = {
   joined_date: string | null;
 };
 
+export type InvitationRow = {
+  id: string;
+  email: string;
+  role: string;
+  status: "pending" | "accepted" | "revoked" | "expired";
+  invited_by_email: string | null;
+  expires_at: string | null;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  created_at: string | null;
+};
+
 export type Membership = {
   id: string;
   organization: { id: string; legal_name: string; tin: string };
@@ -835,6 +847,44 @@ export const api = {
     request<OrganizationMemberRow>(
       `/identity/organization/members/${membershipId}/`,
       { method: "PATCH", body: JSON.stringify(body) },
+    ),
+  // Slice 56 — invitations
+  listInvitations: () =>
+    request<{ results: InvitationRow[] }>(
+      "/identity/organization/invitations/",
+    ).then((r) => r.results),
+  createInvitation: (email: string, roleName: string) =>
+    request<InvitationRow & { plaintext_token: string; invitation_url: string }>(
+      "/identity/organization/invitations/",
+      {
+        method: "POST",
+        body: JSON.stringify({ email, role_name: roleName }),
+      },
+    ),
+  revokeInvitation: (invitationId: string) =>
+    request<InvitationRow>(
+      `/identity/organization/invitations/${invitationId}/`,
+      { method: "DELETE" },
+    ),
+  previewInvitation: (token: string) =>
+    request<{
+      email: string;
+      role: string;
+      organization_legal_name: string;
+      expires_at: string;
+    }>(
+      "/identity/invitations/preview/",
+      { method: "POST", body: JSON.stringify({ token }) },
+    ),
+  acceptInvitation: (token: string) =>
+    request<{
+      membership_id: string;
+      organization_id: string;
+      role: string;
+      redirect_to: string;
+    }>(
+      "/identity/invitations/accept/",
+      { method: "POST", body: JSON.stringify({ token }) },
     ),
   listApiKeys: () =>
     request<{ results: APIKeyRow[] }>(

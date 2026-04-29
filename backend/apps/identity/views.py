@@ -358,3 +358,228 @@ def patch_organization_member(request: Request, membership_id: str) -> Response:
             return Response({"detail": msg}, status=status.HTTP_403_FORBIDDEN)
         return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
     return Response(result)
+
+
+# --- Slice 56: Membership invitations -----------------------------------
+
+
+def _is_owner_or_admin(user, organization_id) -> bool:
+    """Active owner/admin in the org."""
+    from .models import OrganizationMembership
+
+    return OrganizationMembership.objects.filter(
+        user=user,
+        organization_id=organization_id,
+        is_active=True,
+        role__name__in=["owner", "admin"],
+    ).exists()
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def organization_invitations(request: Request) -> Response:
+    """Settings → Members → invitations.
+
+    GET → list (any active member can read).
+    POST → create (owner / admin only). Body:
+        {"email": "...", "role_name": "viewer|submitter|approver|admin"}
+    Returns the new row + the plaintext invitation URL fragment in
+    ``invitation_url`` so the FE can show it once + offer a copy
+    button. The plaintext token never persists; only the SHA-256
+    hash is stored.
+    """
+    from . import invitations as inv_service
+
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == "GET":
+        return Response(
+            {
+                "results": inv_service.list_pending_invitations(
+                    organization_id=organization_id
+                )
+            }
+        )
+
+    # POST
+    if not _is_owner_or_admin(request.user, organization_id):
+        return Response(
+            {"detail": "Only owners and admins can invite members."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    body = request.data or {}
+    try:
+        invitation, plaintext_token = inv_service.create_invitation(
+            organization_id=organization_id,
+            email=str(body.get("email") or "").strip(),
+            role_name=str(body.get("role_name") or "").strip(),
+            actor_user_id=request.user.id,
+        )
+    except inv_service.InvitationError as exc:
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Best-effort email send. Failure must NOT roll back the invite —
+    # the inviter can copy the link out of the response if SMTP is
+    # down. The audit trail records the invitation creation regardless.
+    accept_url = (
+        f"{request.build_absolute_uri('/').rstrip('/')}"
+        f"/accept-invitation?token={plaintext_token}"
+    )
+    try:
+        from apps.notifications.email import is_email_configured, send_email
+
+        if is_email_configured():
+            send_email(
+                to=invitation.email,
+                subject=(
+                    "You've been invited to ZeroKey"
+                ),
+                body=(
+                    f"You've been invited to join ZeroKey on the "
+                    f"{invitation.role.name} role.\n\n"
+                    f"Accept the invitation:\n{accept_url}\n\n"
+                    f"This link expires in 14 days.\n\n— ZeroKey"
+                ),
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return Response(
+        {
+            **inv_service._invitation_dict(invitation),
+            "invitation_url": accept_url,
+            "plaintext_token": plaintext_token,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def revoke_organization_invitation(
+    request: Request, invitation_id: str
+) -> Response:
+    """Cancel a pending invitation. Owner / admin only."""
+    from . import invitations as inv_service
+
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not _is_owner_or_admin(request.user, organization_id):
+        return Response(
+            {"detail": "Only owners and admins can revoke invitations."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    try:
+        invitation = inv_service.revoke_invitation(
+            organization_id=organization_id,
+            invitation_id=invitation_id,
+            actor_user_id=request.user.id,
+            reason=str((request.data or {}).get("reason") or ""),
+        )
+    except inv_service.InvitationError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            return Response({"detail": msg}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(inv_service._invitation_dict(invitation))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def accept_invitation_view(request: Request) -> Response:
+    """Accept an invitation as the currently-signed-in user.
+
+    Body: ``{"token": "<plaintext>"}``. The accepting user's email
+    must match the invited email. On success, the new membership is
+    created + the user's session ``organization_id`` is set so they
+    immediately see the new org.
+    """
+    from . import invitations as inv_service
+
+    body = request.data or {}
+    token = str(body.get("token") or "").strip()
+    try:
+        membership = inv_service.accept_invitation(
+            token=token, accepting_user_id=request.user.id
+        )
+    except inv_service.InvitationError as exc:
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    request.session["organization_id"] = str(membership.organization_id)
+    return Response(
+        {
+            "membership_id": str(membership.id),
+            "organization_id": str(membership.organization_id),
+            "role": membership.role.name,
+            "redirect_to": "/dashboard",
+        }
+    )
+
+
+@api_view(["POST"])
+@permission_classes([])
+def preview_invitation_view(request: Request) -> Response:
+    """Anonymous preview: "what does this invitation token look like?"
+
+    Used by the /accept-invitation landing page so a not-yet-signed-in
+    user sees the org name + role being offered before they sign up
+    or log in. Returns a 404 for invalid / expired tokens (no info
+    leak about what's pending).
+
+    Body: ``{"token": "<plaintext>"}``.
+    """
+    from . import invitations as inv_service
+    from .models import MembershipInvitation, Organization
+    from .tenancy import super_admin_context
+
+    token = str((request.data or {}).get("token") or "").strip()
+    if not token:
+        return Response(
+            {"detail": "Missing token."}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    token_hash = inv_service._hash_token(token)
+    with super_admin_context(reason="invitations.preview"):
+        invitation = (
+            MembershipInvitation.objects.select_related("role")
+            .filter(token_hash=token_hash)
+            .first()
+        )
+        if invitation is None:
+            return Response(
+                {"detail": "Invitation not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        org = Organization.objects.filter(id=invitation.organization_id).first()
+
+    if invitation.status != MembershipInvitation.Status.PENDING:
+        return Response(
+            {"detail": f"Invitation is {invitation.status}."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return Response(
+        {
+            "email": invitation.email,
+            "role": invitation.role.name,
+            "organization_legal_name": org.legal_name if org else "",
+            "expires_at": invitation.expires_at.isoformat(),
+        }
+    )

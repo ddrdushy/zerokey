@@ -5337,6 +5337,141 @@ What's deferred:
 
 ---
 
+### Slice 56 — Member invitations (Settings → Members → Invite)
+
+The docs audit flagged this as a customer-pain item: the Members
+tab (Slice 45) had a footer note saying "Sign up flow creates one
+membership; invitations [coming]." Slice 56 lands the actual
+invitation flow.
+
+Backend:
+
+- **`identity.MembershipInvitation`** model — TenantScopedModel
+  with `email`, `role`, `invited_by`, `token_hash` (SHA-256 of a
+  one-time plaintext), `expires_at` (default 14 days), `status`
+  (`pending` / `accepted` / `revoked` / `expired`). RLS policy
+  follows the standard tenant-isolation pattern (migration
+  `0010_membership_invitation_rls`). Plaintext token shown ONCE
+  at create time + embedded in the invite link — same write-only
+  contract as APIKey + WebhookEndpoint.
+- **`apps.identity.invitations`** service module:
+  - `create_invitation(*, organization_id, email, role_name,
+    actor_user_id)` → `(row, plaintext_token)`. Refuses if the
+    email is already an active member or has a pending invite
+    (anti-spam guard).
+  - `accept_invitation(*, token, accepting_user_id)` → creates
+    OrganizationMembership. Email-match required: invite must
+    be accepted by the invited address (a forwarded link doesn't
+    let an outsider join). Race-safe via `select_for_update`
+    re-fetch in the success path. Auto-marks expired rows.
+  - `revoke_invitation` — idempotent.
+  - `list_pending_invitations` — Settings tab readout.
+- **Endpoints** (under `/api/v1/identity/`):
+  - `GET / POST /organization/invitations/` — list + create
+    (owner / admin gate on POST).
+  - `DELETE /organization/invitations/<id>/` — revoke (owner /
+    admin only).
+  - `POST /invitations/preview/` — anonymous: returns
+    `{email, role, organization_legal_name, expires_at}` so
+    the landing page can show the invite shape before the
+    user signs in. 404 for invalid/expired (no info leak).
+  - `POST /invitations/accept/` — accept as the signed-in user.
+- **Email integration** — uses the Slice 52 send_email path.
+  Best-effort: if SMTP is down or unconfigured, the invite still
+  creates; the invite-link URL is returned in the create response
+  so the inviter can share it manually. Audit chain records the
+  invitation regardless of email outcome.
+- **Audit privacy** — invitation events record only the *masked*
+  email (`d***@example.com`) so a chain reader can't enumerate
+  invitee addresses. The full address lives on the row (we need
+  it to match on accept) but it's behind tenant-RLS + admin
+  surfaces.
+
+Frontend:
+
+- **Settings → Members** — "Invite member" button (owner / admin
+  only) opens an inline form with email + role dropdown.
+- **Invite-link panel** — after issue, the plaintext invitation
+  URL is shown ONCE with a "Copy" button + dismiss. Honest about
+  the shown-once contract: "We've emailed it. If you need to
+  share via another channel, copy now — it won't be displayed
+  again."
+- **Pending invitations section** — separate card under Members,
+  shows email + role + expiry + revoke button.
+- **`/accept-invitation?token=<plaintext>`** — landing page.
+  Three states:
+  1. Signed in with matching email → "Accept as <email>" button.
+  2. Signed in with different email → amber banner + "Sign out
+     + continue" that redirects through `/sign-in?return_to=...`.
+  3. Not signed in → CTA to sign in (with return_to) or sign
+     up (with `?invite=<token>` for the post-signup auto-accept,
+     deferred).
+
+Tests: 23 new (581 passing total, was 558). Cover:
+- Create: pending status + plaintext returned + plaintext NOT
+  persisted on row + audit email-masked (asserts the literal
+  invitee's local-part never appears in the audit JSON) +
+  invalid email rejected + unknown role rejected + existing
+  active member rejected + duplicate pending rejected.
+- Accept: creates membership + invalid token + email mismatch
+  + expired auto-flips status to expired + double-accept
+  rejected.
+- Revoke: flips status + idempotent.
+- Endpoints: owner POST 201 + non-admin 403 + list returns
+  pending + revoke endpoint + preview returns org name +
+  accept via endpoint flips session.organization_id.
+- Email send is attempted (mocked) + email failure does NOT
+  block invite creation.
+
+Verified live: created an invite to `test@symprio.com` — got
+the plaintext URL in the response + a copy of the link in
+the issuer's email inbox + the pending row showed in the
+Members tab. Opened the link in incognito, got the preview
+("Join Acme as viewer"), signed up with the matching email,
+accepted, landed on the dashboard already in the new org.
+
+Durable design decisions:
+
+- **Separate row, not pre-created inactive membership.**
+  Invitee may not have a User row yet. Pre-creating one with
+  no password is a footgun for the rest of the auth path.
+- **Email-match required on accept.** A forwarded link
+  shouldn't let an outsider join. Open question parked: do
+  we ever want "invite a@x but b@x.com accepts" (assistant
+  flows)? Tightening is conservative; can loosen later if
+  customers ask.
+- **Audit on email-masked, not full email.** Invitee
+  addresses are arguably PII signal — chain readers can
+  correlate "this row is an invite" without enumerating
+  the invitee's address.
+- **Best-effort email + invite-link in response.** If the
+  customer hasn't configured SMTP yet, invitations must still
+  work. Returning the URL once-after-issue is the escape
+  hatch + matches our existing "show once" pattern (APIKey,
+  WebhookEndpoint).
+- **14-day TTL.** Industry-standard. Long enough for "I'll
+  do it tomorrow" + "I went on holiday"; short enough that
+  a stale link in a year-old inbox can't bring back a
+  forgotten invite.
+- **Anonymous preview endpoint.** Lets us render the
+  invitation shape before the user has a session. Returns
+  404 for invalid/expired rather than echoing the request
+  (avoids token-enumeration signals).
+
+What's deferred:
+
+- **Sign-up + auto-accept.** Today the new user must sign up
+  separately + then visit the link. Carrying the token through
+  signup so it auto-accepts is a small follow-up.
+- **`return_to` honoring on sign-in.** The invitation page
+  passes it; sign-in doesn't read it yet. Drop-in change.
+- **Resend / re-issue.** Today's flow is "revoke + create
+  new"; a one-click resend is friendlier.
+- **Bulk invite.** CSV import, common in onboarding new
+  team-of-30 customers.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for

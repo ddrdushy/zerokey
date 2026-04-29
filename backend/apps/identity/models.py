@@ -249,6 +249,68 @@ class OrganizationMembership(TenantScopedModel):
         return f"{self.user.email} @ {self.organization.legal_name} ({self.role.name})"
 
 
+class MembershipInvitation(TenantScopedModel):
+    """Pending invite for a future OrganizationMembership (Slice 56).
+
+    The owner / admin sends an invite to an email address; the recipient
+    clicks the link, signs in (or signs up if they're new), and the
+    accept handler creates the OrganizationMembership row. Until then
+    this row tracks the pending state — visible in Settings → Members
+    so admins can see open invites + revoke if needed.
+
+    Token security:
+      - Plaintext token shown once at create time (in the email link).
+      - Only the SHA-256 ``token_hash`` persists. Same write-only
+        contract as APIKey + WebhookEndpoint.
+      - 32-byte random; URL-safe base64.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        REVOKED = "revoked", "Revoked"
+        EXPIRED = "expired", "Expired"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    email = models.EmailField()
+    role = models.ForeignKey(
+        "identity.Role", on_delete=models.PROTECT, related_name="+"
+    )
+    invited_by = models.ForeignKey(
+        "identity.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    # SHA-256 of the plaintext token. The plaintext is embedded in the
+    # invite-link URL the user clicks; we never persist it.
+    token_hash = models.CharField(max_length=128, db_index=True)
+
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    accepted_by_user_id = models.UUIDField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by_user_id = models.UUIDField(null=True, blank=True)
+
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.PENDING
+    )
+
+    class Meta:
+        db_table = "identity_membership_invitation"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["organization", "status"]),
+            models.Index(fields=["email", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"Invite {self.email} → {self.organization_id} ({self.status})"
+
+
 class NotificationPreference(TenantScopedModel):
     """Per-user, per-tenant notification preferences.
 
