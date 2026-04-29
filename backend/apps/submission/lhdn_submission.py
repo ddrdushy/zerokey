@@ -31,7 +31,7 @@ from django.utils import timezone
 from apps.audit.models import AuditEvent
 from apps.audit.services import record_event
 
-from . import certificates, lhdn_client, ubl_xml, xml_signature
+from . import certificates, lhdn_client, lhdn_json, ubl_xml, xml_signature
 from .models import Invoice
 
 logger = logging.getLogger(__name__)
@@ -105,27 +105,29 @@ def sign_invoice(invoice_id: uuid.UUID | str) -> dict:
     }
 
 
-def submit_invoice_to_lhdn(invoice_id: uuid.UUID | str) -> dict:
+def submit_invoice_to_lhdn(
+    invoice_id: uuid.UUID | str, *, format: str = "json"
+) -> dict:
     """Sign-then-submit. Persists ``submission_uid`` on the Invoice.
 
+    ``format``:
+      - ``"json"`` (default) — sends LHDN's UBL JSON variant. v1.0
+        document type, no XML-DSig wrapping. This is the path live
+        LHDN sandbox is most thoroughly tested against.
+      - ``"xml"`` — UBL XML + enveloped XML-DSig signature (Slice
+        58 path). Useful for v1.1 documents that require signing;
+        not the default because LHDN's sandbox validates JSON
+        more reliably.
+
     State machine:
-      - On signing failure: invoice → ``error`` + audit reason.
-      - On submit accepted (HTTP 202): invoice marked ``submitted``,
+      - On signing/build failure: invoice → ``error`` + audit reason.
+      - On submit accepted (HTTP 202): invoice marked ``submitting``,
         ``lhdn_uuid`` populated when LHDN's status response carries
         one (often only after polling).
-      - On LHDN rejection (validation): invoice → ``lhdn_rejected``
+      - On LHDN rejection (validation): invoice → ``rejected``
         with the response body excerpt on ``error_message``.
     """
     invoice = _get_invoice(invoice_id)
-
-    sign_result = sign_invoice(invoice_id)
-    if not sign_result["ok"]:
-        invoice.status = Invoice.Status.ERROR
-        invoice.error_message = (
-            f"Signing failed: {sign_result['reason']}"[:8000]
-        )
-        invoice.save(update_fields=["status", "error_message", "updated_at"])
-        return {"ok": False, "reason": sign_result["reason"]}
 
     try:
         creds = lhdn_client.credentials_for_org(
@@ -143,10 +145,58 @@ def submit_invoice_to_lhdn(invoice_id: uuid.UUID | str) -> dict:
         return {"ok": False, "reason": str(exc)}
 
     code_number = invoice.invoice_number or str(invoice.id)
-    envelope = lhdn_client.encode_for_submission(
-        signed_xml_bytes=sign_result["signed_xml_bytes"],
-        code_number=code_number,
-    )
+
+    if format == "json":
+        # JSON path: build the UBL JSON dict, dump to bytes, base64.
+        # No XML-DSig — v1.0 documents don't require signing, and
+        # LHDN's JSON path is independent of XADES wrapping.
+        import base64
+        import hashlib
+        import json as _json
+
+        try:
+            doc = lhdn_json.build_invoice_json(invoice)
+            doc_bytes = _json.dumps(doc, separators=(",", ":")).encode("utf-8")
+        except Exception as exc:  # noqa: BLE001
+            _audit_failure(
+                invoice,
+                action="submission.build.failed",
+                reason=f"{type(exc).__name__}: {exc!s}"[:255],
+            )
+            return {"ok": False, "reason": f"{type(exc).__name__}: {exc!s}"}
+
+        envelope = {
+            "format": "JSON",
+            "documentHash": hashlib.sha256(doc_bytes).hexdigest(),
+            "codeNumber": code_number,
+            "document": base64.b64encode(doc_bytes).decode("ascii"),
+        }
+        record_event(
+            action_type="submission.build_invoice.json",
+            actor_type=AuditEvent.ActorType.SERVICE,
+            actor_id="submission.build",
+            organization_id=str(invoice.organization_id),
+            affected_entity_type="Invoice",
+            affected_entity_id=str(invoice.id),
+            payload={
+                "byte_length": len(doc_bytes),
+                "digest_hex": envelope["documentHash"],
+            },
+        )
+    else:
+        # Legacy XML path (Slice 58).
+        sign_result = sign_invoice(invoice_id)
+        if not sign_result["ok"]:
+            invoice.status = Invoice.Status.ERROR
+            invoice.error_message = (
+                f"Signing failed: {sign_result['reason']}"[:8000]
+            )
+            invoice.save(update_fields=["status", "error_message", "updated_at"])
+            return {"ok": False, "reason": sign_result["reason"]}
+        envelope = lhdn_client.encode_for_submission(
+            signed_xml_bytes=sign_result["signed_xml_bytes"],
+            code_number=code_number,
+        )
 
     try:
         response = lhdn_client.submit_documents(

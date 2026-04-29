@@ -42,11 +42,18 @@ class Invoice(TenantScopedModel):
         INBOUND = "inbound", "Inbound"
 
     class InvoiceType(models.TextChoices):
-        STANDARD = "standard", "Standard"
-        CREDIT_NOTE = "credit_note", "Credit note"
-        DEBIT_NOTE = "debit_note", "Debit note"
-        REFUND_NOTE = "refund_note", "Refund note"
-        SELF_BILLED = "self_billed", "Self-billed"
+        # Maps 1:1 to LHDN's 8 document type codes (see
+        # ``apps.submission.lhdn_json.LHDN_TYPE_CODES``).
+        STANDARD = "standard", "Invoice"                            # 01
+        CREDIT_NOTE = "credit_note", "Credit Note"                  # 02
+        DEBIT_NOTE = "debit_note", "Debit Note"                     # 03
+        REFUND_NOTE = "refund_note", "Refund Note"                  # 04
+        SELF_BILLED_INVOICE = "self_billed_invoice", "Self-Billed Invoice"  # 11
+        SELF_BILLED_CREDIT_NOTE = "self_billed_credit_note", "Self-Billed Credit Note"  # 12
+        SELF_BILLED_DEBIT_NOTE = "self_billed_debit_note", "Self-Billed Debit Note"  # 13
+        SELF_BILLED_REFUND_NOTE = "self_billed_refund_note", "Self-Billed Refund Note"  # 14
+        # Legacy alias preserved for back-compat with rows that pre-date the split.
+        SELF_BILLED = "self_billed", "Self-Billed Invoice (legacy)"
 
     class Status(models.TextChoices):
         # These mirror IngestionJob.Status so callers can switch on either.
@@ -72,7 +79,7 @@ class Invoice(TenantScopedModel):
         max_length=16, choices=Direction.choices, default=Direction.OUTBOUND
     )
     invoice_type = models.CharField(
-        max_length=16, choices=InvoiceType.choices, default=InvoiceType.STANDARD
+        max_length=32, choices=InvoiceType.choices, default=InvoiceType.STANDARD
     )
     status = models.CharField(
         max_length=24, choices=Status.choices, default=Status.READY_FOR_REVIEW, db_index=True
@@ -132,6 +139,19 @@ class Invoice(TenantScopedModel):
     validation_timestamp = models.DateTimeField(null=True, blank=True)
     cancellation_timestamp = models.DateTimeField(null=True, blank=True)
     error_message = models.TextField(blank=True)
+
+    # --- Billing reference (CN / DN / RN — required by LHDN) ----------------
+    # When this is a Credit/Debit/Refund Note, points back at the
+    # ORIGINAL invoice it amends. LHDN requires the original document's
+    # UUID + internal-id be embedded in the BillingReference block;
+    # otherwise the CN/DN won't link correctly in MyInvois reporting.
+    original_invoice_uuid = models.CharField(max_length=64, blank=True)
+    original_invoice_internal_id = models.CharField(
+        max_length=128, blank=True
+    )
+    # Optional — describes WHY the CN/DN was issued (refund, return,
+    # discount adjustment, etc.). Surfaced in LHDN's portal.
+    adjustment_reason = models.TextField(blank=True)
 
     class Meta:
         db_table = "invoice"
