@@ -265,6 +265,11 @@ export type Invoice = {
   overall_confidence: number | null;
   per_field_confidence: Record<string, number>;
   structuring_engine: string;
+  /** Slice 58/59 LHDN submission state. */
+  lhdn_uuid: string;
+  lhdn_qr_code_url: string;
+  validation_timestamp: string | null;
+  cancellation_timestamp: string | null;
   error_message: string;
   line_items: LineItem[];
   validation_issues: ValidationIssue[];
@@ -951,6 +956,52 @@ export const api = {
         body: JSON.stringify({ environment }),
       },
     ),
+  // Slice 59B — LHDN signing certificate
+  getCertificate: () =>
+    request<{
+      uploaded: boolean;
+      kind: string;
+      subject_common_name: string;
+      serial_hex: string;
+      expires_at: string | null;
+    }>("/identity/organization/certificate/"),
+  uploadCertificate: (cert_pem: string, private_key_pem: string) =>
+    request<{
+      uploaded: boolean;
+      kind: string;
+      subject_common_name: string;
+      serial_hex: string;
+      expires_at: string;
+    }>("/identity/organization/certificate/", {
+      method: "POST",
+      body: JSON.stringify({ cert_pem, private_key_pem }),
+    }),
+  // Slice 59B — LHDN lifecycle gestures on an invoice
+  submitInvoiceToLhdn: (invoiceId: string) =>
+    request<{
+      ok: boolean;
+      reason: string;
+      submission_uid: string;
+      invoice: Invoice;
+    }>(`/invoices/${invoiceId}/submit-to-lhdn/`, { method: "POST" }),
+  cancelInvoiceLhdn: (invoiceId: string, reason: string) =>
+    request<{
+      ok: boolean;
+      reason: string;
+      code: string;
+      invoice: Invoice;
+    }>(`/invoices/${invoiceId}/cancel-lhdn/`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  pollInvoiceLhdn: (invoiceId: string) =>
+    request<{
+      ok: boolean;
+      reason: string;
+      document_status: string;
+      lhdn_uuid: string;
+      invoice: Invoice;
+    }>(`/invoices/${invoiceId}/poll-lhdn/`, { method: "POST" }),
   listApiKeys: () =>
     request<{ results: APIKeyRow[] }>(
       "/identity/organization/api-keys/",

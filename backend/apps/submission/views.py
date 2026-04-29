@@ -125,3 +125,188 @@ def invoice_by_job(request: Request, job_id: str) -> Response:
     if invoice is None:
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     return Response(InvoiceSerializer(invoice).data)
+
+
+# --- Slice 59B: LHDN lifecycle endpoints ----------------------------------
+
+
+def _can_user_submit_lhdn(user, organization_id) -> bool:
+    """Roles that may submit/cancel LHDN documents.
+
+    Owner / admin / approver / submitter may submit. Viewer cannot.
+    Backend gate is the source of truth; UI mirrors for cleanliness.
+    """
+    from apps.identity.models import OrganizationMembership
+
+    return OrganizationMembership.objects.filter(
+        user=user,
+        organization_id=organization_id,
+        is_active=True,
+        role__name__in=["owner", "admin", "approver", "submitter"],
+    ).exists()
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def submit_invoice_to_lhdn_view(request: Request, invoice_id: str) -> Response:
+    """Sign + submit one invoice to LHDN.
+
+    Synchronous response — the operator wants to see the immediate
+    outcome (LHDN typically returns 202 + a submissionUid in <2s).
+    Polling for the validation status happens via the separate
+    /poll-lhdn/ endpoint.
+
+    Returns the updated Invoice payload so the FE can re-render in
+    place without a fetch.
+    """
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not _can_user_submit_lhdn(request.user, organization_id):
+        return Response(
+            {"detail": "You don't have permission to submit invoices."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        invoice = Invoice.objects.get(
+            id=invoice_id, organization_id=organization_id
+        )
+    except Invoice.DoesNotExist:
+        return Response(
+            {"detail": "Invoice not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Pre-flight checks before kicking off signing — surface the
+    # most common errors here (cleaner than letting the orchestrator
+    # raise + audit a generic failure).
+    if not invoice.invoice_number:
+        return Response(
+            {
+                "detail": (
+                    "Invoice number is required before LHDN submission."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if invoice.status in {
+        Invoice.Status.SUBMITTING,
+        Invoice.Status.VALIDATED,
+        Invoice.Status.CANCELLED,
+    }:
+        return Response(
+            {
+                "detail": (
+                    f"Invoice is already in {invoice.status} state."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    from . import lhdn_submission
+
+    result = lhdn_submission.submit_invoice_to_lhdn(invoice.id)
+    invoice.refresh_from_db()
+    return Response(
+        {
+            "ok": result.get("ok", False),
+            "reason": result.get("reason", ""),
+            "submission_uid": result.get("submission_uid", ""),
+            "invoice": InvoiceSerializer(invoice).data,
+        }
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def cancel_invoice_lhdn_view(request: Request, invoice_id: str) -> Response:
+    """Cancel a validated LHDN invoice within the 72-hour window.
+
+    Body: ``{"reason": "..."}``. Reason is required (LHDN's contract,
+    enforced both client-side + by the orchestrator).
+    """
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not _can_user_submit_lhdn(request.user, organization_id):
+        return Response(
+            {"detail": "You don't have permission to cancel invoices."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        invoice = Invoice.objects.get(
+            id=invoice_id, organization_id=organization_id
+        )
+    except Invoice.DoesNotExist:
+        return Response(
+            {"detail": "Invoice not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    body = request.data or {}
+    reason = str(body.get("reason") or "").strip()
+
+    from . import lhdn_submission
+
+    result = lhdn_submission.cancel_invoice(
+        invoice_id=invoice.id,
+        reason=reason,
+        actor_user_id=request.user.id,
+    )
+    invoice.refresh_from_db()
+    return Response(
+        {
+            "ok": result.get("ok", False),
+            "reason": result.get("reason", ""),
+            "code": result.get("code", ""),
+            "invoice": InvoiceSerializer(invoice).data,
+        }
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def poll_invoice_lhdn_view(request: Request, invoice_id: str) -> Response:
+    """Trigger one synchronous status poll for the invoice.
+
+    Used by the FE's "Refresh status" button. The Celery beat
+    scheduler also polls in the background; this endpoint is the
+    operator-on-demand path.
+    """
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        invoice = Invoice.objects.get(
+            id=invoice_id, organization_id=organization_id
+        )
+    except Invoice.DoesNotExist:
+        return Response(
+            {"detail": "Invoice not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    from . import lhdn_submission
+
+    result = lhdn_submission.poll_invoice_status(invoice.id)
+    invoice.refresh_from_db()
+    return Response(
+        {
+            "ok": result.get("ok", False),
+            "reason": result.get("reason", ""),
+            "document_status": result.get("document_status", ""),
+            "lhdn_uuid": result.get("lhdn_uuid", ""),
+            "invoice": InvoiceSerializer(invoice).data,
+        }
+    )

@@ -5955,6 +5955,150 @@ What's deferred (Slice 59B):
 
 ---
 
+### Slice 59B — LHDN UI: cert upload + Submit/Cancel/Poll buttons + polling cadence
+
+The Slice 58 backend works end-to-end but the customer can't
+*see* it. This slice surfaces the entire LHDN lifecycle in
+the dashboard:
+
+  - Cert upload form in Settings → Integrations.
+  - LhdnPanel on every invoice review screen showing:
+    "Submit to LHDN" pre-flight, in-flight spinner with
+    auto-poll, validated state with UUID + QR link + cancel
+    button, rejected state with the LHDN error verbatim,
+    cancelled state.
+  - Cancel-with-reason modal that gates on the local
+    72-hour clock.
+  - Polling cadence (2/4/8/16/30s, spec §4.2) wired into
+    the Celery task wrapper.
+
+Backend:
+
+- **`POST /api/v1/invoices/<id>/submit-to-lhdn/`** — sign +
+  submit, owner / admin / approver / submitter only. Pre-
+  flight gates: invoice_number required + status not already
+  in SUBMITTING/VALIDATED/CANCELLED. Returns the updated
+  Invoice payload so the FE re-renders without a fetch.
+- **`POST /api/v1/invoices/<id>/cancel-lhdn/`** — body
+  `{reason}`. Same role gate. Wraps `cancel_invoice` from
+  Slice 59A. Failure modes (no UUID / past 72h /
+  OperationPeriodOver) bubble up as `ok=false` + readable
+  message on `reason`.
+- **`POST /api/v1/invoices/<id>/poll-lhdn/`** — synchronous
+  one-shot poll for the FE's "Refresh status" button. Any
+  active member can trigger.
+- **`GET / POST /api/v1/identity/organization/certificate/`**
+  — read cert state (presence + kind + subject CN + serial
+  + expiry; never the PEM material) + upload PEM cert + key.
+  Owner / admin only on POST. Wraps Slice 58's
+  `upload_certificate` service which validates the matched
+  RSA pair before persisting.
+- **Celery polling cadence** — `submission.poll_invoice_status`
+  task self-reschedules with `(2, 4, 8, 16, 30)` second
+  countdowns (clamping to 30s after the 5th attempt) up to
+  `POLL_MAX_ATTEMPTS=12` total. Stops on terminal status
+  (Valid / Invalid / Cancelled). Operator can re-trigger
+  via the `/poll-lhdn/` endpoint after budget exhausts.
+
+Frontend:
+
+- **`LhdnPanel`** component on the review screen. Renders
+  one of five phases (`preflight` / `in_flight` / `validated`
+  / `rejected` / `cancelled`). Auto-polls every 5s while
+  in-flight (server-side worker also polls per spec; the FE
+  poll is for UI freshness without the user clicking).
+  Pre-flight is gated by the same validation severity the
+  ValidationBanner uses — submit button disables when there
+  are open warnings/errors or the invoice number is blank.
+- **Cancel dialog** — modal with required-reason textarea +
+  honest copy ("After 72 hours from validation you can no
+  longer cancel — issue a credit note instead"). Backend's
+  client-side check is mirrored on the FE so the cancel
+  button hides past the window.
+- **`CertificateCard`** — sits above the LHDN integration
+  card in Settings → Integrations. Three states:
+  - "Not configured" (rare — Slice 58 auto-mints).
+  - "Self-signed · sandbox only" (warning amber).
+  - "Uploaded · production-ready" (success green).
+  Owner / admin sees the upload form (two PEM textareas
+  for cert + private key). Real-cert path is now end-to-end:
+  paste both PEMs → server validates matched pair →
+  `Organization.certificate_kind` flips to `uploaded` →
+  next sign uses the new cert with no other code changes.
+- **`Invoice.lhdn_uuid` / `lhdn_qr_code_url` /
+  `validation_timestamp` / `cancellation_timestamp`** added
+  to the API type — backend already serialised these but
+  the type was stale.
+
+Tests: 14 new (660 total, was 646). Cover:
+- Submit endpoint: unauth → 401/403, viewer role → 403,
+  blank invoice number → 400, already-validated → 400, happy
+  path returns 200 with submission_uid + invoice in
+  SUBMITTING + lhdn_uuid populated.
+- Cancel endpoint: blank reason → ok=false + "reason"
+  message, happy path → invoice CANCELLED, past-72h returns
+  the credit-note message.
+- Poll endpoint: no submission_uid yet → ok=false, terminal
+  Valid response → invoice VALIDATED + lhdn_qr_code_url on
+  the portal hostname.
+- Cert endpoint: GET returns state shape, POST rejects
+  malformed PEM, POST rejects mismatched RSA pair (cert
+  built from key_a + private key from key_b), POST happy
+  path persists with kind="uploaded" + serialised subject CN.
+
+Verified live: signed up a fresh test org, configured LHDN
+sandbox creds, uploaded a real-shaped invoice, hit Submit →
+400 because no validated state on the worker side (mocked in
+tests; live LHDN sandbox call deferred until we have an
+account). Re-walked the cert upload flow — paste PEM blocks,
+submit, page refreshes, "Uploaded · production-ready" badge
+flips, cert detail row shows the subject CN + serial + expiry.
+
+Durable design decisions:
+
+- **Pre-flight gate for missing invoice_number** rather than
+  letting LHDN reject. Saves a round trip + gives the user
+  immediate feedback at the edit point.
+- **Local 72h clock check on the FE** mirrors the backend
+  gate. Source of truth is the backend; this is for hiding
+  the cancel button so the operator doesn't try a gesture
+  that's destined to fail.
+- **5s FE poll cadence in addition to the worker's spec
+  cadence**. Two clocks running independently — one drives
+  the UI freshness, one drives the backend reconciliation.
+  Either alone would feel laggy; both together stay in sync.
+- **Cert upload form lives above the integration card**, not
+  inside it. The cert is a per-org concern that applies to
+  every LHDN call, not specific to one environment. Hoisting
+  it makes that clear in the UX.
+- **Auto-mint dev cert on first sign** (Slice 58 behaviour
+  preserved). Customer never has to click "generate cert"
+  before testing the flow — the product just works in
+  sandbox out of the box.
+- **PEM textareas, not file upload**. Customers buying
+  certificates from MSC Trustgate / Pos Digicert receive
+  PEM blocks; the textarea matches the natural workflow
+  better than asking them to convert to a file.
+
+What's deferred (Slice 60+):
+
+- **PFX / P12 file upload** — would cover customers whose
+  CA delivers in those formats. Conversion is one openssl
+  command but the form should just accept it.
+- **Cert expiry warning** — banner 30 / 14 / 7 / 1 days
+  before expiry to remind operators to rotate.
+- **Submission UID column split** off `signed_xml_s3_key`
+  (still on the kludge from Slice 58).
+- **Real LHDN sandbox verification** — full end-to-end
+  smoke test against an actual LHDN-issued client_id +
+  secret, pending account.
+- **Beat-scheduled poll for in-flight invoices** —
+  `submission.poll_invoice_status` exists as a task; needs
+  a beat entry that wakes every minute and queues polls
+  for invoices stuck in SUBMITTING beyond a threshold.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for

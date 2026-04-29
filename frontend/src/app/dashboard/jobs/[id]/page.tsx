@@ -38,6 +38,7 @@ import {
   type PendingAdd,
 } from "@/components/review/LineItemsTable";
 import { ValidationBanner } from "@/components/review/ValidationBanner";
+import { LhdnPanel } from "@/components/review/LhdnPanel";
 
 const TERMINAL = new Set(["validated", "rejected", "cancelled", "error", "ready_for_review"]);
 
@@ -273,6 +274,7 @@ export default function JobDetailPage() {
                 onRemoveLine={onRemoveLine}
                 onUndoRemove={onUndoRemove}
                 onDiscardPendingAdd={onDiscardPendingAdd}
+                onInvoiceChanged={setInvoice}
               />
             ) : (
               <PendingPanel job={job} />
@@ -382,6 +384,8 @@ type ReviewPanelProps = {
   onRemoveLine: (lineNumber: number) => void;
   onUndoRemove: (lineNumber: number) => void;
   onDiscardPendingAdd: (pendingNumber: number) => void;
+  /** Slice 59B — receive LHDN panel updates from child component. */
+  onInvoiceChanged: (next: Invoice) => void;
 };
 
 function ReviewPanel({
@@ -397,6 +401,7 @@ function ReviewPanel({
   onRemoveLine,
   onUndoRemove,
   onDiscardPendingAdd,
+  onInvoiceChanged,
 }: ReviewPanelProps) {
   const issuesByPath = useMemo(() => groupByPath(invoice.validation_issues), [
     invoice.validation_issues,
@@ -425,9 +430,22 @@ function ReviewPanel({
     return !FIELD_PATHS.has(i.field_path);
   });
 
+  // Slice 59B: blocking issues for the LHDN submit gate. We treat
+  // any open validation issue as blocking — same threshold the
+  // ValidationBanner shows.
+  const blockingIssues = invoice.validation_issues.filter(
+    (i) => i.severity !== "info",
+  ).length;
+
   return (
     <>
       <ValidationBanner summary={invoice.validation_summary} />
+
+      <LhdnPanel
+        invoice={invoice}
+        onInvoiceChanged={onInvoiceChanged}
+        blockingIssues={blockingIssues}
+      />
 
       <section className="flex flex-col gap-4">
         <h2 className="text-base font-semibold">Header</h2>

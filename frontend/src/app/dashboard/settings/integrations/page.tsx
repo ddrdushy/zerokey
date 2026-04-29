@@ -18,9 +18,11 @@ import {
   AlertCircle,
   CheckCircle2,
   ExternalLink,
+  FileKey2,
   Loader2,
   PlugZap,
   ShieldCheck,
+  Upload,
 } from "lucide-react";
 
 import {
@@ -89,6 +91,8 @@ export default function IntegrationsSettingsPage() {
             {error}
           </div>
         )}
+
+        <CertificateCard canManage={canManage} onError={setError} />
 
         {cards === null ? (
           <Loading />
@@ -459,5 +463,219 @@ function EmptyState() {
         No integrations yet.
       </p>
     </div>
+  );
+}
+
+// Slice 59B — LHDN signing certificate card.
+//
+// Three states:
+//   1. No cert at all (rare — Slice 58 auto-mints on first sign).
+//   2. Self-signed dev cert active.
+//   3. Customer-uploaded LHDN cert active.
+//
+// Upload form accepts PEM-encoded cert + private key. Validation
+// happens server-side (matched RSA pair check); the FE just posts.
+function CertificateCard({
+  canManage,
+  onError,
+}: {
+  canManage: boolean;
+  onError: (m: string | null) => void;
+}) {
+  type CertState = {
+    uploaded: boolean;
+    kind: string;
+    subject_common_name: string;
+    serial_hex: string;
+    expires_at: string | null;
+  };
+  const [state, setState] = useState<CertState | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [certPem, setCertPem] = useState("");
+  const [keyPem, setKeyPem] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  async function refresh() {
+    try {
+      setState(await api.getCertificate());
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to load cert.");
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    // refresh() is stable inside this component closure; the
+    // eslint exhaustive-deps rule wants it in the array but
+    // including it would require a useCallback wrap that buys
+    // nothing here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function onUpload() {
+    if (!certPem.trim() || !keyPem.trim()) return;
+    setUploading(true);
+    onError(null);
+    try {
+      await api.uploadCertificate(certPem.trim(), keyPem.trim());
+      setShowForm(false);
+      setCertPem("");
+      setKeyPem("");
+      refresh();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const isSelfSigned = state?.kind === "self_signed_dev";
+  const isUploaded = state?.kind === "uploaded";
+
+  return (
+    <section className="rounded-xl border border-slate-100 bg-white">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+        <div className="flex items-start gap-3">
+          <div className="rounded-lg bg-ink/[0.05] p-2">
+            <FileKey2 className="h-4 w-4 text-ink" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-ink">
+              LHDN signing certificate
+            </h2>
+            <p className="mt-1 max-w-xl text-2xs text-slate-500">
+              Used to sign every invoice before submission to LHDN.
+              We auto-generate a dev certificate so you can test end-
+              to-end immediately. For LHDN production, upload a real
+              certificate from a recognised Malaysian CA (MSC
+              Trustgate, Pos Digicert, Telekom Applied Business).
+            </p>
+          </div>
+        </div>
+        {state && (
+          <span
+            className={cn(
+              "rounded-md px-2 py-1 text-[10px] font-medium uppercase tracking-wider",
+              isSelfSigned && "bg-warning/15 text-warning",
+              isUploaded && "bg-success/15 text-success",
+              !state.uploaded && "bg-slate-100 text-slate-500",
+            )}
+          >
+            {isUploaded
+              ? "Uploaded · production-ready"
+              : isSelfSigned
+                ? "Self-signed · sandbox only"
+                : "Not configured"}
+          </span>
+        )}
+      </header>
+
+      <div className="px-5 py-4 text-2xs">
+        {state && state.uploaded ? (
+          <dl className="grid gap-2 sm:grid-cols-3">
+            <div>
+              <dt className="text-[10px] uppercase tracking-wider text-slate-400">
+                Subject
+              </dt>
+              <dd className="mt-0.5 text-ink">
+                {state.subject_common_name || "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[10px] uppercase tracking-wider text-slate-400">
+                Serial
+              </dt>
+              <dd className="mt-0.5 font-mono text-[11px] text-ink">
+                {state.serial_hex || "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[10px] uppercase tracking-wider text-slate-400">
+                Expires
+              </dt>
+              <dd className="mt-0.5 text-ink">
+                {state.expires_at
+                  ? new Date(state.expires_at).toLocaleDateString()
+                  : "—"}
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="text-slate-500">
+            No certificate yet. Submit your first invoice to LHDN
+            (sandbox) and a self-signed dev certificate will be
+            generated automatically.
+          </p>
+        )}
+
+        {canManage && !showForm && (
+          <div className="mt-3">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowForm(true)}
+            >
+              <Upload className="mr-1.5 h-3.5 w-3.5" />
+              {isUploaded ? "Replace certificate" : "Upload my LHDN certificate"}
+            </Button>
+          </div>
+        )}
+
+        {showForm && (
+          <div className="mt-4 flex flex-col gap-3 rounded-md border border-slate-200 bg-slate-50/40 p-4">
+            <p className="text-2xs text-slate-500">
+              Paste the PEM-encoded certificate and the matching
+              RSA private key. The private key is encrypted at rest;
+              the platform only decrypts it in memory during a
+              signing operation.
+            </p>
+            <label className="flex flex-col gap-1 text-2xs font-medium">
+              Certificate (PEM)
+              <textarea
+                value={certPem}
+                onChange={(e) => setCertPem(e.target.value)}
+                rows={5}
+                placeholder={"-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----"}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-[11px] focus:outline-none focus:ring-1 focus:ring-ink"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-2xs font-medium">
+              Private key (PEM)
+              <textarea
+                value={keyPem}
+                onChange={(e) => setKeyPem(e.target.value)}
+                rows={5}
+                placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-[11px] focus:outline-none focus:ring-1 focus:ring-ink"
+              />
+            </label>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={onUpload}
+                disabled={
+                  uploading || !certPem.trim() || !keyPem.trim()
+                }
+              >
+                {uploading ? "Uploading…" : "Upload certificate"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setShowForm(false);
+                  setCertPem("");
+                  setKeyPem("");
+                  onError(null);
+                }}
+                disabled={uploading}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

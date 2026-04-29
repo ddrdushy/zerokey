@@ -91,4 +91,10 @@ urlpatterns = [
         views.organization_integration_test,
         name="organization-integration-test",
     ),
+    # Slice 59B — LHDN signing certificate
+    path(
+        "organization/certificate/",
+        views.organization_certificate,
+        name="organization-certificate",
+    ),
 ]

@@ -86,24 +86,58 @@ def submit_to_lhdn(self, invoice_id: str) -> dict[str, object]:  # noqa: ANN001
     }
 
 
+# LHDN spec §4.2 polling cadence: 2s → 4s → 8s → 16s → 30s (max).
+# Stop when overallStatus != "InProgress". The task self-reschedules
+# with these countdowns rather than relying on a fixed Celery
+# retry_backoff; matching the published cadence keeps us inside
+# LHDN's expected access pattern.
+POLL_BACKOFF_SECONDS = (2, 4, 8, 16, 30)
+POLL_MAX_ATTEMPTS = 12  # 30s × ~6 = ~3 minutes after backoff plateaus
+
+
 @shared_task(
     name="submission.poll_invoice_status",
     queue="default",
     bind=True,
-    max_retries=2,
+    max_retries=POLL_MAX_ATTEMPTS,
     acks_late=True,
 )
 def poll_invoice_status(self, invoice_id: str) -> dict[str, object]:  # noqa: ANN001
-    """Poll LHDN for one invoice's submission status."""
+    """Poll LHDN for one invoice's submission status.
+
+    Self-reschedules with an exponential-then-plateau backoff
+    matching the integration spec. Stops when the document is in a
+    terminal state (Valid / Invalid / Cancelled) or the retry
+    budget is exhausted.
+    """
     from . import lhdn_submission
 
     try:
         result = lhdn_submission.poll_invoice_status(invoice_id)
     except lhdn_submission.SubmissionError as exc:
         return {"invoice_id": invoice_id, "ok": False, "reason": str(exc)}
-    return {
+
+    document_status = result.get("document_status", "") or ""
+    out = {
         "invoice_id": invoice_id,
         "ok": result.get("ok", False),
-        "document_status": result.get("document_status", ""),
+        "document_status": document_status,
         "lhdn_uuid": result.get("lhdn_uuid", ""),
     }
+
+    # Terminal states → stop polling.
+    if document_status in {"Valid", "Invalid", "Cancelled"}:
+        return out
+
+    # Non-terminal → schedule the next poll. Pick the next backoff
+    # from the cadence; clamp to the last value once we're past it.
+    attempt = self.request.retries
+    if attempt >= self.max_retries:
+        # Out of retry budget. Operator can re-trigger via the
+        # /poll-lhdn/ endpoint manually.
+        out["reason"] = "polling-budget-exhausted"
+        return out
+
+    cadence_idx = min(attempt, len(POLL_BACKOFF_SECONDS) - 1)
+    countdown = POLL_BACKOFF_SECONDS[cadence_idx]
+    raise self.retry(countdown=countdown)

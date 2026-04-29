@@ -742,3 +742,106 @@ def organization_integration_test(
             "duration_ms": outcome.duration_ms,
         }
     )
+
+
+# --- Slice 59B: LHDN signing certificate ----------------------------------
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def organization_certificate(request: Request) -> Response:
+    """Read + upload the org's LHDN signing certificate.
+
+    GET → returns the current cert state (kind, expiry, subject,
+    serial). Never returns the PEM material itself; the cert is
+    write-only via this surface (matches the API key + webhook
+    secret contract).
+
+    POST → upload a PEM cert + private key. Body shape:
+        {
+          "cert_pem": "-----BEGIN CERTIFICATE-----\n...",
+          "private_key_pem": "-----BEGIN PRIVATE KEY-----\n..."
+        }
+    Owner / admin only. Validates matched RSA pair before
+    persisting; returns 400 with an explanatory message on
+    parsing or pairing failure.
+
+    Note: a self-signed dev cert is auto-minted on the first
+    LHDN sign attempt (Slice 58 ``ensure_certificate``) so the
+    customer never has to upload anything to test the flow.
+    Uploading replaces that with a real LHDN-issued cert.
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    from .models import Organization
+    from .tenancy import super_admin_context
+
+    if request.method == "GET":
+        with super_admin_context(reason="identity.cert.read"):
+            org = Organization.objects.filter(id=organization_id).first()
+        if org is None:
+            return Response(
+                {"detail": "Organization not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(
+            {
+                "uploaded": bool(org.certificate_uploaded),
+                "kind": org.certificate_kind or "",
+                "subject_common_name": org.certificate_subject_common_name or "",
+                "serial_hex": org.certificate_serial_hex or "",
+                "expires_at": (
+                    org.certificate_expiry_date.isoformat()
+                    if org.certificate_expiry_date
+                    else None
+                ),
+            }
+        )
+
+    # POST — upload a cert.
+    if not _is_owner_or_admin(request.user, organization_id):
+        return Response(
+            {"detail": "Only owners and admins can upload certificates."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    body = request.data or {}
+    cert_pem = str(body.get("cert_pem") or "").strip()
+    private_key_pem = str(body.get("private_key_pem") or "").strip()
+    if not cert_pem or not private_key_pem:
+        return Response(
+            {"detail": "Both cert_pem and private_key_pem are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    from apps.submission.certificates import (
+        CertificateError,
+        upload_certificate,
+    )
+
+    try:
+        result = upload_certificate(
+            organization_id=organization_id,
+            cert_pem=cert_pem,
+            private_key_pem=private_key_pem,
+            actor_user_id=request.user.id,
+        )
+    except CertificateError as exc:
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+    return Response(
+        {
+            "uploaded": True,
+            **result,
+        }
+    )
