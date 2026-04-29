@@ -105,6 +105,12 @@ class Invoice(TenantScopedModel):
     supplier_address = models.TextField(blank=True)
     supplier_phone = models.CharField(max_length=32, blank=True)
     supplier_sst_number = models.CharField(max_length=32, blank=True)
+    # LHDN secondary-ID scheme: NRIC | PASSPORT | BRN | ARMY.
+    # Picked at edit time based on entity type (individual / corporate
+    # / military / foreigner). The combination of TIN + correctly-typed
+    # secondary ID is what LHDN's HITS validator matches against.
+    supplier_id_type = models.CharField(max_length=16, blank=True, default="")
+    supplier_id_value = models.CharField(max_length=64, blank=True, default="")
 
     # --- Buyer ---------------------------------------------------------------
     buyer_legal_name = models.CharField(max_length=255, blank=True)
@@ -115,6 +121,11 @@ class Invoice(TenantScopedModel):
     buyer_phone = models.CharField(max_length=32, blank=True)
     buyer_sst_number = models.CharField(max_length=32, blank=True)
     buyer_country_code = models.CharField(max_length=2, blank=True)
+    # Mirror of supplier_id_type/value. Buyer can also be an
+    # individual / passport-holder / business — same ID-type
+    # picker + same HITS validation rules apply.
+    buyer_id_type = models.CharField(max_length=16, blank=True, default="")
+    buyer_id_value = models.CharField(max_length=64, blank=True, default="")
 
     # --- Totals --------------------------------------------------------------
     subtotal = models.DecimalField(max_digits=19, decimal_places=2, null=True, blank=True)

@@ -110,21 +110,38 @@ def _build_party(
     country_code: str = "MYS",
     contact_phone: str = "",
     contact_email: str = "",
+    id_type: str = "",
+    id_value: str = "",
 ) -> dict:
     """Build one Party block.
 
-    LHDN requires:
-      - PartyIdentification: TIN (mandatory) + BRN + SST + TTX
-        (each marked NA if not applicable — they MUST appear).
-      - PostalAddress with CityName + PostalZone +
-        CountrySubentityCode + AddressLine + Country.
-      - PartyLegalEntity.RegistrationName.
-      - Contact (optional but commonly present).
+    LHDN requires four PartyIdentification slots:
+      - TIN (mandatory).
+      - The "secondary ID" — one of BRN | NRIC | PASSPORT | ARMY,
+        depending on entity type. Corporates use BRN; Malaysian
+        individuals use NRIC; foreigners use PASSPORT; military
+        use ARMY. The wrong scheme causes LHDN's HITS validator
+        to fail with ERR206 even when the value is correct.
+      - SST registration ID (or "NA").
+      - TTX — tourism tax ID, almost always "NA".
+
+    Caller supplies ``id_type`` (one of the four schemes) +
+    ``id_value``. If ``id_type`` is empty, falls back to BRN
+    using ``registration_number`` (matches the v1 pre-PASSPORT
+    behaviour).
     """
+    # Resolve the secondary ID block.
+    id_type_normalized = (id_type or "").strip().upper()
+    if id_type_normalized in {"NRIC", "PASSPORT", "ARMY", "BRN"} and id_value:
+        secondary = _identifier(id_type_normalized, id_value)
+    else:
+        # Default fallback: BRN with the registration number.
+        secondary = _identifier("BRN", registration_number or "NA")
+
     party: dict[str, Any] = {
         "PartyIdentification": [
             _identifier("TIN", tin or "EI00000000010"),
-            _identifier("BRN", registration_number or "NA"),
+            secondary,
             _identifier("SST", sst_number or "NA"),
             _identifier("TTX", "NA"),
         ],
@@ -241,6 +258,8 @@ def build_invoice_json(invoice: Invoice) -> dict:
             contact_email=getattr(
                 invoice.organization, "contact_email", ""
             ) or "",
+            id_type=invoice.supplier_id_type,
+            id_value=invoice.supplier_id_value,
         )
     ]
     inv_body["AccountingCustomerParty"] = [
@@ -254,6 +273,8 @@ def build_invoice_json(invoice: Invoice) -> dict:
             address=invoice.buyer_address or "Unknown address",
             country_code=_country_iso3(invoice.buyer_country_code) or "MYS",
             contact_phone=invoice.buyer_phone,
+            id_type=invoice.buyer_id_type,
+            id_value=invoice.buyer_id_value,
         )
     ]
 
