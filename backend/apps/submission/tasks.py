@@ -141,3 +141,77 @@ def poll_invoice_status(self, invoice_id: str) -> dict[str, object]:  # noqa: AN
     cadence_idx = min(attempt, len(POLL_BACKOFF_SECONDS) - 1)
     countdown = POLL_BACKOFF_SECONDS[cadence_idx]
     raise self.retry(countdown=countdown)
+
+
+# Slice 69 — beat-scheduled sweep for stuck-SUBMITTING invoices.
+#
+# The per-invoice poll chain (above) covers the happy path: submit
+# → poll every 2/4/8/16/30s up to ~3 minutes. But the chain breaks
+# if the worker restarts mid-sequence, the retry budget exhausts,
+# or LHDN takes longer than 3 minutes to validate (rare but
+# observed under load).
+#
+# Without a sweep, those invoices sit in SUBMITTING forever from
+# the customer's perspective even though LHDN has long since
+# validated them. The sweep reconciles every minute by re-queueing
+# poll_invoice_status for any invoice that:
+#   - is still in SUBMITTING
+#   - has a submission_uid (i.e. actually reached LHDN)
+#   - was last touched > SWEEP_STALE_AFTER_SECONDS ago (so we
+#     don't double-poll the per-invoice chain)
+#
+# The sweep itself doesn't call LHDN — it just queues poll tasks
+# on the default queue. The polls run on workers + obey the
+# spec's cadence + budget.
+
+SWEEP_STALE_AFTER_SECONDS = 120  # 2 minutes — past the per-invoice
+                                  # chain's plateau, so we only sweep
+                                  # invoices the chain has missed.
+SWEEP_MAX_PER_RUN = 100  # Safety cap. A backlog past this is its
+                         # own problem worth alerting on.
+
+
+@shared_task(
+    name="submission.sweep_inflight_polls",
+    queue="low",
+    acks_late=True,
+)
+def sweep_inflight_polls() -> dict[str, object]:
+    """Find SUBMITTING invoices that the per-invoice poll missed +
+    re-queue ``poll_invoice_status`` for each.
+
+    Idempotent: re-queueing a poll for an invoice that just
+    transitioned to a terminal state inside ``poll_invoice_status``
+    is a cheap no-op — the function returns early with the new
+    status. Worst case is one extra LHDN GET per invoice per
+    sweep cycle.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.identity.tenancy import super_admin_context
+
+    from .models import Invoice
+
+    cutoff = timezone.now() - timedelta(seconds=SWEEP_STALE_AFTER_SECONDS)
+    with super_admin_context(reason="submission.sweep"):
+        stale = list(
+            Invoice.objects.filter(
+                status=Invoice.Status.SUBMITTING,
+            )
+            .exclude(submission_uid="")
+            .filter(updated_at__lte=cutoff)
+            .order_by("updated_at")
+            .values_list("id", flat=True)[:SWEEP_MAX_PER_RUN]
+        )
+
+    for invoice_id in stale:
+        poll_invoice_status.delay(str(invoice_id))
+
+    if stale:
+        logger.info(
+            "submission.sweep_inflight_polls.dispatched",
+            extra={"count": len(stale)},
+        )
+    return {"requeued": len(stale)}

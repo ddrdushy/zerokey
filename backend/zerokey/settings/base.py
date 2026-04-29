@@ -229,10 +229,22 @@ CELERY_TASK_DEFAULT_QUEUE = "default"
 # via env so dev can dial it down to seconds for live testing.
 AUDIT_CHAIN_VERIFY_SECONDS = env.int("AUDIT_CHAIN_VERIFY_SECONDS", default=6 * 60 * 60)
 
+# LHDN inflight-poll sweep (Slice 69). Runs every minute by default;
+# tighter is fine, looser risks customers seeing stuck SUBMITTING
+# rows for too long. The sweep itself is cheap — it just queries +
+# enqueues; the work happens in poll_invoice_status which obeys the
+# LHDN cadence.
+SUBMISSION_SWEEP_SECONDS = env.int("SUBMISSION_SWEEP_SECONDS", default=60)
+
 CELERY_BEAT_SCHEDULE = {
     "audit.verify_audit_chain": {
         "task": "audit.verify_audit_chain",
         "schedule": float(AUDIT_CHAIN_VERIFY_SECONDS),
+        "options": {"queue": "low"},
+    },
+    "submission.sweep_inflight_polls": {
+        "task": "submission.sweep_inflight_polls",
+        "schedule": float(SUBMISSION_SWEEP_SECONDS),
         "options": {"queue": "low"},
     },
 }
