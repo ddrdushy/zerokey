@@ -17,9 +17,12 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
+  Check,
+  Copy,
   ExternalLink,
   FileKey2,
   Loader2,
+  Mail,
   PlugZap,
   ShieldCheck,
   Upload,
@@ -93,6 +96,8 @@ export default function IntegrationsSettingsPage() {
         )}
 
         <CertificateCard canManage={canManage} onError={setError} />
+
+        <InboxAddressCard onError={setError} />
 
         {cards === null ? (
           <Loading />
@@ -675,6 +680,106 @@ function CertificateCard({
             </div>
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+// Slice 65 — Inbound email address (per-tenant magic forward address).
+//
+// Customers forward invoice emails to their unique address; each
+// PDF/image attachment becomes an IngestionJob. The address is
+// generated lazily on first call and stable afterwards. Owners can
+// rotate it from a future operations slice; today it's append-only.
+function InboxAddressCard({
+  onError,
+}: {
+  onError: (m: string | null) => void;
+}) {
+  const [address, setAddress] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    api
+      .getInboxAddress()
+      .then((r) => setAddress(r.address))
+      .catch((err) => {
+        onError(
+          err instanceof Error ? err.message : "Couldn't load inbox address.",
+        );
+      });
+    // onError is stable in the parent for this component's lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function copyAddress() {
+    if (!address) return;
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard blocked (rare in HTTPS contexts) — degrade silently.
+    }
+  }
+
+  return (
+    <section className="rounded-xl border border-slate-100 bg-white">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+        <div className="flex items-start gap-3">
+          <div className="rounded-lg bg-ink/[0.05] p-2">
+            <Mail className="h-4 w-4 text-ink" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-ink">
+              Inbound email address
+            </h2>
+            <p className="mt-1 max-w-xl text-2xs text-slate-500">
+              Forward any invoice email to this address — each PDF
+              or image attachment becomes a job in your dashboard,
+              same as a web upload. Useful for vendors who only
+              email PDFs.
+            </p>
+          </div>
+        </div>
+      </header>
+      <div className="px-5 py-4">
+        <div className="flex items-stretch gap-2">
+          <code className="flex-1 truncate rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-2xs text-ink">
+            {address ?? "Loading…"}
+          </code>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={copyAddress}
+            disabled={!address}
+          >
+            {copied ? (
+              <>
+                <Check className="mr-1.5 h-3.5 w-3.5 text-success" />
+                Copied
+              </>
+            ) : (
+              <>
+                <Copy className="mr-1.5 h-3.5 w-3.5" />
+                Copy
+              </>
+            )}
+          </Button>
+        </div>
+        <ul className="mt-3 space-y-1 text-[11px] text-slate-500">
+          <li>
+            • Limits: 10 attachments per email, 25 MB per attachment.
+          </li>
+          <li>
+            • Accepted: PDF, JPEG, PNG, TIFF, WebP. Other types are
+            skipped + the rest of the email is still processed.
+          </li>
+          <li>
+            • Forwards from outside your organization are still
+            accepted — the address itself is the auth.
+          </li>
+        </ul>
       </div>
     </section>
   );

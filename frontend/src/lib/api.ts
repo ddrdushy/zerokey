@@ -1070,6 +1070,23 @@ export const api = {
       usage: BillingUsage;
       available_plans: BillingPlan[];
     }>("/billing/overview/"),
+  // Slice 65 — Stripe checkout + inbound email address
+  startCheckout: (body: {
+    plan_id: string;
+    billing_cycle: "monthly" | "annual";
+    success_url: string;
+    cancel_url: string;
+  }) =>
+    request<{
+      checkout_url: string;
+      session_id: string;
+      stripe_customer_id: string;
+    }>("/billing/checkout/", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getInboxAddress: () =>
+    request<{ address: string }>("/ingestion/inbox/address/"),
   listWebhooks: () =>
     request<{
       results: WebhookEndpointRow[];

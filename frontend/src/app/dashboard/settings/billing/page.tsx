@@ -6,7 +6,7 @@
 // wiring slice.
 
 import { useEffect, useState } from "react";
-import { CreditCard, Sparkles } from "lucide-react";
+import { CreditCard, Loader2, Sparkles } from "lucide-react";
 
 import {
   api,
@@ -16,6 +16,7 @@ import {
   type BillingUsage,
 } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
+import { Button } from "@/components/ui/button";
 import { SettingsTabs } from "@/components/settings/SettingsTabs";
 import { cn } from "@/lib/utils";
 
@@ -192,8 +193,7 @@ function CurrentSubscription({
         </div>
       </div>
       <footer className="border-t border-slate-100 px-5 py-3 text-[10px] text-slate-400">
-        Plan changes + payment methods are operator-managed today.
-        Stripe self-service ships in a follow-up.
+        Pick a plan below to subscribe through Stripe checkout.
       </footer>
     </section>
   );
@@ -206,6 +206,35 @@ function PlanCatalog({
   plans: BillingPlan[];
   currentSlug: string | null;
 }) {
+  // Slice 65 — Subscribe button. Posts to /billing/checkout/ and
+  // redirects the browser to Stripe-hosted checkout. Per-plan
+  // local pending state so the user sees which one is loading
+  // when several are visible simultaneously.
+  const [pendingPlanId, setPendingPlanId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function onSubscribe(planId: string) {
+    setError(null);
+    setPendingPlanId(planId);
+    try {
+      const here = window.location.origin;
+      const res = await api.startCheckout({
+        plan_id: planId,
+        billing_cycle: "monthly",
+        success_url: `${here}/dashboard/settings/billing?checkout=success`,
+        cancel_url: `${here}/dashboard/settings/billing?checkout=cancel`,
+      });
+      // Hard redirect to Stripe — they manage the checkout from
+      // here; we re-enter via webhook + the success_url redirect.
+      window.location.href = res.checkout_url;
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Couldn't start checkout.",
+      );
+      setPendingPlanId(null);
+    }
+  }
+
   if (plans.length === 0) return null;
   return (
     <section className="rounded-xl border border-slate-100 bg-white">
@@ -215,10 +244,21 @@ function PlanCatalog({
           <h2 className="text-sm font-semibold text-ink">Available plans</h2>
         </div>
       </header>
+      {error && (
+        <div
+          role="alert"
+          className="mx-5 mt-4 rounded-md border border-error bg-error/5 px-3 py-2 text-2xs text-error"
+        >
+          {error}
+        </div>
+      )}
       <div className="grid gap-3 px-5 py-4 md:grid-cols-2 lg:grid-cols-4">
         {plans.map((plan) => {
           const isCurrent = plan.slug === currentSlug;
           const features = plan.features as Record<string, boolean>;
+          const isPaid = plan.monthly_price_cents > 0;
+          const isCustom = !isPaid;
+          const isPending = pendingPlanId === plan.id;
           return (
             <div
               key={plan.id}
@@ -241,10 +281,10 @@ function PlanCatalog({
               </div>
               <div className="text-2xs text-slate-500">{plan.description}</div>
               <div className="mt-1 font-display text-2xl font-bold text-ink">
-                {plan.monthly_price_cents > 0
+                {isPaid
                   ? formatPrice(plan.monthly_price_cents, plan.billing_currency)
                   : "Custom"}
-                {plan.monthly_price_cents > 0 && (
+                {isPaid && (
                   <span className="text-2xs font-normal text-slate-400">
                     {" "}/ mo
                   </span>
@@ -278,6 +318,43 @@ function PlanCatalog({
                 {features.consolidated_b2c && <li>B2C consolidation</li>}
                 {features.priority_support && <li>Priority support</li>}
               </ul>
+              <div className="mt-2">
+                {isCurrent ? (
+                  <Button size="sm" variant="ghost" disabled className="w-full">
+                    Current plan
+                  </Button>
+                ) : isCustom ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full"
+                    onClick={() =>
+                      window.open(
+                        "mailto:sales@zerokey.symprio.com?subject=Custom%20plan%20enquiry",
+                        "_self",
+                      )
+                    }
+                  >
+                    Talk to sales
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    onClick={() => onSubscribe(plan.id)}
+                    disabled={isPending || pendingPlanId !== null}
+                  >
+                    {isPending ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        Redirecting…
+                      </>
+                    ) : (
+                      "Subscribe"
+                    )}
+                  </Button>
+                )}
+              </div>
             </div>
           );
         })}

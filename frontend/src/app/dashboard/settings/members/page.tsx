@@ -62,7 +62,7 @@ export default function MembersSettingsPage() {
   // the user doesn't see a flash of the wrong state.
   const myRole = me
     ? (me.memberships.find((m) => m.organization.id === me.active_organization_id)
-        ?.role.name ?? null)
+        ?.role ?? null)
     : null;
   const canManage = myRole === "owner" || myRole === "admin";
 
