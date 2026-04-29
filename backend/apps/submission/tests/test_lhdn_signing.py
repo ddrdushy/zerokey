@@ -457,7 +457,12 @@ class TestLhdnSubmission:
         invoice.refresh_from_db()
         assert invoice.status == Invoice.Status.VALIDATED
         assert invoice.lhdn_uuid == "doc-uuid-001"
-        assert "lookup/doc-uuid-001" in (invoice.lhdn_qr_code_url or "")
+        # QR URL points at the PORTAL host, not the API host (Slice
+        # 58 follow-up — LHDN's longId is a portal verification slug).
+        assert invoice.lhdn_qr_code_url
+        assert "preprod.myinvois.hasil.gov.my" in invoice.lhdn_qr_code_url
+        assert "preprod-api.myinvois.hasil.gov.my" not in invoice.lhdn_qr_code_url
+        assert "lookup/doc-uuid-001" in invoice.lhdn_qr_code_url
 
 
 # =============================================================================

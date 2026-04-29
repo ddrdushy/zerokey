@@ -291,15 +291,20 @@ def poll_invoice_status(invoice_id: uuid.UUID | str) -> dict:
                 },
             )
             # Pull the QR URL on the first transition to Valid.
+            # The longId LHDN returns is a public verification slug;
+            # it lives on the PORTAL hostname (not the API). Anyone
+            # with the QR-encoded URL can verify the invoice on
+            # LHDN's web UI without auth.
             try:
                 qr_body = lhdn_client.get_document_qr(
                     creds=creds, document_uuid=document_uuid
                 )
-                qr_url = (
-                    qr_body.get("longId")
-                    and f"{creds.base_url}/{qr_body['longId']}"
-                )
-                if qr_url:
+                long_id = qr_body.get("longId")
+                if long_id and creds.portal_url:
+                    qr_url = (
+                        f"{creds.portal_url.rstrip('/')}"
+                        f"/{document_uuid}/share/{long_id}"
+                    )
                     invoice.lhdn_qr_code_url = qr_url[:200]
                     invoice.save(update_fields=["lhdn_qr_code_url", "updated_at"])
             except lhdn_client.LHDNError:

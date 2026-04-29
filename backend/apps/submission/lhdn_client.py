@@ -78,6 +78,12 @@ class LHDNCredentials:
     client_secret: str
     tin: str
     environment: str  # sandbox | production
+    # LHDN's portal hostname for QR / "view on MyInvois" links.
+    # Distinct from base_url (API) — customers visit this to verify
+    # a published document via its longId. Optional for back-compat
+    # with rows saved before the portal_url field was introduced;
+    # the QR construction degrades gracefully when missing.
+    portal_url: str = ""
 
 
 def credentials_for_org(*, organization_id: uuid.UUID | str) -> LHDNCredentials:
@@ -115,12 +121,24 @@ def credentials_for_org(*, organization_id: uuid.UUID | str) -> LHDNCredentials:
             f"Configure them in Settings → Integrations."
         )
 
+    # Portal URL is optional in the schema; pick from the row, then
+    # fall back to LHDN's published default for the active env so the
+    # QR-link constructor always has *something* sane to work with.
+    portal = (plain.get("portal_url") or "").strip().rstrip("/")
+    if not portal:
+        portal = (
+            "https://preprod.myinvois.hasil.gov.my"
+            if env == "sandbox"
+            else "https://myinvois.hasil.gov.my"
+        )
+
     return LHDNCredentials(
         base_url=plain["base_url"].rstrip("/"),
         client_id=plain["client_id"],
         client_secret=plain["client_secret"],
         tin=plain["tin"],
         environment=env,
+        portal_url=portal,
     )
 
 

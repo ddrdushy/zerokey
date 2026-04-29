@@ -89,11 +89,25 @@ INTEGRATION_SCHEMAS: list[dict[str, Any]] = [
                 "required": True,
             },
             {
+                # API + Identity Service path. LHDN puts both /connect/token
+                # (OAuth2) and /api/v1.0/* (documents) on the same host.
                 "key": "base_url",
-                "label": "Base URL",
+                "label": "API base URL",
                 "kind": "config",
                 "placeholder": "https://preprod-api.myinvois.hasil.gov.my",
                 "required": True,
+            },
+            {
+                # Portal URL for QR-code links + "View on MyInvois"
+                # buttons. Distinct hostname from the API: customers
+                # visit this to verify a document via its longId.
+                # Sandbox: preprod.myinvois.hasil.gov.my
+                # Production: myinvois.hasil.gov.my
+                "key": "portal_url",
+                "label": "Portal URL",
+                "kind": "config",
+                "placeholder": "https://preprod.myinvois.hasil.gov.my",
+                "required": False,
             },
             {
                 "key": "tin",
@@ -105,9 +119,11 @@ INTEGRATION_SCHEMAS: list[dict[str, Any]] = [
         ],
         "default_sandbox": {
             "base_url": "https://preprod-api.myinvois.hasil.gov.my",
+            "portal_url": "https://preprod.myinvois.hasil.gov.my",
         },
         "default_production": {
             "base_url": "https://api.myinvois.hasil.gov.my",
+            "portal_url": "https://myinvois.hasil.gov.my",
         },
     },
 ]
