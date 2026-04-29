@@ -358,7 +358,12 @@ class TestConflicts:
                 "column_mapping": json.dumps(MAPPING),
             },
         )
-        conflict = MasterFieldConflict.objects.first()
+        # Filter by field_name — ``.first()`` is non-deterministic
+        # when the CSV creates multiple conflicts on the same row
+        # (legal_name "Acme" vs "Acme Sdn Bhd" + address).
+        conflict = MasterFieldConflict.objects.filter(
+            field_name="address"
+        ).first()
         response = client.post(
             f"/api/v1/connectors/conflicts/{conflict.id}/resolve/",
             data=json.dumps({"resolution": "take_incoming"}),

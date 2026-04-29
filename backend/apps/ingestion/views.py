@@ -1,22 +1,32 @@
 """Ingestion context views.
 
 Phase 1/2 surface:
-  POST /api/v1/ingestion/jobs/   — multipart upload, creates IngestionJob
-  GET  /api/v1/ingestion/jobs/   — list recent jobs for the active org
-  GET  /api/v1/ingestion/jobs/<id>/ — detail with pre-signed download URL
+  POST /api/v1/ingestion/jobs/upload/    — multipart upload (web)
+  GET  /api/v1/ingestion/jobs/           — list recent jobs for the active org
+  GET  /api/v1/ingestion/jobs/<id>/      — detail with pre-signed download URL
+  POST /api/v1/ingestion/jobs/api-upload/ — JSON+base64 upload (Slice 78, APIKey-only)
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+import io
 
 from rest_framework import status
-from rest_framework.decorators import api_view, parser_classes, permission_classes
-from rest_framework.parsers import MultiPartParser
+from rest_framework.decorators import (
+    api_view,
+    authentication_classes,
+    parser_classes,
+    permission_classes,
+)
+from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+
+from apps.identity.api_key_auth import APIKeyAuthentication
+from apps.identity.models import APIKey
 
 from . import services
 from .serializers import IngestionJobSerializer
@@ -105,6 +115,115 @@ def job_detail(request: Request, job_id: str) -> Response:
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     return Response(
         IngestionJobSerializer(job, context={"request": request, "include_download_url": True}).data
+    )
+
+
+# --- Slice 78: Public API ingestion --------------------------------------
+
+
+# Bytes ceiling for the base64-decoded body — same 25 MB ceiling
+# as the web upload path. The base64-encoded payload arriving on
+# the wire is ~33% larger; we apply the limit to the decoded
+# bytes so the customer-visible contract matches the web upload.
+_API_MAX_DECODED_BYTES = services.MAX_UPLOAD_BYTES
+
+
+@api_view(["POST"])
+@authentication_classes([APIKeyAuthentication])
+@permission_classes([IsAuthenticated])
+@parser_classes([JSONParser])
+def api_upload(request: Request) -> Response:
+    """Public API ingestion endpoint (Slice 78).
+
+    Body shape (JSON):
+
+        {
+          "filename": "INV-2026-001.pdf",
+          "mime_type": "application/pdf",
+          "body_b64": "<base64-encoded file>",
+          "source_identifier": "vendor-row-12345"   // optional
+        }
+
+    Auth: ``Authorization: Bearer <APIKey>`` only — no session
+    auth allowed on this endpoint (the
+    ``authentication_classes`` decorator pins it to APIKey-only).
+    Returns the IngestionJob payload so the integrator can poll
+    its status via the standard ``GET /jobs/<id>/`` route using
+    the same key.
+
+    Multipart isn't supported here intentionally: integrators
+    overwhelmingly prefer one content-type to negotiate, and
+    JSON+base64 is the cheapest path to ship in any HTTP
+    client. The web upload path remains multipart (it's
+    browser-driven).
+    """
+    # request.auth is the APIKey row (set by APIKeyAuthentication).
+    api_key: APIKey = request.auth  # type: ignore[assignment]
+    if api_key is None or not isinstance(api_key, APIKey):
+        return Response(
+            {"detail": "API key authentication required."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    body = request.data or {}
+    filename = str(body.get("filename") or "").strip()
+    mime_type = str(body.get("mime_type") or "").strip()
+    body_b64 = body.get("body_b64") or ""
+    source_identifier = str(body.get("source_identifier") or "").strip()
+
+    if not filename or not mime_type or not body_b64:
+        return Response(
+            {
+                "detail": (
+                    "filename, mime_type, and body_b64 are all required."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        decoded = base64.b64decode(body_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return Response(
+            {"detail": "body_b64 is not valid base64."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if len(decoded) == 0:
+        return Response(
+            {"detail": "body_b64 decoded to zero bytes."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if len(decoded) > _API_MAX_DECODED_BYTES:
+        return Response(
+            {
+                "detail": (
+                    f"File exceeds the "
+                    f"{_API_MAX_DECODED_BYTES // (1024 * 1024)} MB upload "
+                    f"limit (decoded size {len(decoded)} bytes)."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        result = services.upload_api_file(
+            organization_id=api_key.organization_id,
+            actor_api_key_id=api_key.id,
+            file_obj=io.BytesIO(decoded),
+            original_filename=filename,
+            mime_type=mime_type,
+            size=len(decoded),
+            source_identifier=source_identifier,
+        )
+    except services.IngestionError as exc:
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    return Response(
+        IngestionJobSerializer(result.job, context={"request": request}).data,
+        status=status.HTTP_201_CREATED,
     )
 
 

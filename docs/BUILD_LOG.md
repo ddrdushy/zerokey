@@ -7366,6 +7366,74 @@ What's still deferred:
 
 ---
 
+### Slice 78 — Public API ingestion endpoint
+
+The integrator entry point — vendor systems / custom scripts can
+push invoices via APIKey auth using the same pipeline the web
+upload + email forward + sync paths share.
+
+Backend:
+
+- **`POST /api/v1/ingestion/jobs/api-upload/`** — APIKey-only
+  (`authentication_classes=[APIKeyAuthentication]` pinned;
+  session auth not accepted on this endpoint). JSON body:
+  ```json
+  {
+    "filename": "INV-2026-001.pdf",
+    "mime_type": "application/pdf",
+    "body_b64": "<base64>",
+    "source_identifier": "vendor-row-12345"
+  }
+  ```
+  Returns the IngestionJob payload — integrator polls
+  `GET /jobs/<id>/` with the same key.
+- **`apps.ingestion.services.upload_api_file`** — sibling of
+  `upload_web_file`. Sets `source_channel=API`, audit
+  `actor_type=EXTERNAL` (the actor is an external system, not a
+  user) with `actor_id=<APIKey.id>` so chain replay can join
+  back to which key was used. Optional `source_identifier`
+  carries the integrator's own document reference.
+- 25 MB ceiling applies to the **decoded** bytes, not the
+  base64 payload — the customer-visible contract matches the
+  web upload limit.
+
+Tests: 12 new (auth gate × 3, happy path × 2, validation × 6,
+tenant isolation × 1). 881 total, was 869.
+
+Drive-by: fixed a non-deterministic `MasterFieldConflict.objects.first()`
+in the connectors endpoint test that surfaced when test
+ordering shifted.
+
+Durable design decisions:
+
+- **JSON+base64 only, not multipart.** Integrators
+  overwhelmingly prefer one content-type to negotiate; JSON +
+  base64 is the cheapest path to ship in any HTTP client +
+  trivial to SDK. The web upload stays multipart because it's
+  browser-driven (no encoding overhead in `<input type=file>`).
+- **`authentication_classes` pinned to APIKey only.** The
+  default DRF auth chain accepts session auth too — a web
+  visitor with an open session could otherwise post to this
+  endpoint by accident (or design). Pinning it shapes the
+  contract: this URL is for integrators.
+- **Audit `EXTERNAL` actor type, not a synthetic API_KEY
+  one.** The audit enum has `USER / SERVICE / STAFF /
+  EXTERNAL`; `EXTERNAL` is the right semantic ("this came from
+  outside the platform's logged-in surfaces"). The `actor_id`
+  field carries the APIKey row id which is the disambiguator.
+- **`source_identifier` is opaque to us.** Whatever string the
+  integrator sends ends up in the IngestionJob row + audit
+  payload truncated to 255 chars. Doesn't have to be unique;
+  doesn't have to be meaningful; we just round-trip it so the
+  integrator can correlate their system to ours.
+- **Limit applies to decoded bytes.** A customer who base64-
+  encodes a 25 MB file gets a 33% larger payload (~33 MB on
+  the wire). Limiting on encoded would silently lower the
+  effective limit; limiting on decoded keeps the contract
+  identical to the web upload.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -7470,7 +7538,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 869 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 881 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -7624,8 +7692,8 @@ Still open (ordered roughly by Phase 4–5 priority):
 
 1. **WhatsApp ingestion channel** — mirror the email-forward
    pattern (Slice 64). Per-tenant phone-number mapping.
-2. **Public API ingestion** — `POST /api/v1/invoices/` for
-   integrators. APIKey auth already exists (Slice 51).
+- ~~**Public API ingestion**~~ — Slice 78. `POST /api/v1/ingestion/jobs/api-upload/`
+  with APIKey-only auth + JSON-base64 body.
 3. **Inbox token rotation** — column is in place
    (Slice 64), the rotate-now gesture is not.
 4. **Signed-XML at rest** — `signed_xml_s3_key` is now a

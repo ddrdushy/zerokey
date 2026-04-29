@@ -134,6 +134,96 @@ def upload_web_file(
     return UploadResult(job=job)
 
 
+@transaction.atomic
+def upload_api_file(
+    *,
+    organization_id: UUID,
+    actor_api_key_id: UUID,
+    file_obj: IO[bytes],
+    original_filename: str,
+    mime_type: str,
+    size: int,
+    source_identifier: str = "",
+) -> UploadResult:
+    """API-key-driven sibling of ``upload_web_file`` (Slice 78).
+
+    The customer's vendor system / custom script POSTs an invoice
+    via the public API. Otherwise identical to the web upload path —
+    same S3 storage + same extraction pipeline + same audit shape —
+    just:
+
+      - ``source_channel`` is ``API`` not ``WEB_UPLOAD``.
+      - Audit ``actor_type`` is ``EXTERNAL`` (the actor is an
+        external system, not a logged-in user); ``actor_id`` is the
+        APIKey row id so audit replay can join back to which key
+        was used.
+      - Optional ``source_identifier`` carries the integrator's
+        own reference for the document (their invoice number,
+        vendor system row id, etc.) — surfaces in the audit
+        payload + on the IngestionJob row for downstream dedup.
+    """
+    if size > MAX_UPLOAD_BYTES:
+        raise IngestionError(
+            f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit."
+        )
+    if mime_type not in ALLOWED_MIME_TYPES:
+        raise IngestionError(f"Unsupported file type: {mime_type}")
+
+    job_id = uuid.uuid4()
+    object_key = storage.ingestion_object_key(
+        organization_id=organization_id,
+        job_id=job_id,
+        filename=original_filename,
+    )
+
+    stored = storage.put_object(
+        bucket=settings.S3_BUCKET_UPLOADS,
+        key=object_key,
+        body=file_obj,
+        content_type=mime_type,
+    )
+
+    job = IngestionJob.objects.create(
+        id=job_id,
+        organization_id=organization_id,
+        source_channel=IngestionJob.SourceChannel.API,
+        source_identifier=(source_identifier or "")[:255],
+        original_filename=original_filename,
+        file_size=stored.size,
+        file_mime_type=stored.content_type,
+        s3_object_key=object_key,
+        status=IngestionJob.Status.RECEIVED,
+        state_transitions=[
+            {"status": IngestionJob.Status.RECEIVED.value, "at": _now_iso()}
+        ],
+    )
+
+    record_event(
+        action_type="ingestion.job.received",
+        actor_type=AuditEvent.ActorType.EXTERNAL,
+        actor_id=str(actor_api_key_id),
+        organization_id=str(organization_id),
+        affected_entity_type="IngestionJob",
+        affected_entity_id=str(job.id),
+        payload={
+            "source_channel": IngestionJob.SourceChannel.API.value,
+            "source_identifier": (source_identifier or "")[:255],
+            "original_filename": original_filename,
+            "file_size": stored.size,
+            "file_mime_type": stored.content_type,
+            "s3_object_key": object_key,
+        },
+    )
+
+    from django.db import transaction as _txn
+
+    from apps.extraction.tasks import extract_invoice
+
+    _txn.on_commit(lambda: extract_invoice.delay(str(job.id)))
+
+    return UploadResult(job=job)
+
+
 def list_jobs_for_organization(*, organization_id: UUID, limit: int = 50) -> list[IngestionJob]:
     return list(
         IngestionJob.objects.filter(organization_id=organization_id).order_by("-upload_timestamp")[
