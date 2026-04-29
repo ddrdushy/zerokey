@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -406,3 +407,125 @@ class TestEmailForwardWebhook:
             HTTP_X_ZEROKEY_INBOUND_TOKEN="ok",
         )
         assert response.status_code == 404
+
+
+# =============================================================================
+# Slice 80 — inbox token rotation
+# =============================================================================
+
+
+@pytest.mark.django_db
+class TestRotateInboxToken:
+    def test_service_replaces_token_and_invalidates_old(
+        self, org_with_inbox
+    ) -> None:
+        org, original_token = org_with_inbox
+        new_address = email_forward.rotate_inbox_token(
+            organization_id=org.id,
+            actor_user_id=uuid.uuid4(),
+            reason="suspected leak",
+        )
+        # New address starts with the prefix + uses the inbox domain.
+        assert new_address.startswith("invoices+")
+        assert new_address.endswith("@inbox.zerokey.symprio.com")
+
+        # Org now carries a different token.
+        org.refresh_from_db()
+        assert org.inbox_token != original_token
+
+        # Old token no longer resolves; new one does.
+        with pytest.raises(InboxNotFoundError):
+            email_forward.resolve_tenant_from_address(
+                f"invoices+{original_token}@inbox.zerokey.symprio.com"
+            )
+        resolved = email_forward.resolve_tenant_from_address(new_address)
+        assert str(resolved) == str(org.id)
+
+    def test_audit_event_records_prefixes_only(
+        self, org_with_inbox
+    ) -> None:
+        from apps.audit.models import AuditEvent
+
+        org, original_token = org_with_inbox
+        actor = uuid.uuid4()
+        email_forward.rotate_inbox_token(
+            organization_id=org.id,
+            actor_user_id=actor,
+            reason="quarterly rotation",
+        )
+        ev = AuditEvent.objects.filter(
+            action_type="ingestion.inbox_token.rotated"
+        ).first()
+        assert ev is not None
+        assert ev.payload["from_token_prefix"] == original_token[:4]
+        # Full token never appears in the payload.
+        org.refresh_from_db()
+        assert org.inbox_token not in str(ev.payload)
+        assert original_token not in str(ev.payload)
+        assert ev.payload["reason"] == "quarterly rotation"
+
+
+@pytest.mark.django_db
+class TestRotateInboxTokenEndpoint:
+    def test_unauthenticated_blocked(self, org_with_inbox) -> None:
+        from django.test import Client
+
+        response = Client().post(
+            "/api/v1/ingestion/inbox/rotate-token/",
+            data=json.dumps({"reason": "test"}),
+            content_type="application/json",
+        )
+        assert response.status_code in (401, 403)
+
+    def test_owner_rotates_successfully(self, authed_user) -> None:
+        from django.test import Client
+
+        from apps.identity.models import Organization
+
+        org, user = authed_user
+        org.refresh_from_db()
+        before = org.inbox_token
+
+        client = Client()
+        client.force_login(user)
+        session = client.session
+        session["organization_id"] = str(org.id)
+        session.save()
+
+        response = client.post(
+            "/api/v1/ingestion/inbox/rotate-token/",
+            data=json.dumps({"reason": "regular hygiene"}),
+            content_type="application/json",
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["address"].startswith("invoices+")
+        assert body["address"].endswith("@inbox.zerokey.symprio.com")
+
+        # Token actually changed.
+        org = Organization.objects.get(id=org.id)
+        assert org.inbox_token != before
+
+    def test_viewer_cannot_rotate(self, org_with_inbox, seeded) -> None:
+        from django.test import Client
+
+        org, _ = org_with_inbox
+        viewer = User.objects.create_user(
+            email="viewer@acme.example", password="long-enough-password"
+        )
+        OrganizationMembership.objects.create(
+            user=viewer,
+            organization=org,
+            role=Role.objects.get(name="viewer"),
+        )
+        client = Client()
+        client.force_login(viewer)
+        session = client.session
+        session["organization_id"] = str(org.id)
+        session.save()
+        response = client.post(
+            "/api/v1/ingestion/inbox/rotate-token/",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        assert response.status_code == 403

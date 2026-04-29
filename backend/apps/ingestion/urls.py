@@ -13,6 +13,12 @@ urlpatterns = [
     path("jobs/<uuid:job_id>/", views.job_detail, name="job-detail"),
     # Slice 64 — email-forward inbound + per-org inbox address.
     path("inbox/address/", views.inbox_address_view, name="inbox-address"),
+    # Slice 80 — rotate the per-tenant inbox token (owner / admin only).
+    path(
+        "inbox/rotate-token/",
+        views.rotate_inbox_token_view,
+        name="inbox-rotate-token",
+    ),
     path(
         "inbox/email-forward/",
         views.email_forward_webhook_view,

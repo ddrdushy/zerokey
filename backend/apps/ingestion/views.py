@@ -253,6 +253,61 @@ def inbox_address_view(request: Request) -> Response:
     return Response({"address": address})
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def rotate_inbox_token_view(request: Request) -> Response:
+    """Rotate the per-tenant inbox token (Slice 80).
+
+    Owner / admin only. Old token stops resolving immediately;
+    customer is responsible for updating any forwarding rules
+    pointed at the old address. Returns the new full magic
+    address so the FE can render it without a follow-up GET.
+
+    Optional body: ``{"reason": "..."}`` — recorded on the audit
+    chain alongside the actor + token prefixes.
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    from apps.identity import services as identity_services
+    from apps.identity.models import OrganizationMembership
+
+    if not identity_services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    role = (
+        OrganizationMembership.objects.filter(
+            user=request.user, organization_id=organization_id
+        )
+        .values_list("role__name", flat=True)
+        .first()
+    )
+    if role not in ("owner", "admin"):
+        return Response(
+            {"detail": "Only owners and admins can rotate the inbox token."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    reason = str((request.data or {}).get("reason") or "").strip()
+    from . import email_forward
+
+    try:
+        address = email_forward.rotate_inbox_token(
+            organization_id=organization_id,
+            actor_user_id=request.user.id,
+            reason=reason,
+        )
+    except email_forward.EmailForwardError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({"address": address})
+
+
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import authentication_classes
 

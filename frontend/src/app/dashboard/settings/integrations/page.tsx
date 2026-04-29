@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   Check,
   Copy,
+  RefreshCw,
   ExternalLink,
   FileKey2,
   Loader2,
@@ -92,7 +93,7 @@ export default function IntegrationsSettingsPage() {
 
         <CertificateCard canManage={canManage} onError={setError} />
 
-        <InboxAddressCard onError={setError} />
+        <InboxAddressCard canManage={canManage} onError={setError} />
 
         {cards === null ? (
           <Loading />
@@ -729,9 +730,16 @@ function CertificateCard({
 // PDF/image attachment becomes an IngestionJob. The address is
 // generated lazily on first call and stable afterwards. Owners can
 // rotate it from a future operations slice; today it's append-only.
-function InboxAddressCard({ onError }: { onError: (m: string | null) => void }) {
+function InboxAddressCard({
+  canManage,
+  onError,
+}: {
+  canManage: boolean;
+  onError: (m: string | null) => void;
+}) {
   const [address, setAddress] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [rotating, setRotating] = useState(false);
 
   useEffect(() => {
     api
@@ -752,6 +760,29 @@ function InboxAddressCard({ onError }: { onError: (m: string | null) => void }) 
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard blocked (rare in HTTPS contexts) — degrade silently.
+    }
+  }
+
+  async function rotateToken() {
+    if (
+      !window.confirm(
+        "Rotate the inbox address?\n\n" +
+          "The current address stops working immediately. Mail forwarded " +
+          "to it from this point on will bounce. Update any forwarding " +
+          "rules pointed at the old address before customers send to it.",
+      )
+    )
+      return;
+    const reason = window.prompt("Reason for rotating? (recorded in the audit log)") ?? "";
+    setRotating(true);
+    onError(null);
+    try {
+      const res = await api.rotateInboxToken(reason);
+      setAddress(res.address);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Couldn't rotate.");
+    } finally {
+      setRotating(false);
     }
   }
 
@@ -789,6 +820,18 @@ function InboxAddressCard({ onError }: { onError: (m: string | null) => void }) 
               </>
             )}
           </Button>
+          {canManage && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={rotateToken}
+              disabled={rotating || !address}
+              title="Mint a fresh address. The current one stops working immediately."
+            >
+              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", rotating && "animate-spin")} />
+              {rotating ? "Rotating…" : "Rotate"}
+            </Button>
+          )}
         </div>
         <ul className="mt-3 space-y-1 text-[11px] text-slate-500">
           <li>• Limits: 10 attachments per email, 25 MB per attachment.</li>

@@ -1230,6 +1230,11 @@ export const api = {
       body: JSON.stringify(body),
     }),
   getInboxAddress: () => request<{ address: string }>("/ingestion/inbox/address/"),
+  rotateInboxToken: (reason: string) =>
+    request<{ address: string }>("/ingestion/inbox/rotate-token/", {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
   listWebhooks: () =>
     request<{
       results: WebhookEndpointRow[];

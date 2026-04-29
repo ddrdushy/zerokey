@@ -342,6 +342,53 @@ def inbox_address_for_org(organization_id: uuid.UUID | str) -> str:
     return f"invoices+{token}@{INBOX_DOMAIN}"
 
 
+def rotate_inbox_token(
+    *,
+    organization_id: uuid.UUID | str,
+    actor_user_id: uuid.UUID | str,
+    reason: str = "",
+) -> str:
+    """Mint a fresh inbox token, replacing the current one (Slice 80).
+
+    The old token stops resolving immediately. Mail forwarded to the
+    old address from this point on will hit ``InboxNotFoundError``
+    in ``resolve_tenant_from_address`` + bounce at the email
+    provider's webhook layer (the provider gets a 404 from us).
+
+    Returns the full new address so the caller can render it
+    immediately without a follow-up GET.
+
+    Audit: ``ingestion.inbox_token.rotated`` records the actor +
+    reason + a 4-char prefix of each token (so a chain reader can
+    correlate with provider-side logs without seeing the secret).
+    The full token never enters the audit chain.
+    """
+    with super_admin_context(reason="ingestion.email_forward.rotate"):
+        org = Organization.objects.filter(id=organization_id).first()
+        if org is None:
+            raise EmailForwardError(f"Organization {organization_id} not found.")
+        previous_token = org.inbox_token or ""
+        org.inbox_token = generate_inbox_token()
+        org.save(update_fields=["inbox_token", "updated_at"])
+        new_token = org.inbox_token
+
+    record_event(
+        action_type="ingestion.inbox_token.rotated",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=str(organization_id),
+        affected_entity_type="Organization",
+        affected_entity_id=str(organization_id),
+        payload={
+            # Prefix-only — full token is a credential, never logged.
+            "from_token_prefix": previous_token[:4],
+            "to_token_prefix": new_token[:4],
+            "reason": (reason or "")[:255],
+        },
+    )
+    return f"invoices+{new_token}@{INBOX_DOMAIN}"
+
+
 # --- Helpers ----------------------------------------------------------------
 
 

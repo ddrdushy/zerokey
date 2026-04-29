@@ -7498,6 +7498,65 @@ Durable design decisions:
 
 ---
 
+### Slice 80 — Inbox token rotation
+
+Closes the email-forward feature surface from Slice 64. When an
+operator suspects the magic forwarding address has leaked (or
+just runs quarterly hygiene), they can mint a fresh token in
+one click; the old address stops resolving immediately.
+
+Backend:
+
+- **`apps.ingestion.email_forward.rotate_inbox_token(*, organization_id,
+  actor_user_id, reason)`** — generates a new 16-char URL-safe
+  token, replaces the previous one on the Organization row,
+  audits the rotation. Returns the full new magic address
+  ready for the FE to render.
+- **`POST /api/v1/ingestion/inbox/rotate-token/`** — owner / admin
+  only (the same role gate as the cert + integration write
+  paths). Optional `{reason}` JSON body lands in the audit
+  payload.
+- **Audit event `ingestion.inbox_token.rotated`** records the
+  actor + reason + a 4-char prefix of each token so a chain
+  reader can correlate with provider-side logs without seeing
+  the full secret. Full tokens never enter the audit chain.
+
+Frontend:
+
+- **Rotate button** added to the Inbox address card on
+  Settings → Integrations (owner / admin only). Confirmation
+  dialog spells out that the old address stops working
+  immediately + recommends updating forwarding rules first.
+  Reason prompt feeds into the audit payload.
+- Spinner on the icon while the rotation is in flight; success
+  silently swaps the rendered address.
+
+Tests: 5 new (service replaces token + invalidates old, audit
+records prefixes only, endpoint requires auth, owner can rotate,
+viewer cannot). 886 backend total, was 881.
+
+Durable design decisions:
+
+- **Old token stops resolving immediately, no grace window.**
+  The spec doc (Slice 64 era) suggested a future "forwarded
+  too late, please use your current address" reply. Today's
+  cut is simpler: 404 on lookup, the email provider's webhook
+  fails-loud, the sender knows. A grace window adds
+  state + complicates the threat model (what's the value of
+  rotation if the leaked token still works for 24h?).
+- **Audit logs the prefix, never the token.** Even with
+  super-admin elevation a chain reader shouldn't see a
+  resolvable address. Four chars is enough to disambiguate
+  during incident review without being a credential.
+- **Reason is optional but surfaced as a prompt.** Operators
+  rotate for both routine + incident reasons; the prompt
+  encourages capturing context without forcing it.
+- **`EmailForwardError` reused for the not-found case.**
+  Same exception family as the existing inbox code so the
+  view-layer error mapping is consistent.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -7602,7 +7661,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 881 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 886 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:
@@ -7758,8 +7817,9 @@ Still open (ordered roughly by Phase 4–5 priority):
    pattern (Slice 64). Per-tenant phone-number mapping.
 - ~~**Public API ingestion**~~ — Slice 78. `POST /api/v1/ingestion/jobs/api-upload/`
   with APIKey-only auth + JSON-base64 body.
-3. **Inbox token rotation** — column is in place
-   (Slice 64), the rotate-now gesture is not.
+- ~~**Inbox token rotation**~~ — Slice 80.
+  `POST /api/v1/ingestion/inbox/rotate-token/` + Rotate button
+  on the Settings → Integrations inbox card.
 4. **Signed-XML at rest** — `signed_xml_s3_key` is now a
    free column (Slice 67); needs the actual KMS-encrypted
    blob path wired.
