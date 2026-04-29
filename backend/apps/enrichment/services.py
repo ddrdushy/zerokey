@@ -120,6 +120,20 @@ def enrich_invoice(invoice_id: UUID | str) -> EnrichmentResult:
             },
         )
 
+        # Slice 70 — fire async LHDN TIN verification post-commit if
+        # the master is due. The check itself runs out-of-band so the
+        # enrichment path doesn't block on the LHDN round-trip.
+        if customer.master is not None:
+            from . import tin_verification
+
+            if tin_verification.needs_verification(customer.master):
+                from .tasks import verify_master_tin
+
+                master_id = str(customer.master.id)
+                transaction.on_commit(
+                    lambda mid=master_id: verify_master_tin.delay(mid)
+                )
+
     return EnrichmentResult(
         customer_matched=customer.matched,
         customer_created=customer.created,
