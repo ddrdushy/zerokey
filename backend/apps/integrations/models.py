@@ -46,6 +46,14 @@ class WebhookEndpoint(TenantScopedModel):
 
     secret_prefix = models.CharField(max_length=16, db_index=True)
     secret_hash = models.CharField(max_length=128)
+    # Fernet-encrypted plaintext of the signing secret. Required so
+    # the outbound delivery worker (Slice 53) can HMAC payloads with
+    # the literal secret the customer was shown at create time —
+    # otherwise receivers can't verify our signatures. Older rows
+    # created before Slice 53 land have this empty; deliveries from
+    # them go out unsigned and the test surface flags them so the
+    # customer regenerates.
+    secret_encrypted = models.TextField(blank=True, default="")
 
     created_by_user_id = models.UUIDField(null=True, blank=True)
 

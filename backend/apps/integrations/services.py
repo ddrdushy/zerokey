@@ -18,6 +18,7 @@ from django.utils import timezone
 from apps.audit.models import AuditEvent
 from apps.audit.services import record_event
 
+from .crypto import encrypt_secret
 from .models import WebhookDelivery, WebhookEndpoint, generate_secret
 
 
@@ -95,6 +96,7 @@ def create_webhook(
         event_types=events,
         secret_prefix=prefix,
         secret_hash=sha,
+        secret_encrypted=encrypt_secret(plaintext),
         created_by_user_id=actor_user_id,
         is_active=True,
     )
@@ -164,13 +166,17 @@ def send_test_delivery(
     webhook_id: uuid.UUID | str,
     actor_user_id: uuid.UUID | str,
 ) -> dict[str, Any]:
-    """Create a synthetic delivery row for the test-delivery button.
+    """Fire a real HTTP test delivery against the registered URL.
 
-    Today this DOES NOT fire HTTP — the actual delivery worker isn't
-    wired yet. The row exists so the customer sees their endpoint is
-    registered correctly + the deliveries surface has data to render.
-    Replace the ``outcome=SUCCESS`` line with a real send when the
-    worker lands.
+    Synchronous so the operator sees the round-trip outcome in the
+    UI without polling — slow receivers cap at ``REQUEST_TIMEOUT_SECONDS``.
+    The delivery row is created in ``pending``, then the delivery
+    primitive flips it to ``success`` or ``failure`` in place + we
+    re-read for the response shape.
+
+    Failures are NOT retried for test deliveries — the operator is
+    actively waiting; they want the verdict now, not in five
+    minutes. Real fan-out (``fan_out_event``) does retry.
     """
     try:
         endpoint = WebhookEndpoint.objects.get(
@@ -184,10 +190,9 @@ def send_test_delivery(
         ) from exc
 
     payload = {
-        "type": "ping",
+        "ping": True,
         "delivered_at": timezone.now().isoformat(),
         "endpoint_label": endpoint.label,
-        "note": "Test delivery — no real HTTP request was made.",
     }
     delivery = WebhookDelivery.objects.create(
         organization_id=organization_id,
@@ -195,14 +200,13 @@ def send_test_delivery(
         event_type="ping",
         payload=payload,
         attempt=1,
-        outcome=WebhookDelivery.Outcome.SUCCESS,
-        response_status=200,
-        response_body_excerpt="(synthetic — worker not yet wired)",
-        delivered_at=timezone.now(),
-        duration_ms=0,
+        outcome=WebhookDelivery.Outcome.PENDING,
     )
-    endpoint.last_succeeded_at = delivery.delivered_at
-    endpoint.save(update_fields=["last_succeeded_at", "updated_at"])
+
+    from .delivery import deliver_one
+
+    deliver_one(str(delivery.id))
+    delivery.refresh_from_db()
 
     record_event(
         action_type="integrations.webhook.test_sent",
@@ -211,10 +215,64 @@ def send_test_delivery(
         organization_id=str(organization_id),
         affected_entity_type="WebhookEndpoint",
         affected_entity_id=str(endpoint.id),
-        payload={"delivery_id": str(delivery.id)},
+        payload={
+            "delivery_id": str(delivery.id),
+            "ok": delivery.outcome == WebhookDelivery.Outcome.SUCCESS,
+            "status_code": delivery.response_status,
+        },
     )
 
     return _delivery_dict(delivery)
+
+
+def fan_out_event(
+    *,
+    organization_id: uuid.UUID | str,
+    event_type: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Queue webhook deliveries to every active endpoint subscribed to
+    this event_type for this org.
+
+    Returns ``{queued, no_subscribers}``. Reads under super-admin
+    elevation because the typical caller is a Celery task / signal
+    handler with no session-org binding (same pattern as the email
+    notification dispatcher).
+
+    Empty ``event_types`` on an endpoint means "subscribe to
+    nothing" — explicit opt-in. Use case: the customer creates an
+    endpoint they intend to wire up later.
+    """
+    from apps.identity.tenancy import super_admin_context
+    from .tasks import deliver_webhook_task
+
+    queued = 0
+    with super_admin_context(reason="webhooks:fanout"):
+        endpoints = list(
+            WebhookEndpoint.objects.filter(
+                organization_id=organization_id,
+                is_active=True,
+            )
+        )
+        for endpoint in endpoints:
+            subscribed = list(endpoint.event_types or [])
+            if event_type not in subscribed:
+                continue
+            delivery = WebhookDelivery.objects.create(
+                organization_id=organization_id,
+                endpoint=endpoint,
+                event_type=event_type,
+                payload=payload,
+                attempt=1,
+                outcome=WebhookDelivery.Outcome.PENDING,
+            )
+            deliver_webhook_task.delay(delivery_id=str(delivery.id))
+            queued += 1
+
+    return {
+        "queued": queued,
+        "no_subscribers": queued == 0,
+    }
 
 
 def list_recent_deliveries(

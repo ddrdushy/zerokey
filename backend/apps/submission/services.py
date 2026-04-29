@@ -1228,6 +1228,27 @@ def _sync_validation_inbox(
                 # the inbox-clear event regardless.
                 pass
 
+            # Webhook fan-out (Slice 53). Same event, different
+            # delivery channel. The integrations app finds active
+            # endpoints subscribed to ``invoice.validated`` and queues
+            # a signed HTTP POST per endpoint. Wrapped in try/except
+            # so a queue/broker failure can't break validation.
+            try:
+                from apps.integrations.services import fan_out_event
+
+                fan_out_event(
+                    organization_id=invoice.organization_id,
+                    event_type="invoice.validated",
+                    payload={
+                        "invoice_id": str(invoice.id),
+                        "invoice_number": invoice.invoice_number or "",
+                        "ingestion_job_id": str(invoice.ingestion_job_id),
+                        "validated_at": timezone.now().isoformat(),
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
 
 def list_invoices_for_organization(
     *,

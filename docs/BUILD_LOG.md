@@ -4934,6 +4934,203 @@ What's deferred:
   `apps.notifications.bounces` view ingests them and flips
   the recipient's email-channel preference off automatically.
 
+### Slice 53 — Webhook delivery worker (sign + POST + retry + fan-out)
+
+The Slice 49 webhook surface persisted endpoints, generated
+signing secrets, and showed deliveries — but the deliveries
+were synthetic rows with `response_body_excerpt = "(synthetic
+— worker not yet wired)"`. Customers couldn't actually receive
+events. Slice 53 closes that loop end-to-end.
+
+Backend:
+
+- **`apps.integrations.crypto`** — Fernet AEAD using a key
+  derived from `settings.SECRET_KEY` via SHA-256. `encrypt_secret`
+  / `decrypt_secret` (returns None on tamper, never raises).
+  Why this exists: signing requires the *plaintext* secret, but
+  Slice 49's create-time contract was write-only (only SHA-256
+  hash persisted). Adding the encrypted column keeps that
+  customer-facing contract — the customer still sees their
+  plaintext exactly once — while letting the delivery worker
+  reconstruct it for HMAC. A future swap to a dedicated
+  `WEBHOOK_SECRET_FERNET_KEY` env var with rotation procedure
+  is a one-line change in `crypto._fernet`.
+- **Migration `0003_secret_encrypted`** — adds
+  `WebhookEndpoint.secret_encrypted` (TextField, default empty).
+  Endpoints created before Slice 53 land have the empty value
+  and deliver unsigned; the operator surface flags this
+  (planned follow-up: surface the "regenerate to enable
+  signing" prompt on those rows).
+- **`apps.integrations.delivery.deliver_one(delivery_id)`** —
+  pure delivery primitive. Looks up the row, decrypts the
+  signing secret, builds the canonical body
+  `{id, type, created, data}`, computes Stripe-style
+  `X-ZeroKey-Signature: t=<unix>,v1=<hex>` where v1 is
+  HMAC-SHA256(secret, f"{t}.{body}"), POSTs via httpx with
+  `follow_redirects=False` + 10s timeout. Updates the row's
+  outcome/status/body_excerpt/error_class/duration_ms in place
+  and bumps `endpoint.last_succeeded_at` /
+  `last_failed_at` so the UI's "last delivered N min ago"
+  cursors stay current. Returns a `DeliveryResult`. Critical:
+  network errors record only the exception class name — never
+  `str(exc)` — same security posture as the SMTP wrapper from
+  Slice 52.
+- **`apps.integrations.tasks.deliver_webhook_task`** — Celery
+  task with `acks_late=True` and `max_retries=4` (so up to 5
+  total attempts). Calls `deliver_one`, audits each attempt as
+  `integrations.webhook.delivered` /
+  `integrations.webhook.delivery_failed` with payload
+  `{endpoint_id, event_type, attempt, ok, status_code,
+  duration_ms, error_class}` — never the body or signature.
+  Retry decision via `_should_retry(status_code, error_class)`:
+  5xx and 429 retry, 4xx do not (the receiver is saying "your
+  request is wrong" — repeating won't help), network errors
+  retry, the synthetic `EndpointRevoked` class never retries.
+  Backoff is exponential (30s base, doubling, capped at 5min)
+  and jittered by Celery natively. Final-attempt failure marks
+  the row `abandoned`.
+- **`apps.integrations.services.fan_out_event(*, organization_id,
+  event_type, payload)`** — finds active endpoints in the org
+  whose `event_types` list contains the event, creates a
+  `pending` `WebhookDelivery` row per match, queues
+  `deliver_webhook_task.delay(delivery_id=...)`. Reads under
+  `super_admin_context(reason="webhooks:fanout")` — same
+  pattern as the email dispatcher.
+- **`send_test_delivery` rewired** — was a synthetic row,
+  now creates a `pending` row + calls `deliver_one` synchronously
+  so the operator sees the round-trip outcome (success or
+  failure) in the UI without polling. No retry on test sends —
+  the operator is actively waiting; they want the verdict now.
+- **Submission hook** — `_sync_validation_inbox` already fired
+  `invoice.validated` to email (Slice 52); now it also fans
+  out to subscribed webhooks via `fan_out_event`. Wrapped in
+  try/except so a Celery broker outage can't break the
+  validation path.
+
+Frontend: no FE changes — Slice 49 already shipped the UI.
+Customers who registered endpoints + the `invoice.validated`
+event type pre-Slice 53 immediately start receiving real
+deliveries the next time an invoice clears validation.
+
+Tests: 14 new (529 passing total, was 515). Cover: real
+HTTP test-send via mocked httpx, 5xx → failure outcome,
+ConnectError → failure with class-name-only error, signature
+header attached + cryptographically verifiable with the
+plaintext from create-time, event headers
+(`X-ZeroKey-Event-Type`, `-Attempt`, `-Event-Id`,
+`-Delivery-Id`), fan-out only to subscribed endpoints,
+inactive endpoint skipped, full retry-policy table (5xx /
+429 / 4xx / network / EndpointRevoked), Fernet roundtrip +
+empty-string + tampered-token cases.
+
+Verified live: created an endpoint pointing at
+`requestbin.io/r/abc`, hit the test button, observed the
+real POST land + signature header verify by hand against
+the plaintext shown at create time.
+
+Durable design decisions:
+
+- **Stripe-style signature header**, not naked HMAC. Receivers
+  in any language can pull `t` and `v1` out of one string
+  with a regex — easier to recreate than a multi-header
+  scheme. The timestamp prefix lets receivers reject stale
+  replays (>5min old) without a clock-sync.
+- **Encrypted plaintext alongside hash, not in place of it.**
+  Hash stays as the verification primitive for any future
+  "customer presents secret to revoke" flow. Encrypted column
+  is purely for outbound signing. Two tools, two columns.
+- **`follow_redirects=False`.** A receiver redirecting our
+  POST is misconfigured. Following silently would hide that
+  + open up SSRF-adjacent surface. Treating 3xx as a failure
+  is the safer default.
+- **No `str(exc)` in error_class.** httpx exception messages
+  sometimes include the request URL fragment + TLS handshake
+  bytes. Class name is enough to triage; the full string is
+  not safe to surface in customer UIs.
+- **Audit per attempt, not per logical event.** A 3-retry
+  delivery produces 3 audit rows. Operators investigating
+  why a customer didn't receive an event need to see each
+  attempt's HTTP status, not a rolled-up "eventually failed".
+- **4xx never retries.** 5xx says "I'm broken right now" —
+  retry helps. 4xx says "your request is wrong" — retry
+  cannot help; only the customer fixing their endpoint can.
+  Looping on 4xx is the most common cause of webhook-induced
+  rate-limit problems on customer infrastructure.
+- **Synchronous test-send, async fan-out.** Test sends are
+  human-in-the-loop — the operator sees the outcome
+  immediately. Fan-out is machine-to-machine — async lets
+  validation return fast.
+
+What's deferred:
+
+- **Old endpoints (no encrypted secret)** still send unsigned.
+  A follow-up surfaces the "secret missing — please regenerate"
+  state in the UI + auto-disables those endpoints after a
+  customer-acknowledged warning.
+- **Per-event filtering on the receiver side.** We send all
+  configured event types; receivers that want a subset must
+  filter on `X-ZeroKey-Event-Type`. Subscribing to fewer
+  event types at create time is the supported workflow.
+- **Dead-letter queue.** Abandoned deliveries today just sit
+  in the DB — no operator inbox surfacing yet. Adding a
+  `WebhookDelivery.requires_attention` flag + an admin view
+  is the natural next slice.
+- **Outbound signature for `inbox.item_opened`** + other
+  events — only `invoice.validated` is wired to the fan-out
+  hook today. Adding more events is a one-line
+  `fan_out_event(...)` call at the producing site.
+
+---
+
+## Future direction: dual-mode extraction (AI vs OCR-only)
+
+A planned product surface, not yet built. Customers will pick
+between two extraction lanes at the org or per-upload level:
+
+| Lane | What runs | Per-doc cost | Best for |
+|---|---|---|---|
+| **AI Extraction** | Vision-LLM (Claude / Gemini / Ollama-vision) reads + structures directly | ~RM0.10–0.30 | Highest accuracy, handles handwriting, mixed-language |
+| **OCR Only** | pdfplumber → PaddleOCR → PP-Structure (tables) → LayoutLMv3 (key fields) | RM0 | Clean PDFs / scans, cost-sensitive customers |
+
+Both lanes produce the same `Invoice` payload — downstream
+(validation, signing, submission) doesn't care which lane
+ran. Toggle lives at three levels:
+
+1. `Organization.extraction_mode` (default per-org)
+2. Per-upload override on the dropzone
+3. Auto-fallback: if OCR-only confidence < threshold, surface
+   "process with AI?" on the review screen — cost transparent
+
+Slices to build (in order of impact):
+
+- **Slice 54** — `Organization.extraction_mode` field + Settings
+  UI radio + per-upload override + pipeline branch. OCR-only
+  uses a regex floor structurer so the lane is functional
+  before the better engines land.
+- **Slice 55** — PaddleOCR + PP-Structure as engines registered
+  in the existing engine registry, scoped to the OCR-only mode.
+  Tables feed line items deterministically (closes the most
+  common failure mode: merged columns in flat OCR).
+- **Slice 56** — LayoutLMv3 KIE for invoice header fields
+  (vendor TIN, invoice number, totals). Pretrained HuggingFace
+  checkpoint. Confidence scoring drives the auto-flag-for-review
+  logic. After this lands, the OCR lane is competitive on
+  standard invoices; only handwriting and exotic layouts still
+  need the AI lane.
+
+Why not adopt MindOCR directly: framework cost (MindSpore +
+PyTorch in the same container) outweighs the convenience.
+PaddleOCR + LayoutLMv3 cover the same surface on a stack we
+already run.
+
+Why this is a real product feature, not just plumbing: SME
+customers are highly cost-sensitive about per-document AI
+costs and want a "free tier" extraction option. Larger
+customers with messier inputs prefer the AI lane and accept
+the cost. Surfacing the choice is honest about the
+quality/cost tradeoff rather than hiding it behind a single
+opaque pipeline.
+
 ---
 
 ## Architectural decisions worth preserving
