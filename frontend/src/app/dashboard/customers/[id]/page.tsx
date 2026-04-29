@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { Lock, LockOpen } from "lucide-react";
 
 import { api, ApiError, type Customer, type CustomerInvoiceSummary } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
@@ -97,6 +98,53 @@ export default function CustomerDetailPage() {
     setDraft({});
   }
 
+  // Slice 81 — toggle a MasterFieldLock on this customer master.
+  // Optimistic update: the page assumes the lock/unlock will
+  // succeed; the backend is the source of truth + we re-fetch on
+  // failure to roll back the visible state.
+  async function onToggleLock(fieldName: EditableCustomerField, nextLocked: boolean) {
+    if (!customer) return;
+    setSaveError(null);
+    const wasLocked = customer.locked_fields.includes(fieldName);
+    const optimistic: Customer = {
+      ...customer,
+      locked_fields: nextLocked
+        ? [...customer.locked_fields.filter((f) => f !== fieldName), fieldName]
+        : customer.locked_fields.filter((f) => f !== fieldName),
+    };
+    setCustomer(optimistic);
+    try {
+      if (nextLocked) {
+        await api.lockMasterField({
+          master_type: "customer",
+          master_id: customer.id,
+          field_name: fieldName,
+          reason: "Customer detail page",
+        });
+      } else {
+        await api.unlockMasterField({
+          master_type: "customer",
+          master_id: customer.id,
+          field_name: fieldName,
+        });
+      }
+    } catch (err) {
+      // Roll back the optimistic flip + re-fetch from the server
+      // so the UI reflects the truth.
+      setSaveError(err instanceof Error ? err.message : "Lock toggle failed.");
+      setCustomer((current) =>
+        current
+          ? {
+              ...current,
+              locked_fields: wasLocked
+                ? [...current.locked_fields.filter((f) => f !== fieldName), fieldName]
+                : current.locked_fields.filter((f) => f !== fieldName),
+            }
+          : current,
+      );
+    }
+  }
+
   if (error)
     return (
       <AppShell>
@@ -134,6 +182,7 @@ export default function CustomerDetailPage() {
                   value={valueOf("legal_name")}
                   dirty={isDirty("legal_name")}
                   onChange={onChangeField}
+                  onToggleLock={onToggleLock}
                 />
                 <ProvenancedField
                   customer={customer}
@@ -142,6 +191,7 @@ export default function CustomerDetailPage() {
                   value={valueOf("tin")}
                   dirty={isDirty("tin")}
                   onChange={onChangeField}
+                  onToggleLock={onToggleLock}
                   mono
                 />
                 <ProvenancedField
@@ -151,6 +201,7 @@ export default function CustomerDetailPage() {
                   value={valueOf("registration_number")}
                   dirty={isDirty("registration_number")}
                   onChange={onChangeField}
+                  onToggleLock={onToggleLock}
                   mono
                 />
                 <ProvenancedField
@@ -160,6 +211,7 @@ export default function CustomerDetailPage() {
                   value={valueOf("msic_code")}
                   dirty={isDirty("msic_code")}
                   onChange={onChangeField}
+                  onToggleLock={onToggleLock}
                   mono
                 />
                 <ProvenancedField
@@ -169,6 +221,7 @@ export default function CustomerDetailPage() {
                   value={valueOf("sst_number")}
                   dirty={isDirty("sst_number")}
                   onChange={onChangeField}
+                  onToggleLock={onToggleLock}
                   mono
                 />
                 <ProvenancedField
@@ -178,6 +231,7 @@ export default function CustomerDetailPage() {
                   value={valueOf("country_code")}
                   dirty={isDirty("country_code")}
                   onChange={onChangeField}
+                  onToggleLock={onToggleLock}
                   mono
                 />
               </div>
@@ -192,6 +246,7 @@ export default function CustomerDetailPage() {
                   value={valueOf("phone")}
                   dirty={isDirty("phone")}
                   onChange={onChangeField}
+                  onToggleLock={onToggleLock}
                 />
                 <ProvenancedField
                   customer={customer}
@@ -200,6 +255,7 @@ export default function CustomerDetailPage() {
                   value={valueOf("address")}
                   dirty={isDirty("address")}
                   onChange={onChangeField}
+                  onToggleLock={onToggleLock}
                 />
               </div>
             </Section>
@@ -239,6 +295,11 @@ export default function CustomerDetailPage() {
 // AutoCount", "Entered manually"). Reads the entry from
 // ``customer.field_provenance[fieldName]``; absent entries render
 // nothing (e.g. fields the customer has never filled).
+//
+// Slice 81 — also shows a lock icon on each field. Clicking the
+// icon toggles a ``MasterFieldLock`` row. Locked fields always
+// route to the conflict queue on future syncs regardless of
+// source — see Slice 74's classify_merge matrix.
 function ProvenancedField({
   customer,
   fieldName,
@@ -246,6 +307,7 @@ function ProvenancedField({
   value,
   dirty,
   onChange,
+  onToggleLock,
   mono,
 }: {
   customer: Customer;
@@ -254,20 +316,49 @@ function ProvenancedField({
   value: string;
   dirty: boolean;
   onChange: (name: string, value: string) => void;
+  onToggleLock: (fieldName: EditableCustomerField, nextLocked: boolean) => void;
   mono?: boolean;
 }) {
   const entry = customer.field_provenance?.[fieldName];
+  const locked = (customer.locked_fields ?? []).includes(fieldName);
   return (
     <div className="flex flex-col">
-      <FieldRow
-        label={label}
-        name={fieldName}
-        value={value}
-        dirty={dirty}
-        onChange={onChange}
-        mono={mono}
-      />
-      <ProvenancePill entry={entry} />
+      <div className="relative">
+        <FieldRow
+          label={label}
+          name={fieldName}
+          value={value}
+          dirty={dirty}
+          onChange={onChange}
+          mono={mono}
+        />
+        <button
+          type="button"
+          onClick={() => onToggleLock(fieldName, !locked)}
+          aria-label={locked ? `Unlock ${label}` : `Lock ${label}`}
+          title={
+            locked
+              ? "Unlock — future syncs can change this field again."
+              : "Lock — future syncs will route changes to this field through the conflict queue."
+          }
+          className="absolute right-2 top-2 rounded p-1 text-slate-400 transition hover:bg-slate-100 hover:text-ink"
+        >
+          {locked ? (
+            <Lock className="h-3.5 w-3.5 text-warning" />
+          ) : (
+            <LockOpen className="h-3.5 w-3.5" />
+          )}
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <ProvenancePill entry={entry} />
+        {locked && (
+          <span className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+            <Lock className="h-2.5 w-2.5" aria-hidden />
+            Locked
+          </span>
+        )}
+      </div>
     </div>
   );
 }

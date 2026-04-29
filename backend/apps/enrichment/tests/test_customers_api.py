@@ -125,6 +125,36 @@ class TestCustomerDetail:
         response = client.get(f"/api/v1/customers/{their_master.id}/")
         assert response.status_code == 404
 
+    def test_locked_fields_empty_by_default(self, authed) -> None:
+        # Slice 81 — the serializer always emits locked_fields,
+        # empty when no MasterFieldLock rows exist for the master.
+        client, org = authed
+        master = _make_master(org)
+        response = client.get(f"/api/v1/customers/{master.id}/")
+        assert response.status_code == 200
+        assert response.json()["locked_fields"] == []
+
+    def test_locked_fields_lists_active_locks(self, authed) -> None:
+        # Slice 81 — locked_fields surfaces every field that has an
+        # active MasterFieldLock for this master.
+        import uuid
+
+        from apps.connectors.models import MasterFieldLock, MasterType
+
+        client, org = authed
+        master = _make_master(org)
+        for fname in ("tin", "address"):
+            MasterFieldLock.objects.create(
+                organization=org,
+                master_type=MasterType.CUSTOMER,
+                master_id=master.id,
+                field_name=fname,
+                locked_by_user_id=uuid.uuid4(),
+            )
+        response = client.get(f"/api/v1/customers/{master.id}/")
+        assert response.status_code == 200
+        assert sorted(response.json()["locked_fields"]) == ["address", "tin"]
+
 
 @pytest.mark.django_db
 class TestPatchCustomer:

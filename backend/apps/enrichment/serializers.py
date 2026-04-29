@@ -10,6 +10,12 @@ from .models import CustomerMaster
 
 
 class CustomerMasterSerializer(serializers.ModelSerializer):
+    # Slice 81 — list of field names that have an active
+    # MasterFieldLock for this row. The UI renders a lock icon
+    # on each field; toggling it calls the
+    # /connectors/locks/{,/unlock/} endpoint and refreshes.
+    locked_fields = serializers.SerializerMethodField()
+
     class Meta:
         model = CustomerMaster
         fields = [
@@ -29,12 +35,28 @@ class CustomerMasterSerializer(serializers.ModelSerializer):
             # to render the "from AutoCount", "extracted", "entered
             # manually" pill next to each field.
             "field_provenance",
+            # Slice 81 — per-field locks.
+            "locked_fields",
             "usage_count",
             "last_used_at",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+
+    def get_locked_fields(self, obj: CustomerMaster) -> list[str]:
+        # Imported lazily so the enrichment app doesn't load
+        # connectors at import time (which would create an
+        # apps-loading-order surprise on a clean migrate).
+        from apps.connectors.models import MasterFieldLock, MasterType
+
+        return list(
+            MasterFieldLock.objects.filter(
+                organization_id=obj.organization_id,
+                master_type=MasterType.CUSTOMER,
+                master_id=obj.id,
+            ).values_list("field_name", flat=True)
+        )
 
 
 class CustomerInvoiceSummarySerializer(serializers.ModelSerializer):

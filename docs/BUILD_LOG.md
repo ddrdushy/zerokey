@@ -7557,6 +7557,63 @@ Durable design decisions:
 
 ---
 
+### Slice 81 — Customer-detail lock icons (closes Slice 73's UX loop)
+
+Slice 74 shipped `MasterFieldLock` + the API to create/remove
+them; Slice 77's classifier reads the lock state for every
+classify_merge call. But there was no UI to actually create a
+lock. Slice 81 wires the click-to-lock gesture so customers can
+pin fields they care about against future syncs.
+
+Backend:
+
+- **`CustomerMasterSerializer.locked_fields`** — new
+  SerializerMethodField that queries
+  `MasterFieldLock.objects.filter(master_id=...)` once per
+  serialised row. Returns the list of field names that have an
+  active lock. Lazy-imports `apps.connectors.models` to avoid
+  app-loading-order coupling.
+
+Frontend:
+
+- **Lock / Unlock icon** on each `ProvenancedField` on the
+  customer detail page. Clicking toggles a `MasterFieldLock`
+  via the existing Slice 77 endpoints (`POST /connectors/locks/`
+  + `POST /connectors/locks/unlock/`). Tooltips explain the
+  effect ("Lock — future syncs will route changes to this
+  field through the conflict queue.").
+- **Locked badge** rendered alongside the provenance pill so
+  the lock state is visible even when the icon is small.
+- **Optimistic update** — the page flips `customer.locked_fields`
+  immediately on click; if the API call fails, it rolls back
+  + surfaces the error in the SaveBar's error slot.
+- **`Customer.locked_fields: string[]`** added to the api.ts
+  type so the rest of the app can read it.
+
+Tests: 2 new backend (default empty, multi-field listing). 888
+total, was 886.
+
+Durable design decisions:
+
+- **Lookup in the serializer, not on the model.** A model
+  property would do the same query but every call site would
+  pay for it; the SerializerMethodField is explicit + only
+  fires when the field is actually serialised.
+- **Optimistic flip + rollback on failure.** Locks are
+  high-frequency clicks (operator pins half a dozen fields in
+  a row); waiting for the round-trip per click would feel
+  laggy. The optimistic state is correct ~99% of the time +
+  the rollback is honest when the API rejects.
+- **Lock state lives on the customer payload, not as a sibling
+  fetch.** Single GET on page load + the lock-toggle handler
+  updates the local state. Sibling fetches add latency + a
+  caching seam that's not worth the complexity.
+- **Icon + badge (not just icon).** Small UI affordances are
+  easy to miss on a busy page; the explicit "Locked" badge
+  makes the state unmistakable next to the provenance pill.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -7661,7 +7718,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 886 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 888 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

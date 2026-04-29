@@ -607,6 +607,7 @@ export type Customer = {
   sst_number: string;
   country_code: string;
   field_provenance: Record<string, FieldProvenanceEntry>;
+  locked_fields: string[];
   usage_count: number;
   last_used_at: string | null;
   created_at: string;
