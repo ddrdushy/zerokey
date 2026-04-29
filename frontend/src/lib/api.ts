@@ -560,12 +560,45 @@ export type OrganizationDetail = {
   updated_at: string;
 };
 
+// Slice 73 — provenance entry per field. Source values mirror the
+// Python enum in apps.enrichment.services. The UI degrades to a
+// generic "extracted" pill on unknown sources so a future server
+// adding a new source key doesn't break the rendering.
+export type FieldProvenanceSource =
+  | "extracted"
+  | "manual"
+  | "manually_resolved"
+  | "synced_csv"
+  | "synced_autocount"
+  | "synced_sql_accounting"
+  | "synced_xero"
+  | "synced_quickbooks"
+  | "synced_shopify"
+  | "synced_woocommerce";
+
+export type FieldProvenanceEntry = {
+  source: FieldProvenanceSource | string;
+  extracted_at?: string;
+  invoice_id?: string;
+  synced_at?: string;
+  source_record_id?: string;
+  applied_via_proposal_id?: string;
+  approved_by?: string;
+  entered_at?: string;
+  edited_by?: string;
+};
+
 export type Customer = {
   id: string;
   legal_name: string;
   aliases: string[];
   tin: string;
-  tin_verification_state: "unverified" | "verified" | "failed";
+  tin_verification_state:
+    | "unverified"
+    | "unverified_external_source"
+    | "verified"
+    | "failed"
+    | "manually_resolved";
   tin_last_verified_at: string | null;
   registration_number: string;
   msic_code: string;
@@ -573,6 +606,7 @@ export type Customer = {
   phone: string;
   sst_number: string;
   country_code: string;
+  field_provenance: Record<string, FieldProvenanceEntry>;
   usage_count: number;
   last_used_at: string | null;
   created_at: string;

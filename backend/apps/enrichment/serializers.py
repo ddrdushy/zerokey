@@ -25,6 +25,10 @@ class CustomerMasterSerializer(serializers.ModelSerializer):
             "phone",
             "sst_number",
             "country_code",
+            # Slice 73 — per-field provenance map. The UI reads this
+            # to render the "from AutoCount", "extracted", "entered
+            # manually" pill next to each field.
+            "field_provenance",
             "usage_count",
             "last_used_at",
             "created_at",

@@ -6788,6 +6788,118 @@ Durable design decisions:
 
 ---
 
+### Slice 73 — Reference-data connectors backbone (`SLICE_15_REFERENCE_DATA_CONNECTORS.md` step 1–2)
+
+The first sub-slice of the connectors initiative spec'd in
+`docs/SLICE_15_REFERENCE_DATA_CONNECTORS.md`. The doc was
+labelled "Slice 15" but lands here as Slice 73 since we shipped
+72 slices since the doc was drafted. The decomposition agreed
+with the user is: 73 = backbone (this slice), 74 = SyncProposal
++ MasterFieldConflict + classify_merge matrix, 75 = sync
+orchestration services, 76 = re-match pass + Celery wiring,
+77 = first concrete connector (CSV) + sync-preview UI, 78+ =
+one connector per slice.
+
+What landed in 73 (the foundation everything else builds on):
+
+- **`apps.connectors`** — new bounded context, distinct from
+  `apps.integrations` (outbound webhooks) and
+  `apps.identity.OrganizationIntegration` (per-tenant
+  sandbox/prod credentials for outbound APIs like LHDN).
+  Co-locating connector code with webhook code in
+  `apps.integrations` would have muddied two unrelated
+  concerns.
+- **`IntegrationConfig`** — one row per
+  (Organization, connector_type) with full enum coverage
+  (csv / sql_accounting / autocount / xero / quickbooks /
+  shopify / woocommerce). Holds KMS-encrypted credentials
+  JSON, sync_cadence (manual/hourly/daily), `auto_apply`
+  toggle (defaults False, gated until first manual apply by
+  the service layer in Slice 75), `last_sync_*` cursor
+  fields, soft-delete via `deleted_at`. UniqueConstraint
+  is conditional on `deleted_at IS NULL` so a customer can
+  disconnect + reconnect a connector without colliding.
+  RLS policy follows the standard tenant-isolation
+  template.
+- **`CustomerMaster.field_provenance` + `ItemMaster.field_provenance`**
+  JSON columns. Per-field source attribution with metadata
+  (extracted_at + invoice_id for extracted, synced_at +
+  source_record_id + applied_via_proposal_id for synced,
+  entered_at + edited_by for manual). Default `{}`. Backfill
+  walks every existing master row and tags every populated
+  field as `source: extracted` with `extracted_at = created_at`
+  — accurate today since `_enrich_customer` is the only
+  path that creates rows.
+- **Runtime provenance writes** in
+  `enrichment._enrich_customer` + `update_customer_master`
+  so newly-created masters and post-edit fields get tagged
+  immediately. The match path only writes provenance for
+  fields that were genuinely newly populated; existing
+  entries are left alone so per-field history accumulates
+  across syncs/edits.
+- **`TinVerificationState` extended** with two new values:
+  `unverified_external_source` (synced from a connector,
+  not yet LHDN-checked — distinct pill so customers can see
+  "this came from your books, but LHDN hasn't confirmed
+  yet") and `manually_resolved` (user picked the value in
+  the conflict queue). `max_length` bumped 16 → 32 to fit.
+  Existing `unverified` / `verified` / `failed` rows are
+  unchanged.
+- **`tin_verification.needs_verification`** updated to treat
+  `unverified_external_source` like plain `unverified` (verify
+  immediately) and `manually_resolved` like `verified` (only
+  re-check on the 90-day stale cadence).
+- **UI provenance pill** — new
+  `components/review/ProvenancePill.tsx`. Reads
+  `field_provenance[field]` and renders the right pill copy
+  + tone per source. Wired into the customer detail page
+  via a `ProvenancedField` wrapper around each FieldRow.
+  Forward-compat: an unknown source key (server adds a new
+  connector before the FE bundle ships) renders generically
+  rather than crashing.
+- **VerificationCard** updated to a five-state map with
+  helpful copy per state — drops the legacy "live LHDN
+  verification lands in a follow-up" placeholder (Slice 70
+  shipped that).
+
+Tests: 12 new (5 connectors model + 7 enrichment provenance
++ extended-state). 780 backend, was 768.
+
+Durable design decisions:
+
+- **`apps.connectors` separate from `apps.integrations`.**
+  The two contexts answer different questions: connectors
+  bring data IN to populate masters, integrations push data
+  OUT (webhooks). Same word, opposite directions. Naming
+  them differently saves the next reader hours of confusion.
+- **Provenance JSON, not a sibling table.** Every read of a
+  CustomerMaster row would otherwise need a JOIN. The field
+  set is small, the write pattern is field-by-field, and
+  audit replay can reconstruct full history from the audit
+  chain anyway.
+- **Backfill is `extracted` for everything populated.**
+  We don't have finer-grained history (no per-field edit
+  audit on the master pre-Slice-73), so calling it
+  `extracted` matches reality for the create path and is
+  honest about uncertainty for any subsequent edits — the
+  next manual edit will overlay its own `manual` entry.
+- **Soft-delete on `IntegrationConfig`, not hard-delete.**
+  Customer history (which connectors did they use? when
+  did they disconnect?) is durable; the unique constraint
+  permits re-connect without merging the old + new
+  configurations.
+- **No SyncProposal / MasterFieldConflict / MasterFieldLock
+  in this slice.** Those land in Slice 74 with the
+  classify_merge matrix. Shipping them now without their
+  consumer code would give us models that nobody calls.
+- **The pill is on the master pages, not the invoice
+  review screen.** Per-field provenance is meaningful for
+  recurring entities (the buyer who shows up across 50
+  invoices); on a single invoice, the source is always
+  "the document the user just uploaded".
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -6892,7 +7004,7 @@ from silently.
 
 ## Test surface
 
-**Backend:** 768 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
+**Backend:** 780 passing, 5 skipped (4 Postgres-only RLS tests + 1 native-PDF
 roundtrip needing reportlab). Run with `make test`.
 
 Coverage:

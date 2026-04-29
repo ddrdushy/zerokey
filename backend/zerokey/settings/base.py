@@ -55,6 +55,7 @@ LOCAL_APPS = [
     "apps.archive",
     "apps.audit",
     "apps.integrations",
+    "apps.connectors",
     "apps.notifications",
     "apps.administration",
 ]

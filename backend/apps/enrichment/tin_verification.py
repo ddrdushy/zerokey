@@ -56,22 +56,37 @@ def needs_verification(master: CustomerMaster) -> bool:
     """Is this master due for a fresh LHDN TIN check?
 
     Skip masters with no TIN — there's nothing to verify. Skip
-    "failed" masters that have already been hit recently (avoid
+    ``failed`` masters that have already been hit recently (avoid
     hammering LHDN on a row we already know is bad). Re-verify
-    "verified" masters older than VERIFY_REFRESH_DAYS so a
+    ``verified`` masters older than ``VERIFY_REFRESH_DAYS`` so a
     revoked TIN eventually flips to failed.
+
+    Slice 73 — ``unverified_external_source`` (a synced TIN from a
+    connector) is treated like plain ``unverified``: verify
+    immediately. The customer trusts the source to populate, but
+    LHDN is the only authority on whether the TIN is valid.
+
+    Slice 73 — ``manually_resolved`` is treated like ``verified``
+    for the purposes of staleness — the user explicitly picked
+    the value, so we re-check on the same 90-day cadence rather
+    than on every enrichment.
     """
     if not master.tin:
         return False
     state = master.tin_verification_state
-    if state == CustomerMaster.TinVerificationState.UNVERIFIED:
+    if state in {
+        CustomerMaster.TinVerificationState.UNVERIFIED,
+        CustomerMaster.TinVerificationState.UNVERIFIED_EXTERNAL_SOURCE,
+    }:
         return True
     if state == CustomerMaster.TinVerificationState.FAILED:
-        # Re-check failed every VERIFY_REFRESH_DAYS too — gives the
-        # customer a path out if they corrected the TIN since last
-        # attempt.
+        # Re-check failed every VERIFY_REFRESH_DAYS — gives the
+        # customer a path out if they corrected the TIN since.
         return _is_stale(master)
-    if state == CustomerMaster.TinVerificationState.VERIFIED:
+    if state in {
+        CustomerMaster.TinVerificationState.VERIFIED,
+        CustomerMaster.TinVerificationState.MANUALLY_RESOLVED,
+    }:
         return _is_stale(master)
     return False
 

@@ -40,9 +40,28 @@ class CustomerMaster(TenantScopedModel):
     """
 
     class TinVerificationState(models.TextChoices):
+        # Default — never been checked against LHDN.
         UNVERIFIED = "unverified", "Unverified"
+        # Slice 73 (connectors): synced from an external source
+        # (CSV / AutoCount / Xero / etc.). Different from plain
+        # `unverified` because the customer has more reason to trust
+        # it (it came from their books, not the LLM extraction) but
+        # LHDN hasn't confirmed the TIN exists yet. The pill is
+        # rendered amber-ish, distinct from `verified` (green) and
+        # plain `unverified` (grey).
+        UNVERIFIED_EXTERNAL_SOURCE = (
+            "unverified_external_source",
+            "Unverified (from external source)",
+        )
+        # Slice 70 — LHDN's /taxpayer/validate said this TIN exists.
         VERIFIED = "verified", "Verified"
+        # Slice 70 — LHDN's /taxpayer/validate returned 404.
         FAILED = "failed", "Failed verification"
+        # Slice 74+: user picked the value in the conflict-queue UI.
+        # Locks future syncs from quietly overwriting it (the lock
+        # row is the actual mechanism; this state is the audit trail
+        # that says "a human chose this").
+        MANUALLY_RESOLVED = "manually_resolved", "Manually resolved"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -53,7 +72,7 @@ class CustomerMaster(TenantScopedModel):
 
     tin = models.CharField(max_length=32, blank=True, db_index=True)
     tin_verification_state = models.CharField(
-        max_length=16,
+        max_length=32,
         choices=TinVerificationState.choices,
         default=TinVerificationState.UNVERIFIED,
     )
@@ -65,6 +84,29 @@ class CustomerMaster(TenantScopedModel):
     phone = models.CharField(max_length=32, blank=True)
     sst_number = models.CharField(max_length=32, blank=True)
     country_code = models.CharField(max_length=2, blank=True)
+
+    # Slice 73 — per-field provenance. Maps field_name → entry.
+    # Entry shape (all keys optional except `source`):
+    #   {
+    #     "source": "extracted" | "manual" | "manually_resolved"
+    #               | "synced_csv" | "synced_autocount" | "synced_xero"
+    #               | "synced_quickbooks" | "synced_shopify"
+    #               | "synced_woocommerce" | "synced_sql_accounting",
+    #     "extracted_at": ISO8601,                   # for extracted
+    #     "invoice_id": uuid,                        # for extracted
+    #     "synced_at": ISO8601,                      # for synced_*
+    #     "source_record_id": "string",              # for synced_*
+    #     "applied_via_proposal_id": uuid,           # for synced_*
+    #     "approved_by": user_uuid,                  # for synced_* / manually_resolved
+    #     "entered_at": ISO8601,                     # for manual
+    #     "edited_by": user_uuid,                    # for manual
+    #   }
+    # Per-record provenance was rejected — different fields
+    # legitimately come from different sources, and audit needs the
+    # granularity. JSON column instead of a separate provenance table
+    # because every CustomerMaster read would otherwise need a join
+    # and the field set is small.
+    field_provenance = models.JSONField(default=dict, blank=True)
 
     # How many invoices have referenced this buyer. Drives the
     # "frequent customers" view and lets us de-prioritise stale records
@@ -121,6 +163,10 @@ class ItemMaster(TenantScopedModel):
     default_unit_price_excl_tax = models.DecimalField(
         max_digits=19, decimal_places=2, null=True, blank=True
     )
+
+    # Slice 73 — per-field provenance. Same shape as
+    # CustomerMaster.field_provenance.
+    field_provenance = models.JSONField(default=dict, blank=True)
 
     usage_count = models.PositiveIntegerField(default=0)
     last_used_at = models.DateTimeField(null=True, blank=True)

@@ -164,8 +164,26 @@ def _enrich_customer(invoice: Invoice) -> _CustomerOutcome:
     if not invoice.buyer_tin and not invoice.buyer_legal_name:
         return _CustomerOutcome(master=None, matched=False, created=False)
 
+    # Slice 73 — every field this enrichment writes gets an
+    # ``extracted`` provenance entry tying it back to the invoice it
+    # came from. Future syncs / manual edits / conflict resolutions
+    # overlay their own entries; the JSON is keyed by field name so
+    # later writes don't lose earlier history per field.
+    extracted_at_iso = timezone.now().isoformat()
+
+    def _extracted_entry() -> dict[str, str]:
+        return {
+            "source": "extracted",
+            "extracted_at": extracted_at_iso,
+            "invoice_id": str(invoice.id),
+        }
+
     master = _find_customer_master(invoice)
     if master is None:
+        provenance: dict[str, dict] = {}
+        for master_field, invoice_field in _BUYER_FIELD_MAP:
+            if getattr(invoice, invoice_field):
+                provenance[master_field] = _extracted_entry()
         master = CustomerMaster.objects.create(
             organization_id=invoice.organization_id,
             legal_name=invoice.buyer_legal_name or "(no name)",
@@ -177,6 +195,7 @@ def _enrich_customer(invoice: Invoice) -> _CustomerOutcome:
             phone=invoice.buyer_phone or "",
             sst_number=invoice.buyer_sst_number or "",
             country_code=invoice.buyer_country_code or "",
+            field_provenance=provenance,
             usage_count=1,
             last_used_at=timezone.now(),
         )
@@ -194,6 +213,7 @@ def _enrich_customer(invoice: Invoice) -> _CustomerOutcome:
     ):
         master.aliases = [*master.aliases, invoice.buyer_legal_name]
 
+    provenance = dict(master.field_provenance or {})
     for master_field, invoice_field in _BUYER_FIELD_MAP:
         if master_field == "legal_name":
             continue
@@ -202,6 +222,8 @@ def _enrich_customer(invoice: Invoice) -> _CustomerOutcome:
         new_value = getattr(invoice, invoice_field) or ""
         if new_value:
             setattr(master, master_field, new_value)
+            provenance[master_field] = _extracted_entry()
+    master.field_provenance = provenance
 
     master.save()
     return _CustomerOutcome(master=master, matched=True, created=False)
@@ -484,6 +506,20 @@ def update_customer_master(
 
     if rename_old_name and rename_old_name not in master.aliases:
         master.aliases = [*master.aliases, rename_old_name]
+
+    # Slice 73 — every changed field gets a ``manual`` provenance
+    # entry so the UI pill can show "entered manually". Existing
+    # extracted/synced provenance for unchanged fields is left
+    # alone.
+    edited_at_iso = timezone.now().isoformat()
+    provenance = dict(master.field_provenance or {})
+    for fname in changed:
+        provenance[fname] = {
+            "source": "manual",
+            "entered_at": edited_at_iso,
+            "edited_by": str(actor_user_id),
+        }
+    master.field_provenance = provenance
 
     master.save()
 

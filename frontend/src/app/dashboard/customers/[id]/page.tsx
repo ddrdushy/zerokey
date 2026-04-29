@@ -26,6 +26,7 @@ import {
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { FieldRow } from "@/components/review/FieldRow";
+import { ProvenancePill } from "@/components/review/ProvenancePill";
 
 type EditableCustomerField =
   | "legal_name"
@@ -131,48 +132,54 @@ export default function CustomerDetailPage() {
           <div className="flex flex-col gap-5">
             <Section title="Identity">
               <div className="grid gap-3 md:grid-cols-2">
-                <FieldRow
+                <ProvenancedField
+                  customer={customer}
+                  fieldName="legal_name"
                   label="Legal name"
-                  name="legal_name"
                   value={valueOf("legal_name")}
                   dirty={isDirty("legal_name")}
                   onChange={onChangeField}
                 />
-                <FieldRow
+                <ProvenancedField
+                  customer={customer}
+                  fieldName="tin"
                   label="TIN"
-                  name="tin"
                   value={valueOf("tin")}
                   dirty={isDirty("tin")}
                   onChange={onChangeField}
                   mono
                 />
-                <FieldRow
+                <ProvenancedField
+                  customer={customer}
+                  fieldName="registration_number"
                   label="Registration number"
-                  name="registration_number"
                   value={valueOf("registration_number")}
                   dirty={isDirty("registration_number")}
                   onChange={onChangeField}
                   mono
                 />
-                <FieldRow
+                <ProvenancedField
+                  customer={customer}
+                  fieldName="msic_code"
                   label="MSIC code"
-                  name="msic_code"
                   value={valueOf("msic_code")}
                   dirty={isDirty("msic_code")}
                   onChange={onChangeField}
                   mono
                 />
-                <FieldRow
+                <ProvenancedField
+                  customer={customer}
+                  fieldName="sst_number"
                   label="SST number"
-                  name="sst_number"
                   value={valueOf("sst_number")}
                   dirty={isDirty("sst_number")}
                   onChange={onChangeField}
                   mono
                 />
-                <FieldRow
+                <ProvenancedField
+                  customer={customer}
+                  fieldName="country_code"
                   label="Country code"
-                  name="country_code"
                   value={valueOf("country_code")}
                   dirty={isDirty("country_code")}
                   onChange={onChangeField}
@@ -183,16 +190,18 @@ export default function CustomerDetailPage() {
 
             <Section title="Contact">
               <div className="grid gap-3 md:grid-cols-2">
-                <FieldRow
+                <ProvenancedField
+                  customer={customer}
+                  fieldName="phone"
                   label="Phone"
-                  name="phone"
                   value={valueOf("phone")}
                   dirty={isDirty("phone")}
                   onChange={onChangeField}
                 />
-                <FieldRow
+                <ProvenancedField
+                  customer={customer}
+                  fieldName="address"
                   label="Address"
-                  name="address"
                   value={valueOf("address")}
                   dirty={isDirty("address")}
                   onChange={onChangeField}
@@ -229,6 +238,44 @@ export default function CustomerDetailPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+// Slice 73 — wraps FieldRow + ProvenancePill so each field carries
+// its source pill underneath ("Extracted from invoice", "From
+// AutoCount", "Entered manually"). Reads the entry from
+// ``customer.field_provenance[fieldName]``; absent entries render
+// nothing (e.g. fields the customer has never filled).
+function ProvenancedField({
+  customer,
+  fieldName,
+  label,
+  value,
+  dirty,
+  onChange,
+  mono,
+}: {
+  customer: Customer;
+  fieldName: EditableCustomerField;
+  label: string;
+  value: string;
+  dirty: boolean;
+  onChange: (name: string, value: string) => void;
+  mono?: boolean;
+}) {
+  const entry = customer.field_provenance?.[fieldName];
+  return (
+    <div className="flex flex-col">
+      <FieldRow
+        label={label}
+        name={fieldName}
+        value={value}
+        dirty={dirty}
+        onChange={onChange}
+        mono={mono}
+      />
+      <ProvenancePill entry={entry} />
+    </div>
   );
 }
 
@@ -399,21 +446,52 @@ function StatusPill({ status }: { status: string }) {
 }
 
 function VerificationCard({ customer }: { customer: Customer }) {
-  const verified = customer.tin_verification_state === "verified";
-  const failed = customer.tin_verification_state === "failed";
-  const tone = verified
-    ? "text-success"
-    : failed
-      ? "text-error"
-      : "text-slate-500";
+  // Slice 73 — five-state tin_verification_state. The card uses
+  // tone + label per state, and the helper text adjusts to the
+  // state's meaning rather than always saying "lands in a
+  // follow-up" (Slice 70 made verification real).
+  const stateMeta: Record<
+    Customer["tin_verification_state"],
+    { label: string; tone: string; helper: string | null }
+  > = {
+    verified: {
+      label: "Verified",
+      tone: "text-success",
+      helper: null,
+    },
+    failed: {
+      label: "Failed verification",
+      tone: "text-error",
+      helper:
+        "LHDN didn't recognise this TIN. Correct it + we'll re-check on save.",
+    },
+    unverified: {
+      label: "Unverified",
+      tone: "text-slate-500",
+      helper:
+        "Will be verified against LHDN automatically on the next enrichment cycle.",
+    },
+    unverified_external_source: {
+      label: "Unverified · external source",
+      tone: "text-amber-700",
+      helper:
+        "Synced from an external system. Will be verified against LHDN on the next enrichment cycle.",
+    },
+    manually_resolved: {
+      label: "Manually resolved",
+      tone: "text-success",
+      helper:
+        "A user picked this value in the conflict queue. Re-verified periodically against LHDN.",
+    },
+  };
+  const meta = stateMeta[customer.tin_verification_state];
   return (
     <div className="rounded-xl border border-slate-100 bg-white px-4 py-3">
       <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">
         TIN verification
       </div>
-      <div className={`mt-1 text-base font-medium ${tone}`}>
-        {customer.tin_verification_state.charAt(0).toUpperCase() +
-          customer.tin_verification_state.slice(1)}
+      <div className={`mt-1 text-base font-medium ${meta.tone}`}>
+        {meta.label}
       </div>
       {customer.tin_last_verified_at && (
         <div className="mt-1 text-2xs text-slate-400">
@@ -421,11 +499,8 @@ function VerificationCard({ customer }: { customer: Customer }) {
           {new Date(customer.tin_last_verified_at).toLocaleDateString()}
         </div>
       )}
-      {!verified && !failed && (
-        <p className="mt-2 text-2xs text-slate-500">
-          Live LHDN verification lands in a follow-up slice — until then this
-          stays unverified.
-        </p>
+      {meta.helper && (
+        <p className="mt-2 text-2xs text-slate-500">{meta.helper}</p>
       )}
     </div>
   );
