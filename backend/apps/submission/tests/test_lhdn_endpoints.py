@@ -292,7 +292,7 @@ class TestPollEndpoint:
 
     def test_poll_terminal_validated(self, authed, submitted_invoice) -> None:
         # Park a submission_uid on the row so poll has something to look up.
-        submitted_invoice.signed_xml_s3_key = "submission_uid=sub-xyz"
+        submitted_invoice.submission_uid = "sub-xyz"
         submitted_invoice.status = Invoice.Status.SUBMITTING
         submitted_invoice.save()
         client, _, _ = authed

@@ -3,9 +3,8 @@
 Public entry points:
 
   - ``sign_invoice(invoice_id)`` — produce signed UBL XML, persist
-    it (encrypted-at-rest blob path comes in Slice 59; today the
-    XML is held on the Invoice row's ``signed_xml_s3_key`` as a
-    placeholder + cached for the immediate submit).
+    it (encrypted-at-rest blob path comes in a later slice; today
+    the XML is held in-memory + handed straight to submit).
   - ``submit_invoice_to_lhdn(invoice_id)`` — read signed XML, POST
     to LHDN, persist submission_uid on the Invoice.
   - ``poll_invoice_status(invoice_id)`` — fetch latest status,
@@ -235,15 +234,12 @@ def submit_invoice_to_lhdn(
     rejected = response.get("rejectedDocuments", [])
 
     invoice.status = Invoice.Status.SUBMITTING
-    # We store the submission UID on the existing s3-key column for v1
-    # — Slice 59 splits that into a proper column. Putting it here
-    # keeps the data path working without another migration this slice.
-    invoice.signed_xml_s3_key = f"submission_uid={submission_uid}"
+    invoice.submission_uid = submission_uid[:64]
     invoice.validation_timestamp = timezone.now()
     invoice.save(
         update_fields=[
             "status",
-            "signed_xml_s3_key",
+            "submission_uid",
             "validation_timestamp",
             "updated_at",
         ]
@@ -289,11 +285,20 @@ def poll_invoice_status(invoice_id: uuid.UUID | str) -> dict:
     caller (worker or UI poll button).
     """
     invoice = _get_invoice(invoice_id)
-    submission_uid = (
-        (invoice.signed_xml_s3_key or "")
-        .removeprefix("submission_uid=")
-        .strip()
-    )
+    submission_uid = (invoice.submission_uid or "").strip()
+    if not submission_uid:
+        # Tolerate the legacy kludge so any in-flight invoice that
+        # was submitted under Slice 58 (UID stashed in signed_xml_s3_key)
+        # still polls correctly. The 0009 backfill migration handles
+        # the data path; this is the runtime safety net for any row
+        # that snuck in between migration apply + cache invalidation.
+        legacy = (
+            (invoice.signed_xml_s3_key or "")
+            .removeprefix("submission_uid=")
+            .strip()
+        )
+        if legacy:
+            submission_uid = legacy
     if not submission_uid:
         return {"ok": False, "reason": "invoice not yet submitted"}
 

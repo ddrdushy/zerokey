@@ -146,6 +146,11 @@ class Invoice(TenantScopedModel):
     # --- Submission lifecycle (set after signing/LHDN response) -------------
     lhdn_uuid = models.CharField(max_length=64, blank=True, db_index=True)
     lhdn_qr_code_url = models.URLField(blank=True)
+    # LHDN's per-batch submission identifier (returned on the synchronous
+    # response to /documentsubmissions). Used to poll status. Distinct
+    # from ``lhdn_uuid``, which is per-document and only populated once
+    # LHDN finishes validation.
+    submission_uid = models.CharField(max_length=64, blank=True, db_index=True)
     signed_xml_s3_key = models.CharField(max_length=1024, blank=True)
     validation_timestamp = models.DateTimeField(null=True, blank=True)
     cancellation_timestamp = models.DateTimeField(null=True, blank=True)

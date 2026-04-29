@@ -412,6 +412,7 @@ class TestEditableFieldAllowlist:
         forbidden = {
             "lhdn_uuid",
             "lhdn_qr_code_url",
+            "submission_uid",
             "signed_xml_s3_key",
             "validation_timestamp",
             "cancellation_timestamp",

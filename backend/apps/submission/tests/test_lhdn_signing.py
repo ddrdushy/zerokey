@@ -381,7 +381,7 @@ class TestLhdnSubmission:
 
         invoice.refresh_from_db()
         assert invoice.status == Invoice.Status.SUBMITTING
-        assert "submission-abc-123" in (invoice.signed_xml_s3_key or "")
+        assert invoice.submission_uid == "submission-abc-123"
         assert invoice.lhdn_uuid == "lhdn-uuid-xyz"
 
     def test_submit_invoice_lhdn_validation_rejection(
@@ -416,7 +416,7 @@ class TestLhdnSubmission:
         self, org_with_lhdn_creds, invoice
     ) -> None:
         # Simulate a prior submission that captured the submission UID.
-        invoice.signed_xml_s3_key = "submission_uid=sub-xyz"
+        invoice.submission_uid = "sub-xyz"
         invoice.status = Invoice.Status.SUBMITTING
         invoice.save()
 
