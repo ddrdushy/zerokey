@@ -243,9 +243,7 @@ class TestDates:
         invoice.issue_date = date.today() - timedelta(days=60)
         invoice.due_date = date.today() - timedelta(days=30)
         invoice.save()
-        codes_to_severity = {
-            i.code: i.severity for i in rules.rule_invoice_dates(invoice)
-        }
+        codes_to_severity = {i.code: i.severity for i in rules.rule_invoice_dates(invoice)}
         assert codes_to_severity.get("dates.due_in_past") == rules.SEVERITY_WARNING
 
 
@@ -270,9 +268,7 @@ class TestArithmetic:
         invoice = _make_valid_invoice(org)
         invoice.subtotal = Decimal("500.00")  # lines sum to 200.00
         invoice.save()
-        assert "totals.subtotal.mismatch" in _codes(
-            rules.rule_invoice_total_arithmetic(invoice)
-        )
+        assert "totals.subtotal.mismatch" in _codes(rules.rule_invoice_total_arithmetic(invoice))
 
     def test_invoice_subtotal_within_one_ringgit_is_clean(self, org) -> None:
         invoice = _make_valid_invoice(org)
@@ -286,9 +282,7 @@ class TestArithmetic:
         invoice = _make_valid_invoice(org)
         invoice.grand_total = Decimal("999.99")
         invoice.save()
-        assert "totals.grand_total.mismatch" in _codes(
-            rules.rule_invoice_total_arithmetic(invoice)
-        )
+        assert "totals.grand_total.mismatch" in _codes(rules.rule_invoice_total_arithmetic(invoice))
 
 
 @pytest.mark.django_db

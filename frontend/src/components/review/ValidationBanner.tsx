@@ -12,11 +12,7 @@ import { cn } from "@/lib/utils";
 
 export function ValidationBanner({ summary }: { summary: ValidationSummary }) {
   const total = summary.errors + summary.warnings + summary.infos;
-  const tone = summary.has_blocking_errors
-    ? "error"
-    : summary.warnings > 0
-      ? "warning"
-      : "ok";
+  const tone = summary.has_blocking_errors ? "error" : summary.warnings > 0 ? "warning" : "ok";
 
   const Icon = tone === "error" ? ShieldAlert : tone === "warning" ? ShieldCheck : CheckCircle2;
 
@@ -55,7 +51,9 @@ export function ValidationBanner({ summary }: { summary: ValidationSummary }) {
       </div>
       <div className="flex flex-col items-end gap-1 text-2xs uppercase tracking-wider">
         {summary.errors > 0 && (
-          <span className="font-medium text-error">{summary.errors} error{summary.errors > 1 && "s"}</span>
+          <span className="font-medium text-error">
+            {summary.errors} error{summary.errors > 1 && "s"}
+          </span>
         )}
         {summary.warnings > 0 && (
           <span className="font-medium text-warning">
@@ -63,7 +61,9 @@ export function ValidationBanner({ summary }: { summary: ValidationSummary }) {
           </span>
         )}
         {summary.infos > 0 && (
-          <span className="font-medium text-info">{summary.infos} note{summary.infos > 1 && "s"}</span>
+          <span className="font-medium text-info">
+            {summary.infos} note{summary.infos > 1 && "s"}
+          </span>
         )}
       </div>
     </section>

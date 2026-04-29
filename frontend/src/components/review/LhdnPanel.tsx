@@ -77,12 +77,12 @@ const AMENDMENT_COPY: Record<
 };
 
 type Phase =
-  | "preflight"      // not yet submitted
-  | "in_flight"      // submitted, waiting for LHDN to validate
-  | "validated"      // LHDN accepted
-  | "rejected"       // LHDN rejected
-  | "cancelled"      // we cancelled it
-  | "error";         // local pipeline error
+  | "preflight" // not yet submitted
+  | "in_flight" // submitted, waiting for LHDN to validate
+  | "validated" // LHDN accepted
+  | "rejected" // LHDN rejected
+  | "cancelled" // we cancelled it
+  | "error"; // local pipeline error
 
 function phaseFor(invoice: Invoice): Phase {
   switch (invoice.status) {
@@ -119,9 +119,7 @@ export function LhdnPanel({
 }) {
   const router = useRouter();
   const phase = useMemo(() => phaseFor(invoice), [invoice]);
-  const [busy, setBusy] = useState<
-    "submit" | "cancel" | "poll" | "amendment" | null
-  >(null);
+  const [busy, setBusy] = useState<"submit" | "cancel" | "poll" | "amendment" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
@@ -256,11 +254,7 @@ export function LhdnPanel({
           />
         )}
         {phase === "in_flight" && (
-          <InFlightView
-            invoice={invoice}
-            busy={busy === "poll"}
-            onPoll={onPoll}
-          />
+          <InFlightView invoice={invoice} busy={busy === "poll"} onPoll={onPoll} />
         )}
         {phase === "validated" && (
           <ValidatedView
@@ -273,11 +267,7 @@ export function LhdnPanel({
           />
         )}
         {phase === "rejected" && (
-          <RejectedView
-            invoice={invoice}
-            busy={busy === "submit"}
-            onRetry={onSubmit}
-          />
+          <RejectedView invoice={invoice} busy={busy === "submit"} onRetry={onSubmit} />
         )}
         {phase === "cancelled" && <CancelledView invoice={invoice} />}
         {phase === "error" && <ErrorView invoice={invoice} />}
@@ -361,13 +351,16 @@ function PreflightView({
   return (
     <>
       <p className="text-2xs text-slate-500">
-        Once you submit, this invoice goes to LHDN for clearance. The
-        validation UUID and QR code arrive in seconds. Cancellation is
-        possible for 72 hours after.
+        Once you submit, this invoice goes to LHDN for clearance. The validation UUID and QR code
+        arrive in seconds. Cancellation is possible for 72 hours after.
       </p>
       {blocked && (
         <div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-2xs text-slate-700">
-          Resolve {blockingIssues > 0 ? `${blockingIssues} validation issue${blockingIssues === 1 ? "" : "s"}` : "the missing invoice number"} before submitting.
+          Resolve{" "}
+          {blockingIssues > 0
+            ? `${blockingIssues} validation issue${blockingIssues === 1 ? "" : "s"}`
+            : "the missing invoice number"}{" "}
+          before submitting.
         </div>
       )}
       <div>
@@ -389,22 +382,14 @@ function PreflightView({
   );
 }
 
-function InFlightView({
-  busy,
-  onPoll,
-}: {
-  invoice: Invoice;
-  busy: boolean;
-  onPoll: () => void;
-}) {
+function InFlightView({ busy, onPoll }: { invoice: Invoice; busy: boolean; onPoll: () => void }) {
   return (
     <>
       <div className="flex items-start gap-2 text-2xs text-slate-600">
         <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-warning" />
         <p>
-          Submitted. LHDN is validating the document. Most decisions
-          come back within 30 seconds. The page auto-refreshes every 5
-          seconds.
+          Submitted. LHDN is validating the document. Most decisions come back within 30 seconds.
+          The page auto-refreshes every 5 seconds.
         </p>
       </div>
       <div>
@@ -436,8 +421,7 @@ function ValidatedView({
       <div className="flex items-start gap-2 text-2xs">
         <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
         <p className="text-slate-600">
-          Validated by LHDN MyInvois. The QR / verify link is publicly
-          shareable.
+          Validated by LHDN MyInvois. The QR / verify link is publicly shareable.
         </p>
       </div>
       <dl className="grid gap-2 text-2xs sm:grid-cols-2">
@@ -461,35 +445,23 @@ function ValidatedView({
             Cancel invoice
           </Button>
         ) : null}
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => onAmendmentOpen("credit_note")}
-        >
+        <Button size="sm" variant="ghost" onClick={() => onAmendmentOpen("credit_note")}>
           <FileMinus className="mr-1.5 h-3.5 w-3.5" />
           Credit note
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => onAmendmentOpen("debit_note")}
-        >
+        <Button size="sm" variant="ghost" onClick={() => onAmendmentOpen("debit_note")}>
           <FilePlus className="mr-1.5 h-3.5 w-3.5" />
           Debit note
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => onAmendmentOpen("refund_note")}
-        >
+        <Button size="sm" variant="ghost" onClick={() => onAmendmentOpen("refund_note")}>
           <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
           Refund note
         </Button>
       </div>
       {!canCancel && (
         <p className="text-2xs text-slate-400">
-          72-hour cancel window has passed. To adjust this invoice,
-          issue a credit/debit/refund note instead.
+          72-hour cancel window has passed. To adjust this invoice, issue a credit/debit/refund note
+          instead.
         </p>
       )}
     </>
@@ -546,9 +518,7 @@ function ErrorView({ invoice }: { invoice: Invoice }) {
     <div className="flex items-start gap-2 text-2xs">
       <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-error" />
       <div className="text-slate-600">
-        <p className="font-medium text-error">
-          The submission pipeline hit an error.
-        </p>
+        <p className="font-medium text-error">The submission pipeline hit an error.</p>
         <p className="mt-1 whitespace-pre-wrap break-words">
           {invoice.error_message || "Check the audit log."}
         </p>
@@ -568,9 +538,7 @@ function Row({
 }) {
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-wider text-slate-400">
-        {label}
-      </dt>
+      <dt className="text-[10px] uppercase tracking-wider text-slate-400">{label}</dt>
       <dd
         className={cn(
           "mt-0.5",
@@ -610,9 +578,8 @@ function CancelDialog({
       >
         <h3 className="text-base font-semibold">Cancel this invoice?</h3>
         <p className="mt-2 text-2xs text-slate-500">
-          Cancellation is final + visible on LHDN&apos;s portal. After 72
-          hours from validation you can no longer cancel — issue a
-          credit note instead.
+          Cancellation is final + visible on LHDN&apos;s portal. After 72 hours from validation you
+          can no longer cancel — issue a credit note instead.
         </p>
         <label className="mt-4 block text-2xs font-medium">
           Reason (required, sent to LHDN)
@@ -625,19 +592,10 @@ function CancelDialog({
           />
         </label>
         <div className="mt-4 flex items-center justify-end gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onClose}
-            disabled={busy}
-          >
+          <Button size="sm" variant="ghost" onClick={onClose} disabled={busy}>
             Keep invoice
           </Button>
-          <Button
-            size="sm"
-            onClick={onConfirm}
-            disabled={busy || !reason.trim()}
-          >
+          <Button size="sm" onClick={onConfirm} disabled={busy || !reason.trim()}>
             {busy ? "Cancelling…" : "Confirm cancellation"}
           </Button>
         </div>
@@ -675,9 +633,8 @@ function AmendmentDialog({
       >
         <h3 className="text-base font-semibold">{copy.title}</h3>
         <p className="mt-2 text-2xs text-slate-500">
-          {copy.blurb} It&apos;s a new LHDN document that links back to
-          this one. After creation, you&apos;ll land on its review
-          page where you can adjust amounts before submitting it to
+          {copy.blurb} It&apos;s a new LHDN document that links back to this one. After creation,
+          you&apos;ll land on its review page where you can adjust amounts before submitting it to
           LHDN.
         </p>
         <label className="mt-4 block text-2xs font-medium">
@@ -691,19 +648,10 @@ function AmendmentDialog({
           />
         </label>
         <div className="mt-4 flex items-center justify-end gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onClose}
-            disabled={busy}
-          >
+          <Button size="sm" variant="ghost" onClick={onClose} disabled={busy}>
             Never mind
           </Button>
-          <Button
-            size="sm"
-            onClick={onConfirm}
-            disabled={busy || !reason.trim()}
-          >
+          <Button size="sm" onClick={onConfirm} disabled={busy || !reason.trim()}>
             {busy ? copy.busyLabel : copy.confirmLabel}
           </Button>
         </div>

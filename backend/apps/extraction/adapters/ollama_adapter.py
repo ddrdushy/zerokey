@@ -77,21 +77,27 @@ _REQUEST_TIMEOUT_SECONDS = 60.0
 
 def _resolve_config(*, engine_name: str) -> tuple[str, str | None, str]:
     """Return (host, api_key, model). ``api_key`` may be None for local."""
-    host = engine_credential(
-        engine_name=engine_name,
-        key=_HOST_FIELD,
-        env_fallback=_HOST_ENV_FALLBACK,
-    ) or _DEFAULT_HOST_LOCAL
+    host = (
+        engine_credential(
+            engine_name=engine_name,
+            key=_HOST_FIELD,
+            env_fallback=_HOST_ENV_FALLBACK,
+        )
+        or _DEFAULT_HOST_LOCAL
+    )
     api_key = engine_credential(
         engine_name=engine_name,
         key=_API_KEY_FIELD,
         env_fallback=_API_KEY_ENV_FALLBACK,
     )
-    model = engine_credential(
-        engine_name=engine_name,
-        key=_MODEL_FIELD,
-        env_fallback=_MODEL_ENV_FALLBACK,
-    ) or _DEFAULT_MODEL
+    model = (
+        engine_credential(
+            engine_name=engine_name,
+            key=_MODEL_FIELD,
+            env_fallback=_MODEL_ENV_FALLBACK,
+        )
+        or _DEFAULT_MODEL
+    )
     # Strip a trailing slash so we can concatenate cleanly. The cloud sometimes
     # returns errors on a doubled slash.
     return host.rstrip("/"), api_key, model
@@ -126,9 +132,7 @@ class OllamaFieldStructureAdapter(FieldStructureEngine):
 
     name = ADAPTER_NAME
 
-    def structure_fields(
-        self, *, text: str, target_schema: list[str]
-    ) -> StructuredExtractResult:
+    def structure_fields(self, *, text: str, target_schema: list[str]) -> StructuredExtractResult:
         host, api_key, model = _resolve_config(engine_name=self.name)
 
         # Cloud requires Authorization; local doesn't. Treat the cloud host
@@ -151,9 +155,7 @@ class OllamaFieldStructureAdapter(FieldStructureEngine):
             "messages": [
                 {
                     "role": "user",
-                    "content": build_field_structure_prompt(
-                        text=text, target_schema=target_schema
-                    ),
+                    "content": build_field_structure_prompt(text=text, target_schema=target_schema),
                 }
             ],
             "stream": False,
@@ -168,9 +170,7 @@ class OllamaFieldStructureAdapter(FieldStructureEngine):
                     json=payload,
                 )
         except httpx.HTTPError as exc:
-            raise EngineUnavailable(
-                f"Ollama request to {host}/api/chat failed: {exc}"
-            ) from exc
+            raise EngineUnavailable(f"Ollama request to {host}/api/chat failed: {exc}") from exc
 
         if response.status_code >= 400:
             # Don't include the response body in the exception — it can
@@ -218,9 +218,7 @@ class OllamaFieldStructureAdapter(FieldStructureEngine):
                 return len(value) > 0
             return True
 
-        per_field_confidence = {
-            f: (0.85 if _is_populated(f) else 0.0) for f in target_schema
-        }
+        per_field_confidence = {f: (0.85 if _is_populated(f) else 0.0) for f in target_schema}
         overall = sum(per_field_confidence.values()) / max(len(per_field_confidence), 1)
 
         return StructuredExtractResult(

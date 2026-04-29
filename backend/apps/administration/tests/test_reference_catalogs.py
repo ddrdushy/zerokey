@@ -115,9 +115,7 @@ class TestRefreshStub:
         assert msic.last_refreshed_at >= before
 
     def test_refresh_skips_inactive_rows(self) -> None:
-        TaxTypeCode.objects.filter(code="E").update(
-            is_active=False, last_refreshed_at=None
-        )
+        TaxTypeCode.objects.filter(code="E").update(is_active=False, last_refreshed_at=None)
         try:
             refresh_reference_catalogs()
             inactive = TaxTypeCode.objects.get(code="E")

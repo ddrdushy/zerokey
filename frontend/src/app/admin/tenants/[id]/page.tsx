@@ -45,7 +45,7 @@ const REASON_LABEL: Record<string, string> = {
 export default function TenantDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const tenantId = typeof params.id === "string" ? params.id : params.id?.[0] ?? "";
+  const tenantId = typeof params.id === "string" ? params.id : (params.id?.[0] ?? "");
   const [detail, setDetail] = useState<TenantDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -79,9 +79,7 @@ export default function TenantDetailPage() {
       <AdminShell>
         <div className="rounded-xl border border-slate-100 bg-white p-12 text-center">
           <CircleAlert className="mx-auto h-8 w-8 text-slate-300" />
-          <h2 className="mt-4 font-display text-xl font-semibold">
-            Tenant not found
-          </h2>
+          <h2 className="mt-4 font-display text-xl font-semibold">Tenant not found</h2>
           <p className="mx-auto mt-2 max-w-md text-2xs text-slate-500">
             That UUID doesn&apos;t match any organization on the platform.
           </p>
@@ -121,18 +119,10 @@ export default function TenantDetailPage() {
           <Loading />
         ) : detail === null ? null : (
           <>
-            <Header
-              detail={detail}
-              onChanged={refresh}
-              onError={setError}
-            />
+            <Header detail={detail} onChanged={refresh} onError={setError} />
             <KPIGrid detail={detail} />
             <div className="grid gap-6 md:grid-cols-2">
-              <MembersSection
-                detail={detail}
-                onChanged={refresh}
-                onError={setError}
-              />
+              <MembersSection detail={detail} onChanged={refresh} onError={setError} />
               <InboxSection detail={detail} />
             </div>
             <RecentJobsSection detail={detail} />
@@ -167,15 +157,10 @@ function Header({
     setSubmitting(true);
     onError(null);
     try {
-      const result = await api.adminStartImpersonation(
-        detail.id,
-        impersonationReason.trim(),
-      );
+      const result = await api.adminStartImpersonation(detail.id, impersonationReason.trim());
       router.push(result.redirect_to || "/dashboard");
     } catch (err) {
-      onError(
-        err instanceof Error ? err.message : "Failed to start impersonation.",
-      );
+      onError(err instanceof Error ? err.message : "Failed to start impersonation.");
     } finally {
       setSubmitting(false);
     }
@@ -185,9 +170,7 @@ function Header({
     <header className="flex flex-col gap-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap items-baseline gap-3">
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            {detail.legal_name}
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">{detail.legal_name}</h1>
           <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">
             TIN {detail.tin}
           </code>
@@ -238,11 +221,8 @@ function Header({
           </span>
         )}
         <span className="text-slate-400">
-          {detail.timezone || "no timezone"} · {detail.billing_currency || "—"}{" "}
-          · joined{" "}
-          {detail.created_at
-            ? new Date(detail.created_at).toLocaleDateString()
-            : "—"}
+          {detail.timezone || "no timezone"} · {detail.billing_currency || "—"} · joined{" "}
+          {detail.created_at ? new Date(detail.created_at).toLocaleDateString() : "—"}
         </span>
       </div>
       {editing && (
@@ -265,12 +245,10 @@ function Header({
                 Start impersonation session for {detail.legal_name}?
               </p>
               <p className="mt-1">
-                You&apos;ll be signed into the customer dashboard as a
-                read-write proxy for this tenant&apos;s data for{" "}
-                <span className="font-medium">30 minutes</span>. Every action
-                you take is recorded under your staff identity. The session
-                hard-expires after the timeout — there&apos;s no extend
-                gesture.
+                You&apos;ll be signed into the customer dashboard as a read-write proxy for this
+                tenant&apos;s data for <span className="font-medium">30 minutes</span>. Every action
+                you take is recorded under your staff identity. The session hard-expires after the
+                timeout — there&apos;s no extend gesture.
               </p>
             </div>
           </div>
@@ -369,10 +347,9 @@ function TenantEditForm({
   return (
     <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4">
       <p className="mb-3 text-[11px] text-slate-500">
-        Privileged edit — every change is audited under your staff identity
-        with the reason below. Field values are stored, but the audit
-        payload only records which fields changed (no PII leak into the
-        chain).
+        Privileged edit — every change is audited under your staff identity with the reason below.
+        Field values are stored, but the audit payload only records which fields changed (no PII
+        leak into the chain).
       </p>
       <div className="grid gap-3 md:grid-cols-2">
         <EditField
@@ -390,11 +367,7 @@ function TenantEditForm({
           value={form.contact_phone}
           onChange={(v) => update("contact_phone", v)}
         />
-        <EditField
-          label="Timezone"
-          value={form.timezone}
-          onChange={(v) => update("timezone", v)}
-        />
+        <EditField label="Timezone" value={form.timezone} onChange={(v) => update("timezone", v)} />
         <EditField
           label="Currency"
           value={form.billing_currency}
@@ -453,9 +426,7 @@ function EditField({
 }) {
   return (
     <label className="flex flex-col gap-1 text-2xs">
-      <span className="font-medium uppercase tracking-wider text-slate-400">
-        {label}
-      </span>
+      <span className="font-medium uppercase tracking-wider text-slate-400">{label}</span>
       {textarea ? (
         <textarea
           value={value}
@@ -488,9 +459,7 @@ function EditSelect({
 }) {
   return (
     <label className="flex flex-col gap-1 text-2xs">
-      <span className="font-medium uppercase tracking-wider text-slate-400">
-        {label}
-      </span>
+      <span className="font-medium uppercase tracking-wider text-slate-400">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -510,11 +479,7 @@ function KPIGrid({ detail }: { detail: TenantDetail }) {
   const inboxAlert = detail.stats.inbox_open > 0;
   return (
     <section className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-      <Stat
-        label="Members"
-        primary={detail.stats.member_count}
-        icon={Users}
-      />
+      <Stat label="Members" primary={detail.stats.member_count} icon={Users} />
       <Stat
         label="Ingestion jobs"
         primary={detail.stats.ingestion_jobs_total}
@@ -531,20 +496,17 @@ function KPIGrid({ detail }: { detail: TenantDetail }) {
       <Stat
         label="Open inbox"
         primary={detail.stats.inbox_open}
-        secondary={
-          inboxAlert
-            ? "Items waiting on a human"
-            : "Inbox zero — nothing waiting"
-        }
+        secondary={inboxAlert ? "Items waiting on a human" : "Inbox zero — nothing waiting"}
         icon={Inbox}
         tone={inboxAlert ? "warning" : "success"}
       />
       <Link
         href={`/admin/audit?org=${detail.id}`}
-        className="md:col-span-2 lg:col-span-4 inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2 text-2xs font-medium text-ink hover:border-ink/30 hover:shadow-sm"
+        className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2 text-2xs font-medium text-ink hover:border-ink/30 hover:shadow-sm md:col-span-2 lg:col-span-4"
       >
         <ScrollText className="h-3.5 w-3.5 text-slate-400" />
-        Open the audit log filtered to this tenant ({detail.stats.audit_events.toLocaleString()} events)
+        Open the audit log filtered to this tenant ({detail.stats.audit_events.toLocaleString()}{" "}
+        events)
       </Link>
     </section>
   );
@@ -572,17 +534,11 @@ function Stat({
         ? "border-success/30 bg-success/5"
         : "border-slate-100 bg-white";
   const iconTone =
-    tone === "warning"
-      ? "text-warning"
-      : tone === "success"
-        ? "text-success"
-        : "text-slate-400";
+    tone === "warning" ? "text-warning" : tone === "success" ? "text-success" : "text-slate-400";
   return (
     <div className={cn("flex flex-col gap-2 rounded-xl border p-4", toneCls)}>
       <div className="flex items-center justify-between">
-        <div className="text-2xs font-medium uppercase tracking-wider text-slate-500">
-          {label}
-        </div>
+        <div className="text-2xs font-medium uppercase tracking-wider text-slate-500">{label}</div>
         <Icon className={cn("h-4 w-4", iconTone)} />
       </div>
       <div className="font-display text-3xl font-bold tracking-tight text-ink">
@@ -607,8 +563,7 @@ function Stat({
 }
 
 function StateBadge({ state }: { state: string }) {
-  const tone =
-    state === "active" ? "success" : state === "trial" ? "signal" : "slate";
+  const tone = state === "active" ? "success" : state === "trial" ? "signal" : "slate";
   const cls =
     tone === "success"
       ? "bg-success/10 text-success"
@@ -642,18 +597,13 @@ function MembersSection({
         </span>
       </header>
       {detail.members.length === 0 ? (
-        <div className="px-4 py-6 text-center text-2xs text-slate-400">
-          No members.
-        </div>
+        <div className="px-4 py-6 text-center text-2xs text-slate-400">No members.</div>
       ) : (
         <ul className="divide-y divide-slate-100">
           {detail.members.map((m) => (
             <li
               key={m.id}
-              className={cn(
-                "flex flex-col gap-2 px-4 py-2 text-2xs",
-                !m.is_active && "opacity-60",
-              )}
+              className={cn("flex flex-col gap-2 px-4 py-2 text-2xs", !m.is_active && "opacity-60")}
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex-1 truncate">
@@ -668,16 +618,12 @@ function MembersSection({
                   {m.role}
                 </span>
                 <span className="text-[10px] text-slate-400">
-                  {m.joined_date
-                    ? new Date(m.joined_date).toLocaleDateString()
-                    : ""}
+                  {m.joined_date ? new Date(m.joined_date).toLocaleDateString() : ""}
                 </span>
                 <button
                   type="button"
                   aria-label="Member actions"
-                  onClick={() =>
-                    setEditing(editing === m.id ? null : m.id)
-                  }
+                  onClick={() => setEditing(editing === m.id ? null : m.id)}
                   className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-ink"
                 >
                   <MoreHorizontal className="h-3.5 w-3.5" />
@@ -717,10 +663,7 @@ function MemberActions({
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
 
-  async function applyChange(changes: {
-    is_active?: boolean;
-    role_name?: string;
-  }) {
+  async function applyChange(changes: { is_active?: boolean; role_name?: string }) {
     if (!reason.trim()) {
       onError("A reason is required for membership changes.");
       return;
@@ -743,8 +686,7 @@ function MemberActions({
   return (
     <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
       <p className="mb-2 text-[11px] text-slate-500">
-        Privileged action — every change is audited under your staff
-        identity. A reason is required.
+        Privileged action — every change is audited under your staff identity. A reason is required.
       </p>
       <input
         type="text"
@@ -812,22 +754,13 @@ function InboxSection({ detail }: { detail: TenantDetail }) {
         </span>
       </header>
       {reasons.length === 0 ? (
-        <div className="px-4 py-6 text-center text-2xs text-slate-400">
-          Nothing open.
-        </div>
+        <div className="px-4 py-6 text-center text-2xs text-slate-400">Nothing open.</div>
       ) : (
         <ul className="divide-y divide-slate-100">
           {reasons.map(([reason, count]) => (
-            <li
-              key={reason}
-              className="flex items-center justify-between px-4 py-2 text-2xs"
-            >
-              <span className="text-slate-600">
-                {REASON_LABEL[reason] ?? reason}
-              </span>
-              <span className="font-mono text-[11px] font-medium text-ink">
-                {count}
-              </span>
+            <li key={reason} className="flex items-center justify-between px-4 py-2 text-2xs">
+              <span className="text-slate-600">{REASON_LABEL[reason] ?? reason}</span>
+              <span className="font-mono text-[11px] font-medium text-ink">{count}</span>
             </li>
           ))}
         </ul>
@@ -845,36 +778,24 @@ function RecentJobsSection({ detail }: { detail: TenantDetail }) {
         </span>
       </header>
       {detail.recent_jobs.length === 0 ? (
-        <div className="px-4 py-6 text-center text-2xs text-slate-400">
-          No jobs yet.
-        </div>
+        <div className="px-4 py-6 text-center text-2xs text-slate-400">No jobs yet.</div>
       ) : (
         <table className="w-full text-2xs">
           <thead className="bg-slate-50 text-slate-400">
             <tr>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Filename
-              </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Engine
-              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Filename</th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Status</th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Engine</th>
               <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
                 Confidence
               </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                When
-              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">When</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {detail.recent_jobs.map((job) => (
               <tr key={job.id}>
-                <td className="px-3 py-2 truncate text-ink max-w-xs">
-                  {job.filename}
-                </td>
+                <td className="max-w-xs truncate px-3 py-2 text-ink">{job.filename}</td>
                 <td className="px-3 py-2">
                   <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700">
                     {job.status}
@@ -882,14 +803,10 @@ function RecentJobsSection({ detail }: { detail: TenantDetail }) {
                 </td>
                 <td className="px-3 py-2 text-slate-500">{job.engine || "—"}</td>
                 <td className="px-3 py-2 text-right text-slate-500">
-                  {job.confidence !== null
-                    ? `${Math.round(job.confidence * 100)}%`
-                    : "—"}
+                  {job.confidence !== null ? `${Math.round(job.confidence * 100)}%` : "—"}
                 </td>
                 <td className="px-3 py-2 text-slate-500">
-                  {job.created_at
-                    ? new Date(job.created_at).toLocaleString()
-                    : "—"}
+                  {job.created_at ? new Date(job.created_at).toLocaleString() : "—"}
                 </td>
               </tr>
             ))}
@@ -909,9 +826,7 @@ function RecentInvoicesSection({ detail }: { detail: TenantDetail }) {
         </span>
       </header>
       {detail.recent_invoices.length === 0 ? (
-        <div className="px-4 py-6 text-center text-2xs text-slate-400">
-          No invoices yet.
-        </div>
+        <div className="px-4 py-6 text-center text-2xs text-slate-400">No invoices yet.</div>
       ) : (
         <table className="w-full text-2xs">
           <thead className="bg-slate-50 text-slate-400">
@@ -919,27 +834,17 @@ function RecentInvoicesSection({ detail }: { detail: TenantDetail }) {
               <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
                 Invoice #
               </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Buyer
-              </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-                Total
-              </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                When
-              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Buyer</th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Status</th>
+              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Total</th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">When</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {detail.recent_invoices.map((inv) => (
               <tr key={inv.id}>
-                <td className="px-3 py-2 font-mono text-ink">
-                  {inv.invoice_number || "—"}
-                </td>
-                <td className="px-3 py-2 truncate text-slate-600 max-w-xs">
+                <td className="px-3 py-2 font-mono text-ink">{inv.invoice_number || "—"}</td>
+                <td className="max-w-xs truncate px-3 py-2 text-slate-600">
                   {inv.buyer_legal_name || "—"}
                 </td>
                 <td className="px-3 py-2">
@@ -948,14 +853,10 @@ function RecentInvoicesSection({ detail }: { detail: TenantDetail }) {
                   </code>
                 </td>
                 <td className="px-3 py-2 text-right text-slate-600">
-                  {inv.grand_total
-                    ? `${inv.currency_code} ${inv.grand_total}`
-                    : "—"}
+                  {inv.grand_total ? `${inv.currency_code} ${inv.grand_total}` : "—"}
                 </td>
                 <td className="px-3 py-2 text-slate-500">
-                  {inv.created_at
-                    ? new Date(inv.created_at).toLocaleString()
-                    : "—"}
+                  {inv.created_at ? new Date(inv.created_at).toLocaleString() : "—"}
                 </td>
               </tr>
             ))}

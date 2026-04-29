@@ -49,9 +49,7 @@ def org_user(seeded) -> tuple[Organization, User]:
     org = Organization.objects.create(
         legal_name="Acme Sdn Bhd", tin="C10000000001", contact_email="ops@acme.example"
     )
-    user = User.objects.create_user(
-        email="o@acme.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="o@acme.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -139,7 +137,9 @@ class TestEnsureOpen:
         assert first.id == second.id
         # Only one row exists.
         assert (
-            ExceptionInboxItem.objects.filter(invoice=invoice, reason=REASON.VALIDATION_FAILURE).count()
+            ExceptionInboxItem.objects.filter(
+                invoice=invoice, reason=REASON.VALIDATION_FAILURE
+            ).count()
             == 1
         )
 
@@ -148,9 +148,7 @@ class TestEnsureOpen:
         invoice = _make_invoice(org)
         item = ensure_open(invoice=invoice, reason=REASON.VALIDATION_FAILURE)
         # Resolve it.
-        resolve_by_user(
-            organization_id=org.id, item_id=item.id, actor_user_id=user.id
-        )
+        resolve_by_user(organization_id=org.id, item_id=item.id, actor_user_id=user.id)
         item.refresh_from_db()
         assert item.status == ExceptionInboxItem.Status.RESOLVED
         assert item.resolved_at is not None
@@ -169,22 +167,16 @@ class TestEnsureOpen:
         ensure_open(invoice=invoice, reason=REASON.VALIDATION_FAILURE)
         # Bump to urgent on a re-call. The reopen audit event should NOT
         # fire (status didn't change), but state_changed → save + audit.
-        before = AuditEvent.objects.filter(
-            action_type="inbox.item_reopened"
-        ).count()
+        before = AuditEvent.objects.filter(action_type="inbox.item_reopened").count()
         ensure_open(
             invoice=invoice,
             reason=REASON.VALIDATION_FAILURE,
             priority=ExceptionInboxItem.Priority.URGENT,
         )
-        after = AuditEvent.objects.filter(
-            action_type="inbox.item_reopened"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="inbox.item_reopened").count()
         # Save ran (priority changed), so an audit event was written.
         assert after == before + 1
-        item = ExceptionInboxItem.objects.get(
-            invoice=invoice, reason=REASON.VALIDATION_FAILURE
-        )
+        item = ExceptionInboxItem.objects.get(invoice=invoice, reason=REASON.VALIDATION_FAILURE)
         assert item.priority == ExceptionInboxItem.Priority.URGENT
 
 
@@ -211,9 +203,7 @@ class TestResolveForReason:
         org, _ = org_user
         invoice = _make_invoice(org)
         # No row exists for this reason at all.
-        resolved = resolve_for_reason(
-            invoice=invoice, reason=REASON.LHDN_REJECTION
-        )
+        resolved = resolve_for_reason(invoice=invoice, reason=REASON.LHDN_REJECTION)
         assert resolved == 0
 
 
@@ -238,9 +228,7 @@ class TestResolveByUser:
         org, user = org_user
         invoice = _make_invoice(org)
         item = ensure_open(invoice=invoice, reason=REASON.VALIDATION_FAILURE)
-        resolve_by_user(
-            organization_id=org.id, item_id=item.id, actor_user_id=user.id
-        )
+        resolve_by_user(organization_id=org.id, item_id=item.id, actor_user_id=user.id)
         # Calling again is a no-op (no exception, no extra audit).
         resolved_again = resolve_by_user(
             organization_id=org.id, item_id=item.id, actor_user_id=user.id
@@ -258,9 +246,7 @@ class TestListOpenForOrganization:
             contact_email="other@example",
         )
         invoice_a = _make_invoice(org)
-        invoice_b = _make_invoice(
-            other, ingestion_job_id="22222222-2222-4222-8222-222222222222"
-        )
+        invoice_b = _make_invoice(other, ingestion_job_id="22222222-2222-4222-8222-222222222222")
 
         ensure_open(invoice=invoice_a, reason=REASON.VALIDATION_FAILURE)
         ensure_open(invoice=invoice_b, reason=REASON.VALIDATION_FAILURE)
@@ -273,9 +259,7 @@ class TestListOpenForOrganization:
         org, user = org_user
         invoice = _make_invoice(org)
         item = ensure_open(invoice=invoice, reason=REASON.VALIDATION_FAILURE)
-        resolve_by_user(
-            organization_id=org.id, item_id=item.id, actor_user_id=user.id
-        )
+        resolve_by_user(organization_id=org.id, item_id=item.id, actor_user_id=user.id)
         rows = list_open_for_organization(organization_id=org.id)
         assert rows == []
 
@@ -344,9 +328,7 @@ class TestPipelineWiring:
             updates={"buyer_msic_code": "47190"},
             actor_user_id=user.id,
         )
-        item = ExceptionInboxItem.objects.get(
-            invoice=invoice, reason=REASON.VALIDATION_FAILURE
-        )
+        item = ExceptionInboxItem.objects.get(invoice=invoice, reason=REASON.VALIDATION_FAILURE)
         assert item.status == ExceptionInboxItem.Status.OPEN
 
         # Fix the TIN — re-validate auto-resolves.

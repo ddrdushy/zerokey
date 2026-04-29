@@ -244,9 +244,7 @@ def organization_api_keys(request: Request) -> Response:
             status=status.HTTP_201_CREATED,
         )
 
-    return Response(
-        {"results": api_keys_service.list_api_keys(organization_id=organization_id)}
-    )
+    return Response({"results": api_keys_service.list_api_keys(organization_id=organization_id)})
 
 
 @api_view(["GET", "PATCH"])
@@ -284,9 +282,7 @@ def notification_preferences(request: Request) -> Response:
         return Response(result)
 
     return Response(
-        notif_service.get_preferences(
-            organization_id=organization_id, user=request.user
-        )
+        notif_service.get_preferences(organization_id=organization_id, user=request.user)
     )
 
 
@@ -404,11 +400,7 @@ def organization_invitations(request: Request) -> Response:
 
     if request.method == "GET":
         return Response(
-            {
-                "results": inv_service.list_pending_invitations(
-                    organization_id=organization_id
-                )
-            }
+            {"results": inv_service.list_pending_invitations(organization_id=organization_id)}
         )
 
     # POST
@@ -426,16 +418,13 @@ def organization_invitations(request: Request) -> Response:
             actor_user_id=request.user.id,
         )
     except inv_service.InvitationError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     # Best-effort email send. Failure must NOT roll back the invite —
     # the inviter can copy the link out of the response if SMTP is
     # down. The audit trail records the invitation creation regardless.
     accept_url = (
-        f"{request.build_absolute_uri('/').rstrip('/')}"
-        f"/accept-invitation?token={plaintext_token}"
+        f"{request.build_absolute_uri('/').rstrip('/')}/accept-invitation?token={plaintext_token}"
     )
     try:
         from apps.notifications.email import is_email_configured, send_email
@@ -443,9 +432,7 @@ def organization_invitations(request: Request) -> Response:
         if is_email_configured():
             send_email(
                 to=invitation.email,
-                subject=(
-                    "You've been invited to ZeroKey"
-                ),
+                subject=("You've been invited to ZeroKey"),
                 body=(
                     f"You've been invited to join ZeroKey on the "
                     f"{invitation.role.name} role.\n\n"
@@ -453,7 +440,7 @@ def organization_invitations(request: Request) -> Response:
                     f"This link expires in 14 days.\n\n— ZeroKey"
                 ),
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
     return Response(
@@ -468,9 +455,7 @@ def organization_invitations(request: Request) -> Response:
 
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
-def revoke_organization_invitation(
-    request: Request, invitation_id: str
-) -> Response:
+def revoke_organization_invitation(request: Request, invitation_id: str) -> Response:
     """Cancel a pending invitation. Owner / admin only."""
     from . import invitations as inv_service
 
@@ -515,13 +500,9 @@ def accept_invitation_view(request: Request) -> Response:
     body = request.data or {}
     token = str(body.get("token") or "").strip()
     try:
-        membership = inv_service.accept_invitation(
-            token=token, accepting_user_id=request.user.id
-        )
+        membership = inv_service.accept_invitation(token=token, accepting_user_id=request.user.id)
     except inv_service.InvitationError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     request.session["organization_id"] = str(membership.organization_id)
     return Response(
@@ -552,9 +533,7 @@ def preview_invitation_view(request: Request) -> Response:
 
     token = str((request.data or {}).get("token") or "").strip()
     if not token:
-        return Response(
-            {"detail": "Missing token."}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": "Missing token."}, status=status.HTTP_400_BAD_REQUEST)
 
     token_hash = inv_service._hash_token(token)
     with super_admin_context(reason="invitations.preview"):
@@ -610,16 +589,12 @@ def organization_integrations(request: Request) -> Response:
             {"detail": "You are not a member of that organization."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    return Response(
-        {"results": list_integrations_for_org(organization_id=organization_id)}
-    )
+    return Response({"results": list_integrations_for_org(organization_id=organization_id)})
 
 
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
-def organization_integration_credentials(
-    request: Request, integration_key: str
-) -> Response:
+def organization_integration_credentials(request: Request, integration_key: str) -> Response:
     """Patch one environment's credential set.
 
     Body: ``{"environment": "sandbox|production", "fields": {...}}``
@@ -656,17 +631,13 @@ def organization_integration_credentials(
             actor_user_id=request.user.id,
         )
     except integ_service.IntegrationConfigError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(result)
 
 
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
-def organization_integration_active_environment(
-    request: Request, integration_key: str
-) -> Response:
+def organization_integration_active_environment(request: Request, integration_key: str) -> Response:
     """Flip the integration between sandbox + production.
 
     Body: ``{"environment": "sandbox|production", "reason": "..."}``
@@ -694,17 +665,13 @@ def organization_integration_active_environment(
             reason=str(body.get("reason") or ""),
         )
     except integ_service.IntegrationConfigError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(result)
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def organization_integration_test(
-    request: Request, integration_key: str
-) -> Response:
+def organization_integration_test(request: Request, integration_key: str) -> Response:
     """Run the test-connection probe for one environment.
 
     Body: ``{"environment": "sandbox|production"}``. Returns
@@ -732,9 +699,7 @@ def organization_integration_test(
             actor_user_id=request.user.id,
         )
     except integ_service.IntegrationConfigError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(
         {
             "ok": outcome.ok,
@@ -810,9 +775,7 @@ def organization_certificate(request: Request) -> Response:
                 "subject_common_name": org.certificate_subject_common_name or "",
                 "serial_hex": org.certificate_serial_hex or "",
                 "expires_at": (
-                    org.certificate_expiry_date.isoformat()
-                    if org.certificate_expiry_date
-                    else None
+                    org.certificate_expiry_date.isoformat() if org.certificate_expiry_date else None
                 ),
             }
         )
@@ -850,19 +813,14 @@ def organization_certificate(request: Request) -> Response:
             )
         password = str(body.get("pfx_password") or "")
         try:
-            cert_pem, private_key_pem = pfx_to_pem(
-                pfx_bytes=pfx_bytes, password=password
-            )
+            cert_pem, private_key_pem = pfx_to_pem(pfx_bytes=pfx_bytes, password=password)
         except CertificateError as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     elif not cert_pem or not private_key_pem:
         return Response(
             {
                 "detail": (
-                    "Provide either pfx_b64 (+ pfx_password) or both "
-                    "cert_pem and private_key_pem."
+                    "Provide either pfx_b64 (+ pfx_password) or both cert_pem and private_key_pem."
                 )
             },
             status=status.HTTP_400_BAD_REQUEST,
@@ -876,9 +834,7 @@ def organization_certificate(request: Request) -> Response:
             actor_user_id=request.user.id,
         )
     except CertificateError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(
         {
             "uploaded": True,

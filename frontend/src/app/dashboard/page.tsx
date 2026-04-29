@@ -128,21 +128,13 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <div className="flex flex-col gap-6">
-        <HeroCard
-          firstName={firstName}
-          organizationName={orgName}
-          validatedThisMonth={validated}
-        />
+        <HeroCard firstName={firstName} organizationName={orgName} validatedThisMonth={validated} />
 
         <StatsStrip stats={stats} />
 
         <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
           <ThroughputChart data={throughput?.series} />
-          <CompliancePosture
-            validated={validated}
-            needsReview={needsReview}
-            failed={errored}
-          />
+          <CompliancePosture validated={validated} needsReview={needsReview} failed={errored} />
         </div>
 
         <DropZone onUploaded={onUploaded} />

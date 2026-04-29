@@ -223,8 +223,7 @@ class ImpersonationSession(models.Model):
 
     def __str__(self) -> str:
         return (
-            f"{self.staff_user_id} → {self.organization_id} "
-            f"(started {self.started_at.isoformat()})"
+            f"{self.staff_user_id} → {self.organization_id} (started {self.started_at.isoformat()})"
         )
 
     @property

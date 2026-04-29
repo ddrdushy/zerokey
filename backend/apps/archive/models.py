@@ -69,9 +69,7 @@ class ArchivedDocument(TenantScopedModel):
 
     # The consolidated invoice this row's transaction was rolled into,
     # if any. NULL for non-B2C archives.
-    parent_invoice_id = models.UUIDField(
-        null=True, blank=True, db_index=True
-    )
+    parent_invoice_id = models.UUIDField(null=True, blank=True, db_index=True)
 
     payload = models.JSONField(default=dict, blank=True)
 
@@ -95,7 +93,4 @@ class ArchivedDocument(TenantScopedModel):
         ]
 
     def __str__(self) -> str:
-        return (
-            f"{self.document_type} on {self.organization_id} "
-            f"@ {self.archived_at.isoformat()}"
-        )
+        return f"{self.document_type} on {self.organization_id} @ {self.archived_at.isoformat()}"

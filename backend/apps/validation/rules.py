@@ -306,8 +306,7 @@ def _check_msic(value: str, field_path: str, label: str) -> list[Issue]:
                 severity=SEVERITY_ERROR,
                 field_path=field_path,
                 message=(
-                    f"{label} MSIC code must be 5 digits (the LHDN industry "
-                    "classification format)."
+                    f"{label} MSIC code must be 5 digits (the LHDN industry classification format)."
                 ),
                 detail={"value": value},
             )
@@ -588,9 +587,7 @@ def rule_invoice_total_arithmetic(invoice: Invoice) -> list[Issue]:
                     code="totals.subtotal.mismatch",
                     severity=SEVERITY_ERROR,
                     field_path="totals.subtotal",
-                    message=(
-                        "Invoice subtotal does not match the sum of line item subtotals."
-                    ),
+                    message=("Invoice subtotal does not match the sum of line item subtotals."),
                     detail={
                         "expected": str(expected_subtotal),
                         "actual": str(invoice.subtotal),
@@ -607,9 +604,7 @@ def rule_invoice_total_arithmetic(invoice: Invoice) -> list[Issue]:
                     code="totals.tax.mismatch",
                     severity=SEVERITY_ERROR,
                     field_path="totals.total_tax",
-                    message=(
-                        "Total tax does not match the sum of per-line tax amounts."
-                    ),
+                    message=("Total tax does not match the sum of per-line tax amounts."),
                     detail={
                         "expected": str(expected_tax),
                         "actual": str(invoice.total_tax),
@@ -631,10 +626,7 @@ def rule_invoice_total_arithmetic(invoice: Invoice) -> list[Issue]:
                     code="totals.grand_total.mismatch",
                     severity=SEVERITY_ERROR,
                     field_path="totals.grand_total",
-                    message=(
-                        "Grand total does not equal subtotal + tax − invoice-level "
-                        "discount."
-                    ),
+                    message=("Grand total does not equal subtotal + tax − invoice-level discount."),
                     detail={
                         "expected": str(expected_grand),
                         "actual": str(invoice.grand_total),
@@ -713,9 +705,7 @@ def rule_sst_consistency(invoice: Invoice) -> list[Issue]:
     items = _line_items(invoice)
     if not items:
         return []
-    if all(
-        (line.tax_amount is None or line.tax_amount == Decimal("0.00")) for line in items
-    ):
+    if all((line.tax_amount is None or line.tax_amount == Decimal("0.00")) for line in items):
         return [
             Issue(
                 code="sst.no_tax_on_registered_supplier",

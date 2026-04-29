@@ -21,9 +21,7 @@ from .models import Plan, Subscription, UsageEvent
 
 def list_public_plans() -> list[dict[str, Any]]:
     """Plans visible on the public pricing page."""
-    qs = Plan.objects.filter(is_active=True, is_public=True).order_by(
-        "monthly_price_cents", "tier"
-    )
+    qs = Plan.objects.filter(is_active=True, is_public=True).order_by("monthly_price_cents", "tier")
     return [_plan_dict(p) for p in qs]
 
 
@@ -53,9 +51,7 @@ def _plan_dict(plan: Plan) -> dict[str, Any]:
     }
 
 
-def get_active_subscription(
-    *, organization_id: uuid.UUID | str
-) -> dict[str, Any] | None:
+def get_active_subscription(*, organization_id: uuid.UUID | str) -> dict[str, Any] | None:
     """Return the active (or trialing) subscription for an org, or None."""
     sub = (
         Subscription.objects.filter(
@@ -85,12 +81,8 @@ def _subscription_dict(sub: Subscription) -> dict[str, Any]:
         "current_period_end": sub.current_period_end.isoformat()
         if sub.current_period_end
         else None,
-        "trial_started_at": sub.trial_started_at.isoformat()
-        if sub.trial_started_at
-        else None,
-        "trial_ends_at": sub.trial_ends_at.isoformat()
-        if sub.trial_ends_at
-        else None,
+        "trial_started_at": sub.trial_started_at.isoformat() if sub.trial_started_at else None,
+        "trial_ends_at": sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
         "cancel_at_period_end": bool(sub.cancel_at_period_end),
         "cancelled_at": sub.cancelled_at.isoformat() if sub.cancelled_at else None,
         "stripe_customer_id": sub.stripe_customer_id,
@@ -187,9 +179,7 @@ def record_usage_event(
     )
 
 
-def bootstrap_trial_subscription(
-    *, organization_id: uuid.UUID | str
-) -> Subscription | None:
+def bootstrap_trial_subscription(*, organization_id: uuid.UUID | str) -> Subscription | None:
     """Create a 14-day trial subscription on the trial plan.
 
     Idempotent — returns the existing subscription if one already
@@ -198,9 +188,7 @@ def bootstrap_trial_subscription(
     """
     from datetime import timedelta
 
-    existing = Subscription.objects.filter(
-        organization_id=organization_id
-    ).first()
+    existing = Subscription.objects.filter(organization_id=organization_id).first()
     if existing:
         return existing
 

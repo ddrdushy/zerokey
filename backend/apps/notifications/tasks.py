@@ -46,9 +46,7 @@ def send_email_task(
     result = send_email(to=to, subject=subject, body=body, html_body=html_body)
 
     record_event(
-        action_type="notifications.email.sent"
-        if result.ok
-        else "notifications.email.failed",
+        action_type="notifications.email.sent" if result.ok else "notifications.email.failed",
         actor_type=AuditEvent.ActorType.SERVICE,
         actor_id="notifications.send_email",
         organization_id=organization_id,

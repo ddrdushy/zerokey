@@ -66,17 +66,13 @@ class TestVerifyChainService:
                 organization_id=str(org.id),
             )
 
-        result = verify_chain_for_visibility(
-            organization_id=org.id, actor_user_id=user.id
-        )
+        result = verify_chain_for_visibility(organization_id=org.id, actor_user_id=user.id)
         assert result["ok"] is True
         assert result["tampering_detected"] is False
         # >=4: 3 from this test + the verify event itself counts in the next call.
         assert result["events_verified"] >= 3
 
-    def test_tampered_chain_returns_not_ok_without_leaking_sequence(
-        self, org_user
-    ) -> None:
+    def test_tampered_chain_returns_not_ok_without_leaking_sequence(self, org_user) -> None:
         org, user = org_user
         e1 = record_event(
             action_type="invoice.created",
@@ -90,14 +86,15 @@ class TestVerifyChainService:
         # chain detects tampering.
         AuditEvent.objects.filter(pk=e1.pk).update(payload={"amount": "9000.00"})
 
-        result = verify_chain_for_visibility(
-            organization_id=org.id, actor_user_id=user.id
-        )
+        result = verify_chain_for_visibility(organization_id=org.id, actor_user_id=user.id)
         assert result["ok"] is False
         assert result["tampering_detected"] is True
         # Customer message is generic — never mentions the offending
         # sequence (could be another tenant's event in production).
-        assert "support" in result["support_message"].lower() or "alert" in result["support_message"].lower()
+        assert (
+            "support" in result["support_message"].lower()
+            or "alert" in result["support_message"].lower()
+        )
         # The result dict carries no key that exposes a sequence number.
         for key, value in result.items():
             assert "sequence" not in str(key).lower()
@@ -107,22 +104,20 @@ class TestVerifyChainService:
 
     def test_verify_call_is_audited(self, org_user) -> None:
         org, user = org_user
-        before_count = AuditEvent.objects.filter(
-            action_type="audit.chain_verified"
-        ).count()
+        before_count = AuditEvent.objects.filter(action_type="audit.chain_verified").count()
 
         verify_chain_for_visibility(organization_id=org.id, actor_user_id=user.id)
         verify_chain_for_visibility(organization_id=org.id, actor_user_id=user.id)
 
-        after_count = AuditEvent.objects.filter(
-            action_type="audit.chain_verified"
-        ).count()
+        after_count = AuditEvent.objects.filter(action_type="audit.chain_verified").count()
         assert after_count == before_count + 2
 
         # The most recent verify event is scoped to the requester's org.
-        event = AuditEvent.objects.filter(
-            action_type="audit.chain_verified"
-        ).order_by("-sequence").first()
+        event = (
+            AuditEvent.objects.filter(action_type="audit.chain_verified")
+            .order_by("-sequence")
+            .first()
+        )
         assert str(event.organization_id) == str(org.id)
         assert event.actor_id == str(user.id)
         # Payload carries ok + events_verified, no sequence numbers.
@@ -155,9 +150,7 @@ class TestVerifyChainEndpoint:
     def test_no_active_org_returns_400(self, seeded) -> None:
         from apps.identity.models import User
 
-        user = User.objects.create_user(
-            email="solo@example.com", password="long-enough-password"
-        )
+        user = User.objects.create_user(email="solo@example.com", password="long-enough-password")
         client = Client()
         client.force_login(user)
         response = client.post("/api/v1/audit/verify/")

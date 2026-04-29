@@ -49,9 +49,7 @@ class _FakeRapidOCR:
         return [], 0.0
 
 
-def _make_rapidocr_module(
-    *responses, raise_on_call: bool = False
-):
+def _make_rapidocr_module(*responses, raise_on_call: bool = False):
     """Build a fake rapidocr_onnxruntime module that returns fixed responses."""
     _FakeRapidOCR.construction_count = 0
     queued = list(responses)
@@ -62,9 +60,7 @@ def _make_rapidocr_module(
         instance.raise_next = raise_on_call
         return instance
 
-    fake_module = type(
-        "fake_rapidocr_module", (), {"RapidOCR": _rapid_init}
-    )
+    fake_module = type("fake_rapidocr_module", (), {"RapidOCR": _rapid_init})
     return fake_module
 
 
@@ -90,9 +86,7 @@ class TestImagePath:
             ]
         )
         with patch.dict("sys.modules", {"rapidocr_onnxruntime": fake}):
-            result = adapter.extract_text(
-                body=b"jpegbytes", mime_type="image/jpeg"
-            )
+            result = adapter.extract_text(body=b"jpegbytes", mime_type="image/jpeg")
 
         assert "INVOICE" in result.text
         assert "INV-12345" in result.text
@@ -103,56 +97,38 @@ class TestImagePath:
         assert result.diagnostics["engine"] == "rapidocr"
 
     def test_png_path(self, adapter) -> None:
-        fake = _make_rapidocr_module(
-            [([[0, 0], [10, 10]], "Hello", 0.9)]
-        )
+        fake = _make_rapidocr_module([([[0, 0], [10, 10]], "Hello", 0.9)])
         with patch.dict("sys.modules", {"rapidocr_onnxruntime": fake}):
-            result = adapter.extract_text(
-                body=b"pngbytes", mime_type="image/png"
-            )
+            result = adapter.extract_text(body=b"pngbytes", mime_type="image/png")
         assert result.text == "Hello"
 
     def test_tiff_path(self, adapter) -> None:
         # TIFF is the differentiator vs the EasyOCR adapter (which doesn't
         # claim TIFF). Ensures the routing migration's mime-type list lines
         # up with the adapter's own allowlist.
-        fake = _make_rapidocr_module(
-            [([[0, 0], [10, 10]], "TiffText", 0.85)]
-        )
+        fake = _make_rapidocr_module([([[0, 0], [10, 10]], "TiffText", 0.85)])
         with patch.dict("sys.modules", {"rapidocr_onnxruntime": fake}):
-            result = adapter.extract_text(
-                body=b"tiffbytes", mime_type="image/tiff"
-            )
+            result = adapter.extract_text(body=b"tiffbytes", mime_type="image/tiff")
         assert result.text == "TiffText"
 
-    def test_blank_image_returns_empty_zero_confidence(
-        self, adapter
-    ) -> None:
+    def test_blank_image_returns_empty_zero_confidence(self, adapter) -> None:
         fake = _make_rapidocr_module()  # no responses → empty
         with patch.dict("sys.modules", {"rapidocr_onnxruntime": fake}):
-            result = adapter.extract_text(
-                body=b"blank", mime_type="image/jpeg"
-            )
+            result = adapter.extract_text(body=b"blank", mime_type="image/jpeg")
         assert result.text == ""
         assert result.confidence == 0.0
 
-    def test_rapidocr_call_failure_surfaces_unavailable(
-        self, adapter
-    ) -> None:
+    def test_rapidocr_call_failure_surfaces_unavailable(self, adapter) -> None:
         fake = _make_rapidocr_module(raise_on_call=True)
         with patch.dict("sys.modules", {"rapidocr_onnxruntime": fake}):
             with pytest.raises(EngineUnavailable):
-                adapter.extract_text(
-                    body=b"bad", mime_type="image/jpeg"
-                )
+                adapter.extract_text(body=b"bad", mime_type="image/jpeg")
 
     def test_unsupported_mime_unavailable(self, adapter) -> None:
         fake = _make_rapidocr_module()
         with patch.dict("sys.modules", {"rapidocr_onnxruntime": fake}):
             with pytest.raises(EngineUnavailable):
-                adapter.extract_text(
-                    body=b"x", mime_type="application/zip"
-                )
+                adapter.extract_text(body=b"x", mime_type="application/zip")
 
     def test_reader_cached_across_calls(self, adapter) -> None:
         fake = _make_rapidocr_module(
@@ -172,15 +148,11 @@ class TestImagePath:
 
 
 class TestImportUnavailable:
-    def test_missing_rapidocr_raises_engine_unavailable(
-        self, adapter
-    ) -> None:
+    def test_missing_rapidocr_raises_engine_unavailable(self, adapter) -> None:
         # Pretend rapidocr_onnxruntime can't be imported.
         with patch.dict("sys.modules", {"rapidocr_onnxruntime": None}):
             with pytest.raises(EngineUnavailable, match="rapidocr"):
-                adapter.extract_text(
-                    body=b"x", mime_type="image/jpeg"
-                )
+                adapter.extract_text(body=b"x", mime_type="image/jpeg")
 
 
 # =============================================================================
@@ -199,7 +171,6 @@ class TestPdfPath:
         # Fake pypdfium2 module with a 2-page PDF.
         class _FakeBitmap:
             def to_pil(self):
-                from io import BytesIO
 
                 # Minimal valid PNG header — adapter only re-saves it.
                 class _FakePIL:
@@ -239,9 +210,7 @@ class TestPdfPath:
                 "pypdfium2": fake_pdfium,
             },
         ):
-            result = adapter.extract_text(
-                body=b"%PDF-fake", mime_type="application/pdf"
-            )
+            result = adapter.extract_text(body=b"%PDF-fake", mime_type="application/pdf")
         assert "PageOneText" in result.text
         assert "PageTwoText" in result.text
         assert result.page_count == 2

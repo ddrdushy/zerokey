@@ -19,9 +19,7 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def staff_user(seeded) -> User:
-    return User.objects.create_user(
-        email="staff@symprio.com", password="x", is_staff=True
-    )
+    return User.objects.create_user(email="staff@symprio.com", password="x", is_staff=True)
 
 
 @pytest.fixture
@@ -138,9 +136,7 @@ class TestAdminUpdateMembership:
     def test_no_op_skips_audit(self, staff_user, membership) -> None:
         client = Client()
         client.force_login(staff_user)
-        before = AuditEvent.objects.filter(
-            action_type="admin.membership_updated"
-        ).count()
+        before = AuditEvent.objects.filter(action_type="admin.membership_updated").count()
         # is_active is already True, role is already owner — nothing changes.
         response = self._patch(
             client,
@@ -148,7 +144,5 @@ class TestAdminUpdateMembership:
             {"is_active": True, "role_name": "owner", "reason": "no-op"},
         )
         assert response.status_code == 200
-        after = AuditEvent.objects.filter(
-            action_type="admin.membership_updated"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="admin.membership_updated").count()
         assert before == after

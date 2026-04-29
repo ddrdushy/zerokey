@@ -93,32 +93,22 @@ function AcceptInvitationInner() {
         <div className="rounded-md border border-error bg-error/5 px-4 py-3 text-2xs text-error">
           {error}
         </div>
-        <Link
-          className="mt-4 text-2xs text-slate-500 underline"
-          href="/sign-in"
-        >
+        <Link className="mt-4 text-2xs text-slate-500 underline" href="/sign-in">
           Back to sign in
         </Link>
       </Pad>
     );
   if (!preview) return <Pad>Invitation not found.</Pad>;
 
-  const emailMatches =
-    me && me.email.toLowerCase() === preview.email.toLowerCase();
+  const emailMatches = me && me.email.toLowerCase() === preview.email.toLowerCase();
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-6 px-4 py-16 md:px-8">
       <div>
-        <h1 className="font-display text-2xl font-bold tracking-tight">
-          You&apos;re invited
-        </h1>
+        <h1 className="font-display text-2xl font-bold tracking-tight">You&apos;re invited</h1>
         <p className="mt-2 text-2xs text-slate-500">
-          Join{" "}
-          <span className="font-medium text-ink">
-            {preview.organization_legal_name}
-          </span>{" "}
-          on ZeroKey as{" "}
-          <span className="font-medium text-ink">{preview.role}</span>.
+          Join <span className="font-medium text-ink">{preview.organization_legal_name}</span> on
+          ZeroKey as <span className="font-medium text-ink">{preview.role}</span>.
         </p>
         <p className="mt-1 text-[10px] text-slate-400">
           Invited address: {preview.email} · expires{" "}
@@ -135,10 +125,9 @@ function AcceptInvitationInner() {
           <div className="rounded-md border border-amber-200 bg-amber-50/50 px-4 py-3 text-2xs text-amber-900">
             <p className="font-medium">Different email signed in</p>
             <p className="mt-1">
-              You&apos;re signed in as{" "}
-              <span className="font-mono">{me.email}</span> but this invite
-              is for <span className="font-mono">{preview.email}</span>.
-              Sign out + sign back in with the invited address.
+              You&apos;re signed in as <span className="font-mono">{me.email}</span> but this invite
+              is for <span className="font-mono">{preview.email}</span>. Sign out + sign back in
+              with the invited address.
             </p>
             <Button
               size="sm"

@@ -21,7 +21,6 @@ from apps.audit.services import record_event
 from .crypto import encrypt_secret
 from .models import WebhookDelivery, WebhookEndpoint, generate_secret
 
-
 # Canonical list of event keys customers may subscribe to. The future
 # delivery worker fans out events of these types; the customer
 # registration UI shows this list as checkboxes.
@@ -58,10 +57,7 @@ def _validate_event_types(event_types: list[str] | None) -> list[str]:
     valid = {key for key, _ in WEBHOOK_EVENT_KEYS}
     invalid = [t for t in event_types if t not in valid]
     if invalid:
-        raise WebhookError(
-            f"Unknown event types: {sorted(invalid)}. "
-            f"Allowed: {sorted(valid)}"
-        )
+        raise WebhookError(f"Unknown event types: {sorted(invalid)}. Allowed: {sorted(valid)}")
     return list(event_types)
 
 
@@ -116,12 +112,8 @@ def create_webhook(
     return row, plaintext
 
 
-def list_webhooks(
-    *, organization_id: uuid.UUID | str
-) -> list[dict[str, Any]]:
-    qs = WebhookEndpoint.objects.filter(
-        organization_id=organization_id
-    ).order_by("-created_at")
+def list_webhooks(*, organization_id: uuid.UUID | str) -> list[dict[str, Any]]:
+    qs = WebhookEndpoint.objects.filter(organization_id=organization_id).order_by("-created_at")
     return [_endpoint_dict(r) for r in qs]
 
 
@@ -132,13 +124,9 @@ def revoke_webhook(
     actor_user_id: uuid.UUID | str,
 ) -> dict[str, Any]:
     try:
-        row = WebhookEndpoint.objects.get(
-            id=webhook_id, organization_id=organization_id
-        )
+        row = WebhookEndpoint.objects.get(id=webhook_id, organization_id=organization_id)
     except WebhookEndpoint.DoesNotExist as exc:
-        raise WebhookError(
-            f"Webhook {webhook_id} not found in this organization."
-        ) from exc
+        raise WebhookError(f"Webhook {webhook_id} not found in this organization.") from exc
 
     if not row.is_active:
         return _endpoint_dict(row)
@@ -185,9 +173,7 @@ def send_test_delivery(
             is_active=True,
         )
     except WebhookEndpoint.DoesNotExist as exc:
-        raise WebhookError(
-            f"Active webhook {webhook_id} not found in this organization."
-        ) from exc
+        raise WebhookError(f"Active webhook {webhook_id} not found in this organization.") from exc
 
     payload = {
         "ping": True,
@@ -244,6 +230,7 @@ def fan_out_event(
     endpoint they intend to wire up later.
     """
     from apps.identity.tenancy import super_admin_context
+
     from .tasks import deliver_webhook_task
 
     queued = 0
@@ -297,12 +284,8 @@ def _endpoint_dict(row: WebhookEndpoint) -> dict[str, Any]:
         "secret_prefix": row.secret_prefix,
         "is_active": bool(row.is_active),
         "created_at": row.created_at.isoformat() if row.created_at else None,
-        "last_succeeded_at": row.last_succeeded_at.isoformat()
-        if row.last_succeeded_at
-        else None,
-        "last_failed_at": row.last_failed_at.isoformat()
-        if row.last_failed_at
-        else None,
+        "last_succeeded_at": row.last_succeeded_at.isoformat() if row.last_succeeded_at else None,
+        "last_failed_at": row.last_failed_at.isoformat() if row.last_failed_at else None,
         "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
     }
 
@@ -320,8 +303,6 @@ def _delivery_dict(row: WebhookDelivery) -> dict[str, Any]:
         "error_class": row.error_class,
         "duration_ms": row.duration_ms,
         "queued_at": row.queued_at.isoformat() if row.queued_at else None,
-        "delivered_at": row.delivered_at.isoformat()
-        if row.delivered_at
-        else None,
+        "delivered_at": row.delivered_at.isoformat() if row.delivered_at else None,
         "payload_excerpt": json.dumps(row.payload)[:200] if row.payload else "",
     }

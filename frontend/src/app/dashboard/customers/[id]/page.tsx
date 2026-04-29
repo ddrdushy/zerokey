@@ -17,12 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 
-import {
-  api,
-  ApiError,
-  type Customer,
-  type CustomerInvoiceSummary,
-} from "@/lib/api";
+import { api, ApiError, type Customer, type CustomerInvoiceSummary } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { FieldRow } from "@/components/review/FieldRow";
@@ -215,9 +210,7 @@ export default function CustomerDetailPage() {
             <Stat
               label="Last seen"
               value={
-                customer.last_used_at
-                  ? new Date(customer.last_used_at).toLocaleDateString()
-                  : "—"
+                customer.last_used_at ? new Date(customer.last_used_at).toLocaleDateString() : "—"
               }
             />
             <AliasCard aliases={customer.aliases} />
@@ -288,9 +281,7 @@ function Header({ customer }: { customer: Customer }) {
       >
         ← Customers
       </Link>
-      <h1 className="mt-1 font-display text-2xl font-bold tracking-tight">
-        {customer.legal_name}
-      </h1>
+      <h1 className="mt-1 font-display text-2xl font-bold tracking-tight">{customer.legal_name}</h1>
       <div className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
         {customer.tin || "no TIN"} · {customer.usage_count} invoice
         {customer.usage_count === 1 ? "" : "s"}
@@ -311,9 +302,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-slate-100 bg-white px-4 py-3">
-      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">
-        {label}
-      </div>
+      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">{label}</div>
       <div className="mt-1 font-display text-xl font-semibold">{value}</div>
     </div>
   );
@@ -326,9 +315,7 @@ function AliasCard({ aliases }: { aliases: string[] }) {
         Name variants
       </div>
       {aliases.length === 0 ? (
-        <div className="mt-1 text-2xs text-slate-400">
-          No variants learned yet.
-        </div>
+        <div className="mt-1 text-2xs text-slate-400">No variants learned yet.</div>
       ) : (
         <ul className="mt-2 flex flex-col gap-1 text-2xs text-slate-600">
           {aliases.map((alias, idx) => (
@@ -342,11 +329,7 @@ function AliasCard({ aliases }: { aliases: string[] }) {
   );
 }
 
-function InvoiceHistory({
-  invoices,
-}: {
-  invoices: CustomerInvoiceSummary[] | null;
-}) {
+function InvoiceHistory({ invoices }: { invoices: CustomerInvoiceSummary[] | null }) {
   if (invoices === null) {
     return (
       <section className="flex flex-col gap-3">
@@ -363,8 +346,8 @@ function InvoiceHistory({
         <h2 className="text-base font-semibold">Invoices from this buyer</h2>
         <div className="rounded-xl border border-slate-100 bg-white p-6 text-center">
           <p className="text-2xs text-slate-500">
-            No invoices have referenced this buyer yet. New invoices that
-            match this master appear here automatically.
+            No invoices have referenced this buyer yet. New invoices that match this master appear
+            here automatically.
           </p>
         </div>
       </section>
@@ -391,9 +374,7 @@ function InvoiceHistory({
               <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
                 Grand total
               </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Status
-              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -404,20 +385,14 @@ function InvoiceHistory({
                     href={`/dashboard/jobs/${invoice.ingestion_job_id}`}
                     className="font-medium text-ink hover:underline"
                   >
-                    {invoice.invoice_number || (
-                      <span className="text-slate-400">no number</span>
-                    )}
+                    {invoice.invoice_number || <span className="text-slate-400">no number</span>}
                   </Link>
                 </td>
                 <td className="px-3 py-3 text-slate-600">
-                  {invoice.issue_date
-                    ? new Date(invoice.issue_date).toLocaleDateString()
-                    : "—"}
+                  {invoice.issue_date ? new Date(invoice.issue_date).toLocaleDateString() : "—"}
                 </td>
                 <td className="px-3 py-3 text-right font-mono">
-                  {invoice.grand_total
-                    ? `${invoice.currency_code} ${invoice.grand_total}`
-                    : "—"}
+                  {invoice.grand_total ? `${invoice.currency_code} ${invoice.grand_total}` : "—"}
                 </td>
                 <td className="px-3 py-3">
                   <StatusPill status={invoice.status} />
@@ -439,7 +414,9 @@ function StatusPill({ status }: { status: string }) {
         ? "bg-error/10 text-error"
         : "bg-slate-100 text-slate-600";
   return (
-    <span className={["inline-block rounded-full px-2 py-0.5 text-[10px] font-medium", tone].join(" ")}>
+    <span
+      className={["inline-block rounded-full px-2 py-0.5 text-[10px] font-medium", tone].join(" ")}
+    >
       {status.replace(/_/g, " ")}
     </span>
   );
@@ -462,14 +439,12 @@ function VerificationCard({ customer }: { customer: Customer }) {
     failed: {
       label: "Failed verification",
       tone: "text-error",
-      helper:
-        "LHDN didn't recognise this TIN. Correct it + we'll re-check on save.",
+      helper: "LHDN didn't recognise this TIN. Correct it + we'll re-check on save.",
     },
     unverified: {
       label: "Unverified",
       tone: "text-slate-500",
-      helper:
-        "Will be verified against LHDN automatically on the next enrichment cycle.",
+      helper: "Will be verified against LHDN automatically on the next enrichment cycle.",
     },
     unverified_external_source: {
       label: "Unverified · external source",
@@ -490,18 +465,13 @@ function VerificationCard({ customer }: { customer: Customer }) {
       <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">
         TIN verification
       </div>
-      <div className={`mt-1 text-base font-medium ${meta.tone}`}>
-        {meta.label}
-      </div>
+      <div className={`mt-1 text-base font-medium ${meta.tone}`}>{meta.label}</div>
       {customer.tin_last_verified_at && (
         <div className="mt-1 text-2xs text-slate-400">
-          last checked{" "}
-          {new Date(customer.tin_last_verified_at).toLocaleDateString()}
+          last checked {new Date(customer.tin_last_verified_at).toLocaleDateString()}
         </div>
       )}
-      {meta.helper && (
-        <p className="mt-2 text-2xs text-slate-500">{meta.helper}</p>
-      )}
+      {meta.helper && <p className="mt-2 text-2xs text-slate-500">{meta.helper}</p>}
     </div>
   );
 }
@@ -533,8 +503,7 @@ function SaveBar({
           <span className="ml-3 text-error">{error}</span>
         ) : (
           <span className="ml-3 text-slate-500">
-            Save to update this master. Future invoices auto-fill from these
-            values.
+            Save to update this master. Future invoices auto-fill from these values.
           </span>
         )}
       </div>

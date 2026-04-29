@@ -185,9 +185,7 @@ class EasyOCRAdapter(TextExtractEngine):
                 raise
             except Exception as exc:
                 logger.warning("pypdfium2 failed", extra={"error": str(exc)})
-                raise EngineUnavailable(
-                    f"easyocr could not rasterise PDF pages: {exc}"
-                ) from exc
+                raise EngineUnavailable(f"easyocr could not rasterise PDF pages: {exc}") from exc
 
             page_texts: list[str] = []
             page_confidences: list[float] = []
@@ -198,11 +196,7 @@ class EasyOCRAdapter(TextExtractEngine):
                     page_confidences.append(page_confidence)
 
             joined = "\n\n".join(t for t in page_texts if t).strip()
-            confidence = (
-                sum(page_confidences) / len(page_confidences)
-                if page_confidences
-                else 0.0
-            )
+            confidence = sum(page_confidences) / len(page_confidences) if page_confidences else 0.0
             return TextExtractResult(
                 text=joined,
                 confidence=confidence,

@@ -142,9 +142,7 @@ class Subscription(TenantScopedModel):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    plan = models.ForeignKey(
-        Plan, on_delete=models.PROTECT, related_name="subscriptions"
-    )
+    plan = models.ForeignKey(Plan, on_delete=models.PROTECT, related_name="subscriptions")
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.TRIALING, db_index=True
     )
@@ -213,9 +211,7 @@ class PaymentMethod(TenantScopedModel):
 
     # Stripe identifier (pm_xxx for cards, ba_xxx for bank accounts).
     # Required for charges; the Stripe wiring populates it.
-    stripe_payment_method_id = models.CharField(
-        max_length=64, blank=True, db_index=True
-    )
+    stripe_payment_method_id = models.CharField(max_length=64, blank=True, db_index=True)
 
     is_active = models.BooleanField(default=True)
     deactivated_at = models.DateTimeField(null=True, blank=True)
@@ -255,9 +251,7 @@ class UsageEvent(TenantScopedModel):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    event_type = models.CharField(
-        max_length=32, choices=EventType.choices, db_index=True
-    )
+    event_type = models.CharField(max_length=32, choices=EventType.choices, db_index=True)
     quantity = models.IntegerField(default=1)
     occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
 

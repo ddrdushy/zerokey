@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
     max_retries=2,
     acks_late=True,
 )
-def sign_invoice(self, invoice_id: str) -> dict[str, object]:  # noqa: ANN001
+def sign_invoice(self, invoice_id: str) -> dict[str, object]:
     """Sign an invoice payload with the customer's LHDN cert.
 
     Calls into ``apps.submission.lhdn_submission.sign_invoice``. The
@@ -65,7 +65,7 @@ def sign_invoice(self, invoice_id: str) -> dict[str, object]:  # noqa: ANN001
     max_retries=3,
     acks_late=True,
 )
-def submit_to_lhdn(self, invoice_id: str) -> dict[str, object]:  # noqa: ANN001
+def submit_to_lhdn(self, invoice_id: str) -> dict[str, object]:
     """Sign-then-submit an invoice to LHDN MyInvois.
 
     Returns a small status dict. Real per-invoice state lands on
@@ -102,7 +102,7 @@ POLL_MAX_ATTEMPTS = 12  # 30s × ~6 = ~3 minutes after backoff plateaus
     max_retries=POLL_MAX_ATTEMPTS,
     acks_late=True,
 )
-def poll_invoice_status(self, invoice_id: str) -> dict[str, object]:  # noqa: ANN001
+def poll_invoice_status(self, invoice_id: str) -> dict[str, object]:
     """Poll LHDN for one invoice's submission status.
 
     Self-reschedules with an exponential-then-plateau backoff
@@ -165,10 +165,10 @@ def poll_invoice_status(self, invoice_id: str) -> dict[str, object]:  # noqa: AN
 # spec's cadence + budget.
 
 SWEEP_STALE_AFTER_SECONDS = 120  # 2 minutes — past the per-invoice
-                                  # chain's plateau, so we only sweep
-                                  # invoices the chain has missed.
+# chain's plateau, so we only sweep
+# invoices the chain has missed.
 SWEEP_MAX_PER_RUN = 100  # Safety cap. A backlog past this is its
-                         # own problem worth alerting on.
+# own problem worth alerting on.
 
 
 @shared_task(

@@ -1,0 +1,105 @@
+# ZeroKey CI — runs on every push + every PR.
+#
+# Two parallel job lanes:
+#   - backend: ruff lint, ruff format check, pytest with sqlite
+#     (the same in-memory backend the dev test settings already
+#     use — RLS-only tests are skipped, matching the local
+#     ``make test`` behaviour). uv resolves + installs in
+#     <30 seconds with caching.
+#   - frontend: npm install (cached by package-lock.json hash),
+#     prettier --check, next lint, tsc --noEmit, and next build
+#     so a release-mode regression doesn't sneak through.
+#
+# Test DB: pytest-django auto-creates the SQLite test DB; no
+# Postgres needed in CI. The 5 RLS-gated tests skip cleanly.
+#
+# Concurrency: cancel in-progress runs on the same ref so a fast
+# follow-up commit doesn't queue behind a slow earlier run.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (lint + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff check)
+        run: uv run ruff check .
+
+      - name: Format check (ruff format)
+        run: uv run ruff format --check .
+
+      - name: Run pytest
+        run: uv run pytest -q --tb=short
+        env:
+          # The test settings module configures sqlite-in-memory
+          # + skips Postgres-only RLS tests automatically.
+          DJANGO_SETTINGS_MODULE: zerokey.settings.test
+
+  frontend:
+    name: Frontend (lint + typecheck + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Format check (prettier)
+        run: npm run format:check
+
+      - name: Lint (next lint)
+        run: npm run lint
+
+      - name: Type check (tsc --noEmit)
+        run: npm run typecheck
+
+      - name: Build (next build)
+        run: npm run build
+        env:
+          # Skip telemetry on CI — saves a few seconds + avoids
+          # the first-run prompt that breaks non-interactive
+          # shells.
+          NEXT_TELEMETRY_DISABLED: "1"
+          # The build needs an API base URL at compile time for
+          # type-narrowing; CI doesn't talk to a real backend.
+          NEXT_PUBLIC_API_BASE_URL: "https://example.test/api/v1"

@@ -241,9 +241,7 @@ SUBMISSION_SWEEP_SECONDS = env.int("SUBMISSION_SWEEP_SECONDS", default=60)
 # LHDN_INTEGRATION.md — the catalogs change on quarterly-ish cadence.
 # Keeping this looser than monthly risks running stale codes; tighter
 # wastes operator review cycles on no-op runs.
-CATALOG_REFRESH_SECONDS = env.int(
-    "CATALOG_REFRESH_SECONDS", default=30 * 24 * 60 * 60
-)
+CATALOG_REFRESH_SECONDS = env.int("CATALOG_REFRESH_SECONDS", default=30 * 24 * 60 * 60)
 
 CELERY_BEAT_SCHEDULE = {
     "audit.verify_audit_chain": {

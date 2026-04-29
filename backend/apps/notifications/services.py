@@ -67,10 +67,10 @@ def render_email_template(event_key: str, context: dict[str, Any]) -> tuple[str,
     for k, v in context.items():
         safe_ctx[k] = "" if v is None else str(v)
     try:
-        return tpl["subject"].format_map(_SafeFormatDict(safe_ctx)), tpl[
-            "body"
-        ].format_map(_SafeFormatDict(safe_ctx))
-    except Exception:  # noqa: BLE001
+        return tpl["subject"].format_map(_SafeFormatDict(safe_ctx)), tpl["body"].format_map(
+            _SafeFormatDict(safe_ctx)
+        )
+    except Exception:
         # Template typo? Fall back to the raw template string rather
         # than crashing the dispatcher — better to send a bad email
         # than send no email.
@@ -80,7 +80,7 @@ def render_email_template(event_key: str, context: dict[str, Any]) -> tuple[str,
 class _SafeFormatDict(dict):
     """Replaces missing keys with empty string instead of KeyError."""
 
-    def __missing__(self, key: str) -> str:  # noqa: D401
+    def __missing__(self, key: str) -> str:
         return ""
 
 
@@ -166,9 +166,7 @@ def deliver_for_event(
     }
 
 
-def send_test_email(
-    *, to: str, actor_user_id: uuid.UUID | str | None = None
-) -> dict[str, Any]:
+def send_test_email(*, to: str, actor_user_id: uuid.UUID | str | None = None) -> dict[str, Any]:
     """Synchronous ``test.ping`` email — used by the admin "send test"
     button. Bypasses preferences (the admin is verifying SMTP
     works, not asking the recipient).
@@ -188,9 +186,7 @@ def send_test_email(
         action_type="notifications.email.test_sent"
         if result.ok
         else "notifications.email.test_failed",
-        actor_type=AuditEvent.ActorType.USER
-        if actor_user_id
-        else AuditEvent.ActorType.SERVICE,
+        actor_type=AuditEvent.ActorType.USER if actor_user_id else AuditEvent.ActorType.SERVICE,
         actor_id=str(actor_user_id) if actor_user_id else "notifications.test",
         organization_id=None,
         affected_entity_type="EmailDelivery",

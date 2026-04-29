@@ -25,7 +25,6 @@ from apps.audit.services import record_event
 
 from .models import NotificationPreference, User
 
-
 # Canonical list of events the user can express a preference about.
 # Each entry: (key, label, description). The UI renders the list in
 # this order. Adding an event is a one-line change here; existing
@@ -65,9 +64,7 @@ class NotificationPreferenceError(Exception):
     """Raised when a preferences update is invalid."""
 
 
-def get_preferences(
-    *, organization_id: uuid.UUID | str, user: User
-) -> dict[str, Any]:
+def get_preferences(*, organization_id: uuid.UUID | str, user: User) -> dict[str, Any]:
     """Return current per-event preferences for the user in this org.
 
     Auto-materialises a row with ``{}`` (platform defaults) if none
@@ -122,8 +119,7 @@ def set_preferences(
     invalid = set(updates.keys()) - valid_keys
     if invalid:
         raise NotificationPreferenceError(
-            f"Unknown event keys: {sorted(invalid)}. "
-            f"Allowed: {sorted(valid_keys)}"
+            f"Unknown event keys: {sorted(invalid)}. Allowed: {sorted(valid_keys)}"
         )
 
     row, _ = NotificationPreference.objects.get_or_create(
@@ -135,14 +131,8 @@ def set_preferences(
     changed: list[str] = []
     for event_key, channels in updates.items():
         if not isinstance(channels, dict):
-            raise NotificationPreferenceError(
-                f"Channels for {event_key!r} must be an object."
-            )
-        sanitised = {
-            ch: bool(v)
-            for ch, v in channels.items()
-            if ch in VALID_CHANNELS
-        }
+            raise NotificationPreferenceError(f"Channels for {event_key!r} must be an object.")
+        sanitised = {ch: bool(v) for ch, v in channels.items() if ch in VALID_CHANNELS}
         if current.get(event_key, {}) != sanitised:
             current[event_key] = sanitised
             changed.append(event_key)

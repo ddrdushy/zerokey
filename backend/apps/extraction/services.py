@@ -207,9 +207,7 @@ def run_extraction(job_id: UUID | str) -> ExtractionResult:
         # name is recorded as "pdfplumber+easyocr" so the audit trail
         # makes the escalation visible without inventing a new field.
         result = ocr_outcome.replacement_result
-        recorded_engine_name = (
-            f"{decision.engine.name}+{ocr_outcome.engine_name}"
-        )
+        recorded_engine_name = f"{decision.engine.name}+{ocr_outcome.engine_name}"
     else:
         recorded_engine_name = decision.engine.name
 
@@ -301,9 +299,7 @@ class OCREscalationOutcome:
 
 
 def _ocr_threshold() -> float:
-    return float(
-        getattr(settings, "EXTRACTION_OCR_THRESHOLD", DEFAULT_OCR_ESCALATION_THRESHOLD)
-    )
+    return float(getattr(settings, "EXTRACTION_OCR_THRESHOLD", DEFAULT_OCR_ESCALATION_THRESHOLD))
 
 
 def _maybe_escalate_to_ocr(
@@ -367,9 +363,7 @@ def _maybe_escalate_to_ocr(
     try:
         adapter = get_adapter(decision.engine.name)
     except KeyError as exc:
-        return _record_ocr_skip(
-            job, reason=f"ocr adapter missing: {exc}"
-        )
+        return _record_ocr_skip(job, reason=f"ocr adapter missing: {exc}")
 
     if not isinstance(adapter, TextExtractEngine):
         return _record_ocr_skip(
@@ -409,9 +403,7 @@ def _maybe_escalate_to_ocr(
             confidence=None,
             diagnostics={"detail": str(exc)[:500]},
         )
-        return _record_ocr_skip(
-            job, reason=f"ocr failed: {type(exc).__name__}: {exc}"
-        )
+        return _record_ocr_skip(job, reason=f"ocr failed: {type(exc).__name__}: {exc}")
 
     _record_call(
         engine=decision.engine,
@@ -607,9 +599,7 @@ def _maybe_escalate_to_vision(
             confidence=None,
             diagnostics={"detail": str(exc)[:500]},
         )
-        return _record_escalation_failure(
-            job, reason=f"vision failed: {type(exc).__name__}: {exc}"
-        )
+        return _record_escalation_failure(job, reason=f"vision failed: {type(exc).__name__}: {exc}")
 
     _record_call(
         engine=decision.engine,
@@ -890,9 +880,7 @@ def engine_summary_for_organization(*, organization_id: UUID | str) -> list[dict
             success_count=Count("id", filter=Q(outcome=EngineCall.Outcome.SUCCESS)),
             failure_count=Count("id", filter=Q(outcome=EngineCall.Outcome.FAILURE)),
             timeout_count=Count("id", filter=Q(outcome=EngineCall.Outcome.TIMEOUT)),
-            unavailable_count=Count(
-                "id", filter=Q(outcome=EngineCall.Outcome.UNAVAILABLE)
-            ),
+            unavailable_count=Count("id", filter=Q(outcome=EngineCall.Outcome.UNAVAILABLE)),
             avg_duration_ms=Avg("duration_ms"),
             total_cost_micros=Sum("cost_micros"),
         )
@@ -936,9 +924,7 @@ def list_engine_calls_for_organization(
     engine, request id (the IngestionJob), outcome, duration, cost,
     confidence, and the diagnostic dict the adapter wrote.
     """
-    qs = EngineCall.objects.filter(
-        organization_id=organization_id
-    ).select_related("engine")
+    qs = EngineCall.objects.filter(organization_id=organization_id).select_related("engine")
     if before_started_at is not None:
         qs = qs.filter(started_at__lt=before_started_at)
     return list(qs.order_by("-started_at")[:limit])

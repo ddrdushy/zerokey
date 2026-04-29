@@ -23,16 +23,12 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def org_user_key(seeded) -> tuple[Organization, User, str]:
-    org = Organization.objects.create(
-        legal_name="Acme", tin="C10000000001", contact_email="o@a"
-    )
+    org = Organization.objects.create(legal_name="Acme", tin="C10000000001", contact_email="o@a")
     user = User.objects.create_user(email="o@a.test", password="x")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
-    _, plaintext = create_api_key(
-        organization_id=org.id, label="ci", actor_user=user
-    )
+    _, plaintext = create_api_key(organization_id=org.id, label="ci", actor_user=user)
     return org, user, plaintext
 
 
@@ -72,9 +68,7 @@ class TestAPIKeyAuth:
         )
         assert response.status_code in (401, 403)
 
-    def test_non_bearer_token_falls_through_to_session(
-        self, org_user_key
-    ) -> None:
+    def test_non_bearer_token_falls_through_to_session(self, org_user_key) -> None:
         """A bearer that doesn't start with zk_live_ should fall
         through to session auth (which has none) → 401, not blow up
         with 500."""
@@ -96,9 +90,7 @@ class TestAPIKeyAuth:
         after = APIKey.objects.get(organization_id=org.id).last_used_at
         assert after is not None
 
-    def test_tenant_scoped_query_works_under_api_key_auth(
-        self, org_user_key
-    ) -> None:
+    def test_tenant_scoped_query_works_under_api_key_auth(self, org_user_key) -> None:
         """Tenant-scoped endpoint resolves correctly when authenticated
         via API key — proves the session-org pointer is being set so
         the middleware activates RLS."""
@@ -115,17 +107,11 @@ class TestAPIKeyAuth:
 
 @pytest.mark.django_db
 class TestAPIKeyAuthIsolation:
-    def test_key_only_authorises_its_own_org(
-        self, seeded
-    ) -> None:
+    def test_key_only_authorises_its_own_org(self, seeded) -> None:
         """A key for org A cannot query org B's data even if B is
         the user's other org."""
-        a_org = Organization.objects.create(
-            legal_name="A", tin="C10000000001", contact_email="a"
-        )
-        b_org = Organization.objects.create(
-            legal_name="B", tin="C99999999999", contact_email="b"
-        )
+        a_org = Organization.objects.create(legal_name="A", tin="C10000000001", contact_email="a")
+        b_org = Organization.objects.create(legal_name="B", tin="C99999999999", contact_email="b")
         u = User.objects.create_user(email="dual@x", password="x")
         OrganizationMembership.objects.create(
             user=u, organization=a_org, role=Role.objects.get(name="owner")
@@ -134,9 +120,7 @@ class TestAPIKeyAuthIsolation:
             user=u, organization=b_org, role=Role.objects.get(name="owner")
         )
         # Mint key for org A.
-        _, plaintext_a = create_api_key(
-            organization_id=a_org.id, label="a-key", actor_user=u
-        )
+        _, plaintext_a = create_api_key(organization_id=a_org.id, label="a-key", actor_user=u)
         # /me/ should report A as active because the key is org A's.
         response = Client().get(
             "/api/v1/identity/me/",

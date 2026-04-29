@@ -27,7 +27,6 @@ from apps.audit.services import record_event
 
 from .models import ArchivedDocument
 
-
 # Retention defaults per document type. LHDN requires 7 years on
 # invoice records; ingestion sources we keep 1 year unless the
 # customer customises (future).
@@ -200,16 +199,12 @@ def _to_dict(row: ArchivedDocument) -> dict[str, Any]:
         "document_type": row.document_type,
         "related_entity_type": row.related_entity_type,
         "related_entity_id": row.related_entity_id,
-        "parent_invoice_id": str(row.parent_invoice_id)
-        if row.parent_invoice_id
-        else None,
+        "parent_invoice_id": str(row.parent_invoice_id) if row.parent_invoice_id else None,
         "payload": row.payload,
         "s3_object_key": row.s3_object_key,
         "file_mime_type": row.file_mime_type,
         "file_size": int(row.file_size) if row.file_size is not None else None,
-        "retain_until": row.retain_until.isoformat()
-        if row.retain_until
-        else None,
+        "retain_until": row.retain_until.isoformat() if row.retain_until else None,
         "deletion_pending": bool(row.deletion_pending),
         "archived_at": row.archived_at.isoformat() if row.archived_at else None,
     }

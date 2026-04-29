@@ -35,9 +35,7 @@ import { cn } from "@/lib/utils";
 type StateFilter = "open" | "resolved" | "all";
 
 export default function ConflictQueuePage() {
-  const [conflicts, setConflicts] = useState<MasterFieldConflictRow[] | null>(
-    null,
-  );
+  const [conflicts, setConflicts] = useState<MasterFieldConflictRow[] | null>(null);
   const [filter, setFilter] = useState<StateFilter>("open");
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -60,10 +58,7 @@ export default function ConflictQueuePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
 
-  async function onResolve(
-    conflict: MasterFieldConflictRow,
-    resolution: ConflictResolution,
-  ) {
+  async function onResolve(conflict: MasterFieldConflictRow, resolution: ConflictResolution) {
     let custom_value: string | undefined;
     if (resolution === "enter_custom_value") {
       const v = window.prompt(
@@ -104,9 +99,7 @@ export default function ConflictQueuePage() {
             <ArrowLeft className="h-3.5 w-3.5" />
             Back to connectors
           </Link>
-          <h1 className="mt-2 font-display text-2xl font-bold tracking-tight">
-            Conflict queue
-          </h1>
+          <h1 className="mt-2 font-display text-2xl font-bold tracking-tight">Conflict queue</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Per-field decisions the merge classifier left to a human
           </p>
@@ -172,16 +165,11 @@ function ConflictCard({
 }: {
   conflict: MasterFieldConflictRow;
   busy: boolean;
-  onResolve: (
-    conflict: MasterFieldConflictRow,
-    resolution: ConflictResolution,
-  ) => void;
+  onResolve: (conflict: MasterFieldConflictRow, resolution: ConflictResolution) => void;
 }) {
   const isAliasable =
-    (conflict.master_type === "customer" &&
-      conflict.field_name === "legal_name") ||
-    (conflict.master_type === "item" &&
-      conflict.field_name === "canonical_name");
+    (conflict.master_type === "customer" && conflict.field_name === "legal_name") ||
+    (conflict.master_type === "item" && conflict.field_name === "canonical_name");
 
   return (
     <div
@@ -193,8 +181,7 @@ function ConflictCard({
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <div className="text-2xs uppercase tracking-wider text-slate-400">
-            {conflict.master_type === "customer" ? "Customer" : "Item"} ·{" "}
-            {conflict.field_name}
+            {conflict.master_type === "customer" ? "Customer" : "Item"} · {conflict.field_name}
           </div>
           <Link
             href={
@@ -237,11 +224,7 @@ function ConflictCard({
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Keep existing"}
           </Button>
-          <Button
-            size="sm"
-            onClick={() => onResolve(conflict, "take_incoming")}
-            disabled={busy}
-          >
+          <Button size="sm" onClick={() => onResolve(conflict, "take_incoming")} disabled={busy}>
             Take incoming
           </Button>
           {isAliasable && (
@@ -279,9 +262,7 @@ function ValueCard({
 }) {
   return (
     <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
-      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">
-        {label}
-      </div>
+      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">{label}</div>
       <div className="mt-1 break-words text-sm font-medium text-ink">
         {value || <span className="text-slate-400">empty</span>}
       </div>

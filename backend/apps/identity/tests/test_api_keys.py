@@ -92,9 +92,7 @@ class TestCreateAPIKey:
 
     def test_list_does_not_return_plaintext(self, org_user) -> None:
         org, user = org_user
-        row, plaintext = create_api_key(
-            organization_id=org.id, label="ci", actor_user=user
-        )
+        row, plaintext = create_api_key(organization_id=org.id, label="ci", actor_user=user)
         client = _client(org_user)
         response = client.get("/api/v1/identity/organization/api-keys/")
         assert response.status_code == 200
@@ -120,13 +118,9 @@ class TestCreateAPIKey:
 class TestRevoke:
     def test_revoke_flips_is_active(self, org_user) -> None:
         org, user = org_user
-        row, _ = create_api_key(
-            organization_id=org.id, label="ci", actor_user=user
-        )
+        row, _ = create_api_key(organization_id=org.id, label="ci", actor_user=user)
         client = _client(org_user)
-        response = client.delete(
-            f"/api/v1/identity/organization/api-keys/{row.id}/"
-        )
+        response = client.delete(f"/api/v1/identity/organization/api-keys/{row.id}/")
         assert response.status_code == 200
         row.refresh_from_db()
         assert row.is_active is False
@@ -135,37 +129,23 @@ class TestRevoke:
 
     def test_revoke_emits_audit(self, org_user) -> None:
         org, user = org_user
-        row, _ = create_api_key(
-            organization_id=org.id, label="ci", actor_user=user
-        )
-        before = AuditEvent.objects.filter(
-            action_type="identity.api_key.revoked"
-        ).count()
+        row, _ = create_api_key(organization_id=org.id, label="ci", actor_user=user)
+        before = AuditEvent.objects.filter(action_type="identity.api_key.revoked").count()
         client = _client(org_user)
         client.delete(f"/api/v1/identity/organization/api-keys/{row.id}/")
-        after = AuditEvent.objects.filter(
-            action_type="identity.api_key.revoked"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="identity.api_key.revoked").count()
         assert after == before + 1
 
     def test_revoke_idempotent(self, org_user) -> None:
         org, user = org_user
-        row, _ = create_api_key(
-            organization_id=org.id, label="ci", actor_user=user
-        )
+        row, _ = create_api_key(organization_id=org.id, label="ci", actor_user=user)
         client = _client(org_user)
         client.delete(f"/api/v1/identity/organization/api-keys/{row.id}/")
         # Second revoke is a no-op (200, no extra audit).
-        before = AuditEvent.objects.filter(
-            action_type="identity.api_key.revoked"
-        ).count()
-        response = client.delete(
-            f"/api/v1/identity/organization/api-keys/{row.id}/"
-        )
+        before = AuditEvent.objects.filter(action_type="identity.api_key.revoked").count()
+        response = client.delete(f"/api/v1/identity/organization/api-keys/{row.id}/")
         assert response.status_code == 200
-        after = AuditEvent.objects.filter(
-            action_type="identity.api_key.revoked"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="identity.api_key.revoked").count()
         assert after == before
 
     def test_revoke_unknown_404(self, org_user) -> None:
@@ -177,22 +157,16 @@ class TestRevoke:
 
     def test_cross_org_revoke_404(self, seeded) -> None:
         """Revoking another tenant's key isn't possible — RLS-style isolation."""
-        a_org = Organization.objects.create(
-            legal_name="A", tin="C10000000001", contact_email="a@a"
-        )
+        a_org = Organization.objects.create(legal_name="A", tin="C10000000001", contact_email="a@a")
         a_user = User.objects.create_user(email="a@a.test", password="x")
         OrganizationMembership.objects.create(
             user=a_user,
             organization=a_org,
             role=Role.objects.get(name="owner"),
         )
-        a_row, _ = create_api_key(
-            organization_id=a_org.id, label="A-key", actor_user=a_user
-        )
+        a_row, _ = create_api_key(organization_id=a_org.id, label="A-key", actor_user=a_user)
 
-        b_org = Organization.objects.create(
-            legal_name="B", tin="C99999999999", contact_email="b@b"
-        )
+        b_org = Organization.objects.create(legal_name="B", tin="C99999999999", contact_email="b@b")
         b_user = User.objects.create_user(email="b@b.test", password="x")
         OrganizationMembership.objects.create(
             user=b_user,
@@ -205,9 +179,7 @@ class TestRevoke:
         session["organization_id"] = str(b_org.id)
         session.save()
 
-        response = client.delete(
-            f"/api/v1/identity/organization/api-keys/{a_row.id}/"
-        )
+        response = client.delete(f"/api/v1/identity/organization/api-keys/{a_row.id}/")
         assert response.status_code == 404
 
 
@@ -218,14 +190,8 @@ class TestServiceContract:
         assert _hash(plaintext) == hashlib.sha256(plaintext.encode()).hexdigest()
         assert len(_hash(plaintext)) == 64
 
-    def test_two_creates_produce_different_plaintexts(
-        self, org_user
-    ) -> None:
+    def test_two_creates_produce_different_plaintexts(self, org_user) -> None:
         org, user = org_user
-        _, p1 = create_api_key(
-            organization_id=org.id, label="a", actor_user=user
-        )
-        _, p2 = create_api_key(
-            organization_id=org.id, label="b", actor_user=user
-        )
+        _, p1 = create_api_key(organization_id=org.id, label="a", actor_user=user)
+        _, p2 = create_api_key(organization_id=org.id, label="b", actor_user=user)
         assert p1 != p2

@@ -20,9 +20,7 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def staff_user(seeded) -> User:
-    return User.objects.create_user(
-        email="staff@symprio.com", password="x", is_staff=True
-    )
+    return User.objects.create_user(email="staff@symprio.com", password="x", is_staff=True)
 
 
 @pytest.fixture
@@ -99,9 +97,7 @@ class TestTenantDetail:
         response = client.get(f"/api/v1/admin/tenants/{org.id}/")
         assert response.status_code == 403
 
-    def test_staff_sees_full_detail(
-        self, staff_user, populated_tenant
-    ) -> None:
+    def test_staff_sees_full_detail(self, staff_user, populated_tenant) -> None:
         org, jobs, invoices = populated_tenant
         client = Client()
         client.force_login(staff_user)
@@ -141,24 +137,16 @@ class TestTenantDetail:
     def test_unknown_tenant_returns_404(self, staff_user) -> None:
         client = Client()
         client.force_login(staff_user)
-        response = client.get(
-            "/api/v1/admin/tenants/00000000-0000-0000-0000-000000000000/"
-        )
+        response = client.get("/api/v1/admin/tenants/00000000-0000-0000-0000-000000000000/")
         assert response.status_code == 404
 
-    def test_detail_view_emits_audit_event(
-        self, staff_user, populated_tenant
-    ) -> None:
+    def test_detail_view_emits_audit_event(self, staff_user, populated_tenant) -> None:
         org, _, _ = populated_tenant
         client = Client()
         client.force_login(staff_user)
-        before = AuditEvent.objects.filter(
-            action_type="admin.tenant_detail_viewed"
-        ).count()
+        before = AuditEvent.objects.filter(action_type="admin.tenant_detail_viewed").count()
         client.get(f"/api/v1/admin/tenants/{org.id}/")
-        after = AuditEvent.objects.filter(
-            action_type="admin.tenant_detail_viewed"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="admin.tenant_detail_viewed").count()
         assert after == before + 1
 
         event = (

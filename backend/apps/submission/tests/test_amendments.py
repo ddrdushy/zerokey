@@ -30,9 +30,7 @@ def org_user(seeded) -> tuple[Organization, User]:
         tin="C1234567890",
         contact_email="o@a",
     )
-    user = User.objects.create_user(
-        email="o@a", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="o@a", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -80,9 +78,7 @@ def validated_invoice(org_user) -> Invoice:
 
 @pytest.mark.django_db
 class TestCreateCreditNote:
-    def test_full_credit_copies_invoice(
-        self, org_user, validated_invoice
-    ) -> None:
+    def test_full_credit_copies_invoice(self, org_user, validated_invoice) -> None:
         _, user = org_user
         cn = amendments.create_credit_note(
             source_invoice_id=validated_invoice.id,
@@ -101,9 +97,7 @@ class TestCreateCreditNote:
         # CN starts ready for review (not auto-submitted).
         assert cn.status == Invoice.Status.READY_FOR_REVIEW
 
-    def test_credit_note_number_pattern(
-        self, org_user, validated_invoice
-    ) -> None:
+    def test_credit_note_number_pattern(self, org_user, validated_invoice) -> None:
         _, user = org_user
         cn = amendments.create_credit_note(
             source_invoice_id=validated_invoice.id,
@@ -112,9 +106,7 @@ class TestCreateCreditNote:
         )
         assert cn.invoice_number == "INV-001-CN-01"
 
-    def test_multiple_credit_notes_increment(
-        self, org_user, validated_invoice
-    ) -> None:
+    def test_multiple_credit_notes_increment(self, org_user, validated_invoice) -> None:
         _, user = org_user
         cn1 = amendments.create_credit_note(
             source_invoice_id=validated_invoice.id,
@@ -129,9 +121,7 @@ class TestCreateCreditNote:
         assert cn1.invoice_number == "INV-001-CN-01"
         assert cn2.invoice_number == "INV-001-CN-02"
 
-    def test_lines_copied_with_amounts(
-        self, org_user, validated_invoice
-    ) -> None:
+    def test_lines_copied_with_amounts(self, org_user, validated_invoice) -> None:
         _, user = org_user
         cn = amendments.create_credit_note(
             source_invoice_id=validated_invoice.id,
@@ -142,9 +132,7 @@ class TestCreateCreditNote:
         assert len(cn_lines) == 1
         assert cn_lines[0].line_subtotal_excl_tax == Decimal("100.00")
 
-    def test_partial_credit_via_adjustments(
-        self, org_user, validated_invoice
-    ) -> None:
+    def test_partial_credit_via_adjustments(self, org_user, validated_invoice) -> None:
         _, user = org_user
         cn = amendments.create_credit_note(
             source_invoice_id=validated_invoice.id,
@@ -190,9 +178,7 @@ class TestCreateCreditNote:
                 actor_user_id=user.id,
             )
 
-    def test_audit_event_recorded(
-        self, org_user, validated_invoice
-    ) -> None:
+    def test_audit_event_recorded(self, org_user, validated_invoice) -> None:
         from apps.audit.models import AuditEvent
 
         _, user = org_user
@@ -202,9 +188,7 @@ class TestCreateCreditNote:
             actor_user_id=user.id,
         )
         event = (
-            AuditEvent.objects.filter(
-                action_type="submission.amendment.credit_note_created"
-            )
+            AuditEvent.objects.filter(action_type="submission.amendment.credit_note_created")
             .order_by("-sequence")
             .first()
         )
@@ -217,8 +201,9 @@ class TestCreateCreditNote:
 @pytest.mark.django_db
 class TestCreditNoteEndpoint:
     def test_unauthenticated_403(self, validated_invoice) -> None:
-        from django.test import Client
         import json
+
+        from django.test import Client
 
         response = Client().post(
             f"/api/v1/invoices/{validated_invoice.id}/issue-credit-note/",
@@ -228,8 +213,9 @@ class TestCreditNoteEndpoint:
         assert response.status_code in (401, 403)
 
     def test_happy_path(self, org_user, validated_invoice) -> None:
-        from django.test import Client
         import json
+
+        from django.test import Client
 
         org, user = org_user
         client = Client()
@@ -239,9 +225,7 @@ class TestCreditNoteEndpoint:
         session.save()
         response = client.post(
             f"/api/v1/invoices/{validated_invoice.id}/issue-credit-note/",
-            data=json.dumps(
-                {"reason": "customer returned 1 unit"}
-            ),
+            data=json.dumps({"reason": "customer returned 1 unit"}),
             content_type="application/json",
         )
         assert response.status_code == 201
@@ -270,9 +254,7 @@ class TestCreateDebitNote:
         assert dn.adjustment_reason == "Late payment penalty"
         assert dn.invoice_number == "INV-001-DN-01"
 
-    def test_audit_action_is_debit_note(
-        self, org_user, validated_invoice
-    ) -> None:
+    def test_audit_action_is_debit_note(self, org_user, validated_invoice) -> None:
         from apps.audit.models import AuditEvent
 
         _, user = org_user
@@ -282,9 +264,7 @@ class TestCreateDebitNote:
             actor_user_id=user.id,
         )
         event = (
-            AuditEvent.objects.filter(
-                action_type="submission.amendment.debit_note_created"
-            )
+            AuditEvent.objects.filter(action_type="submission.amendment.debit_note_created")
             .order_by("-sequence")
             .first()
         )
@@ -311,9 +291,7 @@ class TestCreateRefundNote:
         assert rn.original_invoice_uuid == "LHDN-UUID-XYZ-001"
         assert rn.invoice_number == "INV-001-RN-01"
 
-    def test_dn_and_rn_have_independent_sequences(
-        self, org_user, validated_invoice
-    ) -> None:
+    def test_dn_and_rn_have_independent_sequences(self, org_user, validated_invoice) -> None:
         """Multiple amendment types against the same invoice should
         each have their own counter (CN-01, DN-01, RN-01)."""
         _, user = org_user

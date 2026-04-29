@@ -41,7 +41,6 @@ from .adapters import ConnectorError, get_adapter_class
 from .models import (
     IntegrationConfig,
     MasterFieldConflict,
-    MasterFieldLock,
     MasterType,
     SyncProposal,
 )
@@ -65,9 +64,7 @@ def _gate_active_org(request: Request) -> str | Response:
             {"detail": "No active organization."},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    if not identity_services.can_user_act_for_organization(
-        request.user, org_id
-    ):
+    if not identity_services.can_user_act_for_organization(request.user, org_id):
         return Response(
             {"detail": "You are not a member of that organization."},
             status=status.HTTP_403_FORBIDDEN,
@@ -80,9 +77,7 @@ def _is_owner_or_admin(user, org_id: str) -> bool:
     from apps.identity.models import OrganizationMembership
 
     role = (
-        OrganizationMembership.objects.filter(
-            user=user, organization_id=org_id
-        )
+        OrganizationMembership.objects.filter(user=user, organization_id=org_id)
         .values_list("role__name", flat=True)
         .first()
     )
@@ -101,12 +96,8 @@ def configs(request: Request) -> Response:
     org_id = org_or_response
 
     if request.method == "GET":
-        rows = IntegrationConfig.objects.filter(
-            organization_id=org_id, deleted_at__isnull=True
-        )
-        return Response(
-            {"results": IntegrationConfigSerializer(rows, many=True).data}
-        )
+        rows = IntegrationConfig.objects.filter(organization_id=org_id, deleted_at__isnull=True)
+        return Response({"results": IntegrationConfigSerializer(rows, many=True).data})
 
     if not _is_owner_or_admin(request.user, org_id):
         return Response(
@@ -147,9 +138,7 @@ def configs(request: Request) -> Response:
             status=status.HTTP_200_OK,
         )
 
-    config = IntegrationConfig.objects.create(
-        organization_id=org_id, connector_type=connector_type
-    )
+    config = IntegrationConfig.objects.create(organization_id=org_id, connector_type=connector_type)
     return Response(
         IntegrationConfigSerializer(config).data,
         status=status.HTTP_201_CREATED,
@@ -172,9 +161,7 @@ def config_delete(request: Request, config_id: str) -> Response:
         organization_id=org_id, id=config_id, deleted_at__isnull=True
     ).first()
     if config is None:
-        return Response(
-            {"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     config.deleted_at = timezone.now()
     config.save(update_fields=["deleted_at", "updated_at"])
     return Response(IntegrationConfigSerializer(config).data)
@@ -220,8 +207,7 @@ def sync_csv(request: Request, config_id: str) -> Response:
         return Response(
             {
                 "detail": (
-                    f"This endpoint only handles CSV connectors. "
-                    f"Got {config.connector_type}."
+                    f"This endpoint only handles CSV connectors. Got {config.connector_type}."
                 )
             },
             status=status.HTTP_400_BAD_REQUEST,
@@ -240,11 +226,7 @@ def sync_csv(request: Request, config_id: str) -> Response:
             status=status.HTTP_400_BAD_REQUEST,
         )
     try:
-        column_mapping = (
-            raw_mapping
-            if isinstance(raw_mapping, dict)
-            else json.loads(raw_mapping)
-        )
+        column_mapping = raw_mapping if isinstance(raw_mapping, dict) else json.loads(raw_mapping)
     except (TypeError, ValueError):
         return Response(
             {"detail": "column_mapping must be a JSON object."},
@@ -255,9 +237,7 @@ def sync_csv(request: Request, config_id: str) -> Response:
     try:
         adapter_class = get_adapter_class(config.connector_type)
     except ConnectorError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         adapter = adapter_class(
@@ -266,13 +246,9 @@ def sync_csv(request: Request, config_id: str) -> Response:
             target=target,
         )
     except ConnectorError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-    customer_records = (
-        list(adapter.fetch_customers()) if target == "customers" else []
-    )
+    customer_records = list(adapter.fetch_customers()) if target == "customers" else []
     item_records = list(adapter.fetch_items()) if target == "items" else []
 
     try:
@@ -283,9 +259,7 @@ def sync_csv(request: Request, config_id: str) -> Response:
             actor_user_id=request.user.id,
         )
     except sync_services.SyncError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(
         SyncProposalSerializer(proposal).data,
@@ -303,13 +277,9 @@ def proposal_detail(request: Request, proposal_id: str) -> Response:
     if isinstance(org_or_response, Response):
         return org_or_response
     org_id = org_or_response
-    proposal = SyncProposal.objects.filter(
-        organization_id=org_id, id=proposal_id
-    ).first()
+    proposal = SyncProposal.objects.filter(organization_id=org_id, id=proposal_id).first()
     if proposal is None:
-        return Response(
-            {"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     return Response(SyncProposalSerializer(proposal).data)
 
 
@@ -325,21 +295,15 @@ def proposal_apply(request: Request, proposal_id: str) -> Response:
             {"detail": "Only owners and admins can apply a sync."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    proposal = SyncProposal.objects.filter(
-        organization_id=org_id, id=proposal_id
-    ).first()
+    proposal = SyncProposal.objects.filter(organization_id=org_id, id=proposal_id).first()
     if proposal is None:
-        return Response(
-            {"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     try:
         proposal = sync_services.apply_sync_proposal(
             proposal_id=proposal.id, actor_user_id=request.user.id
         )
     except sync_services.SyncError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(SyncProposalSerializer(proposal).data)
 
 
@@ -355,13 +319,9 @@ def proposal_revert(request: Request, proposal_id: str) -> Response:
             {"detail": "Only owners and admins can revert a sync."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    proposal = SyncProposal.objects.filter(
-        organization_id=org_id, id=proposal_id
-    ).first()
+    proposal = SyncProposal.objects.filter(organization_id=org_id, id=proposal_id).first()
     if proposal is None:
-        return Response(
-            {"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     reason = str((request.data or {}).get("reason") or "").strip()
     try:
         proposal = sync_services.revert_sync_proposal(
@@ -375,9 +335,7 @@ def proposal_revert(request: Request, proposal_id: str) -> Response:
             status=status.HTTP_400_BAD_REQUEST,
         )
     except sync_services.SyncError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(SyncProposalSerializer(proposal).data)
 
 
@@ -403,9 +361,7 @@ def list_conflicts(request: Request) -> Response:
             status=status.HTTP_400_BAD_REQUEST,
         )
     qs = qs[:200]
-    return Response(
-        {"results": MasterFieldConflictSerializer(qs, many=True).data}
-    )
+    return Response({"results": MasterFieldConflictSerializer(qs, many=True).data})
 
 
 @api_view(["POST"])
@@ -421,13 +377,9 @@ def conflict_resolve(request: Request, conflict_id: str) -> Response:
             {"detail": "Only owners and admins can resolve conflicts."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    conflict = MasterFieldConflict.objects.filter(
-        organization_id=org_id, id=conflict_id
-    ).first()
+    conflict = MasterFieldConflict.objects.filter(organization_id=org_id, id=conflict_id).first()
     if conflict is None:
-        return Response(
-            {"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     body = request.data or {}
     resolution = str(body.get("resolution") or "").strip()
     custom_value = body.get("custom_value")
@@ -439,9 +391,7 @@ def conflict_resolve(request: Request, conflict_id: str) -> Response:
             custom_value=custom_value,
         )
     except sync_services.SyncError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(MasterFieldConflictSerializer(conflict).data)
 
 
@@ -466,18 +416,9 @@ def lock_create(request: Request) -> Response:
     master_id = str(body.get("master_id") or "").strip()
     field_name = str(body.get("field_name") or "").strip()
     reason = str(body.get("reason") or "").strip()
-    if (
-        master_type not in {MasterType.CUSTOMER, MasterType.ITEM}
-        or not master_id
-        or not field_name
-    ):
+    if master_type not in {MasterType.CUSTOMER, MasterType.ITEM} or not master_id or not field_name:
         return Response(
-            {
-                "detail": (
-                    "master_type (customer|item), master_id, field_name "
-                    "are required."
-                )
-            },
+            {"detail": ("master_type (customer|item), master_id, field_name are required.")},
             status=status.HTTP_400_BAD_REQUEST,
         )
     try:
@@ -490,9 +431,7 @@ def lock_create(request: Request) -> Response:
             reason=reason,
         )
     except sync_services.SyncError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(MasterFieldLockSerializer(lock).data, status=status.HTTP_201_CREATED)
 
 
@@ -513,18 +452,9 @@ def lock_remove(request: Request) -> Response:
     master_type = str(body.get("master_type") or "").strip()
     master_id = str(body.get("master_id") or "").strip()
     field_name = str(body.get("field_name") or "").strip()
-    if (
-        master_type not in {MasterType.CUSTOMER, MasterType.ITEM}
-        or not master_id
-        or not field_name
-    ):
+    if master_type not in {MasterType.CUSTOMER, MasterType.ITEM} or not master_id or not field_name:
         return Response(
-            {
-                "detail": (
-                    "master_type (customer|item), master_id, field_name "
-                    "are required."
-                )
-            },
+            {"detail": ("master_type (customer|item), master_id, field_name are required.")},
             status=status.HTTP_400_BAD_REQUEST,
         )
     removed = sync_services.unlock_field(

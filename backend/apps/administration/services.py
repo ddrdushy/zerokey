@@ -285,9 +285,7 @@ def list_platform_events(
                 "action_type": action_type or "",
                 "organization_id": str(organization_id) if organization_id else "",
                 "limit": int(limit),
-                "before_sequence": int(before_sequence)
-                if before_sequence is not None
-                else 0,
+                "before_sequence": int(before_sequence) if before_sequence is not None else 0,
             },
             "result_count": len(events),
         },
@@ -312,9 +310,7 @@ def list_platform_action_types(*, actor_user_id: UUID | str) -> list[str]:
 
     with super_admin_context(reason="admin.platform_audit:list_action_types"):
         types = sorted(
-            AuditEvent.objects.order_by()
-            .values_list("action_type", flat=True)
-            .distinct()
+            AuditEvent.objects.order_by().values_list("action_type", flat=True).distinct()
         )
 
     record_event(
@@ -376,9 +372,7 @@ def _daily_count_sparkline(
     series: list[dict[str, Any]] = []
     for offset in range(days):
         day = start + timedelta(days=offset)
-        series.append(
-            {"date": day.isoformat(), "count": by_day.get(day.isoformat(), 0)}
-        )
+        series.append({"date": day.isoformat(), "count": by_day.get(day.isoformat(), 0)})
     return series
 
 
@@ -437,9 +431,7 @@ def platform_overview(*, actor_user_id: UUID | str) -> dict[str, Any]:
 
         invoices_total = Invoice.objects.count()
         invoices_7d = Invoice.objects.filter(created_at__gte=seven_days_ago).count()
-        invoices_pending = Invoice.objects.filter(
-            status=Invoice.Status.READY_FOR_REVIEW
-        ).count()
+        invoices_pending = Invoice.objects.filter(status=Invoice.Status.READY_FOR_REVIEW).count()
 
         inbox_open = ExceptionInboxItem.objects.filter(
             status=ExceptionInboxItem.Status.OPEN
@@ -466,9 +458,7 @@ def platform_overview(*, actor_user_id: UUID | str) -> dict[str, Any]:
                 total=Count("id"),
                 success=Count("id", filter=Q(outcome=EngineCall.Outcome.SUCCESS)),
                 failure=Count("id", filter=Q(outcome=EngineCall.Outcome.FAILURE)),
-                unavailable=Count(
-                    "id", filter=Q(outcome=EngineCall.Outcome.UNAVAILABLE)
-                ),
+                unavailable=Count("id", filter=Q(outcome=EngineCall.Outcome.UNAVAILABLE)),
             )
             .order_by("-total")[:8]
         )
@@ -591,9 +581,7 @@ def list_platform_tenants(
         if search:
             # Case-insensitive contains across the two display fields the
             # operator might paste in. Plain SQL ILIKE under the hood.
-            qs = qs.filter(legal_name__icontains=search) | qs.filter(
-                tin__icontains=search
-            )
+            qs = qs.filter(legal_name__icontains=search) | qs.filter(tin__icontains=search)
         orgs = list(
             qs.order_by("legal_name").values(
                 "id",
@@ -619,9 +607,7 @@ def list_platform_tenants(
             .annotate(c=Count("id"))
         )
         jobs_recent_by_org = dict(
-            IngestionJob.objects.filter(
-                organization_id__in=org_ids, created_at__gte=seven_days_ago
-            )
+            IngestionJob.objects.filter(organization_id__in=org_ids, created_at__gte=seven_days_ago)
             .values_list("organization_id")
             .annotate(c=Count("id"))
         )
@@ -644,14 +630,10 @@ def list_platform_tenants(
                 "tin": org["tin"],
                 "contact_email": org["contact_email"],
                 "subscription_state": org["subscription_state"],
-                "created_at": (
-                    org["created_at"].isoformat() if org["created_at"] else None
-                ),
+                "created_at": (org["created_at"].isoformat() if org["created_at"] else None),
                 "member_count": int(members_by_org.get(org["id"], 0)),
                 "ingestion_jobs_total": int(jobs_total_by_org.get(org["id"], 0)),
-                "ingestion_jobs_recent_7d": int(
-                    jobs_recent_by_org.get(org["id"], 0)
-                ),
+                "ingestion_jobs_recent_7d": int(jobs_recent_by_org.get(org["id"], 0)),
                 "last_activity_at": (
                     last_job.isoformat()
                     if last_job
@@ -679,9 +661,7 @@ def list_platform_tenants(
 # --- Tenant detail (Slice 38) ----------------------------------------------------
 
 
-def tenant_detail(
-    *, actor_user_id: UUID | str, organization_id: UUID | str
-) -> dict[str, Any]:
+def tenant_detail(*, actor_user_id: UUID | str, organization_id: UUID | str) -> dict[str, Any]:
     """Cross-tenant per-org snapshot for the admin tenant detail page.
 
     Returns the same row shape ``list_platform_tenants`` produces, plus:
@@ -717,20 +697,16 @@ def tenant_detail(
         org = Organization.objects.get(id=organization_id)
 
         members = list(
-            OrganizationMembership.objects.filter(
-                organization_id=org.id, is_active=True
-            )
+            OrganizationMembership.objects.filter(organization_id=org.id, is_active=True)
             .select_related("user", "role")
             .order_by("joined_date")[:50]
         )
 
         recent_jobs = list(
-            IngestionJob.objects.filter(organization_id=org.id)
-            .order_by("-created_at")[:10]
+            IngestionJob.objects.filter(organization_id=org.id).order_by("-created_at")[:10]
         )
         recent_invoices = list(
-            Invoice.objects.filter(organization_id=org.id)
-            .order_by("-created_at")[:10]
+            Invoice.objects.filter(organization_id=org.id).order_by("-created_at")[:10]
         )
 
         member_count = OrganizationMembership.objects.filter(
@@ -740,9 +716,7 @@ def tenant_detail(
         jobs_recent_7d = IngestionJob.objects.filter(
             organization_id=org.id, created_at__gte=seven_days_ago
         ).count()
-        invoices_total = Invoice.objects.filter(
-            organization_id=org.id
-        ).count()
+        invoices_total = Invoice.objects.filter(organization_id=org.id).count()
         invoices_pending = Invoice.objects.filter(
             organization_id=org.id, status=Invoice.Status.READY_FOR_REVIEW
         ).count()
@@ -806,9 +780,7 @@ def tenant_detail(
                 "email": m.user.email,
                 "role": m.role.name,
                 "is_active": bool(m.is_active),
-                "joined_date": m.joined_date.isoformat()
-                if m.joined_date
-                else None,
+                "joined_date": m.joined_date.isoformat() if m.joined_date else None,
             }
             for m in members
         ],
@@ -1064,9 +1036,7 @@ SYSTEM_SETTING_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
-def list_system_settings_for_admin(
-    *, actor_user_id: UUID | str
-) -> list[dict[str, Any]]:
+def list_system_settings_for_admin(*, actor_user_id: UUID | str) -> list[dict[str, Any]]:
     """Return one entry per known namespace with redacted credential metadata.
 
     Output shape per namespace:
@@ -1085,21 +1055,15 @@ def list_system_settings_for_admin(
     from apps.audit.models import AuditEvent
     from apps.audit.services import record_event
 
-    by_namespace = {
-        s.namespace: s for s in SystemSetting.objects.all()
-    }
+    by_namespace = {s.namespace: s for s in SystemSetting.objects.all()}
     out: list[dict[str, Any]] = []
     for schema in SYSTEM_SETTING_SCHEMAS:
         ns = schema["namespace"]
         row = by_namespace.get(ns)
         stored = (row.values if row else {}) or {}
-        cred_keys = {
-            f["key"] for f in schema["fields"] if f["kind"] == "credential"
-        }
+        cred_keys = {f["key"] for f in schema["fields"] if f["kind"] == "credential"}
         non_cred_values = {
-            k: str(v)
-            for k, v in stored.items()
-            if k not in cred_keys and isinstance(k, str)
+            k: str(v) for k, v in stored.items() if k not in cred_keys and isinstance(k, str)
         }
         credential_keys = {k: bool(stored.get(k)) for k in cred_keys}
         out.append(
@@ -1110,11 +1074,7 @@ def list_system_settings_for_admin(
                 "fields": schema["fields"],
                 "values": non_cred_values,
                 "credential_keys": credential_keys,
-                "updated_at": (
-                    row.updated_at.isoformat()
-                    if row and row.updated_at
-                    else None
-                ),
+                "updated_at": (row.updated_at.isoformat() if row and row.updated_at else None),
             }
         )
 
@@ -1158,9 +1118,7 @@ def admin_update_system_setting(
     from apps.audit.services import record_event
 
     if not reason or not reason.strip():
-        raise SystemSettingUpdateError(
-            "A reason is required for system-setting changes."
-        )
+        raise SystemSettingUpdateError("A reason is required for system-setting changes.")
 
     schema = next(
         (s for s in SYSTEM_SETTING_SCHEMAS if s["namespace"] == namespace),
@@ -1176,8 +1134,7 @@ def admin_update_system_setting(
     invalid = set(field_updates) - allowed_keys
     if invalid:
         raise SystemSettingUpdateError(
-            f"Keys not in {namespace} schema: {sorted(invalid)}. "
-            f"Allowed: {sorted(allowed_keys)}"
+            f"Keys not in {namespace} schema: {sorted(invalid)}. Allowed: {sorted(allowed_keys)}"
         )
 
     with transaction.atomic():
@@ -1231,9 +1188,7 @@ def admin_update_system_setting(
     return _system_setting_admin_dict(setting, schema)
 
 
-def _system_setting_admin_dict(
-    setting: SystemSetting, schema: dict[str, Any]
-) -> dict[str, Any]:
+def _system_setting_admin_dict(setting: SystemSetting, schema: dict[str, Any]) -> dict[str, Any]:
     # Slice 55: stored values are ciphertext at rest. Decrypt for the
     # admin-surface readout — non-credential values must round-trip
     # to the UI in plaintext (host names, region codes, etc.). Credential
@@ -1242,9 +1197,7 @@ def _system_setting_admin_dict(
 
     stored = decrypt_dict_values(setting.values or {})
     cred_keys = {f["key"] for f in schema["fields"] if f["kind"] == "credential"}
-    non_cred_values = {
-        k: str(v) for k, v in stored.items() if k not in cred_keys
-    }
+    non_cred_values = {k: str(v) for k, v in stored.items() if k not in cred_keys}
     credential_keys = {k: bool(stored.get(k)) for k in cred_keys}
     return {
         "namespace": setting.namespace,
@@ -1253,9 +1206,7 @@ def _system_setting_admin_dict(
         "fields": schema["fields"],
         "values": non_cred_values,
         "credential_keys": credential_keys,
-        "updated_at": setting.updated_at.isoformat()
-        if setting.updated_at
-        else None,
+        "updated_at": setting.updated_at.isoformat() if setting.updated_at else None,
     }
 
 
@@ -1320,13 +1271,9 @@ def admin_update_tenant(
     with super_admin_context(reason="admin.tenant_update"):
         with transaction.atomic():
             try:
-                org = Organization.objects.select_for_update().get(
-                    id=organization_id
-                )
+                org = Organization.objects.select_for_update().get(id=organization_id)
             except Organization.DoesNotExist as exc:
-                raise TenantUpdateError(
-                    f"Tenant {organization_id} not found."
-                ) from exc
+                raise TenantUpdateError(f"Tenant {organization_id} not found.") from exc
 
             changed: list[str] = []
             for key, value in field_updates.items():
@@ -1414,18 +1361,14 @@ def start_impersonation(
     from apps.identity.tenancy import super_admin_context
 
     if not reason or not reason.strip():
-        raise ImpersonationError(
-            "A reason is required to start impersonation."
-        )
+        raise ImpersonationError("A reason is required to start impersonation.")
     reason_clean = reason.strip()[:_MAX_REASON_LENGTH]
 
     with super_admin_context(reason="admin.start_impersonation:lookup"):
         try:
             org = Organization.objects.get(id=organization_id)
         except Organization.DoesNotExist as exc:
-            raise ImpersonationError(
-                f"Tenant {organization_id} not found."
-            ) from exc
+            raise ImpersonationError(f"Tenant {organization_id} not found.") from exc
 
         # Close any previous active session by the same staff so the
         # audit chain has a clean start/end pair instead of orphaned
@@ -1482,9 +1425,7 @@ def end_impersonation(
     try:
         session = ImpersonationSession.objects.get(id=session_id)
     except ImpersonationSession.DoesNotExist as exc:
-        raise ImpersonationError(
-            f"Impersonation session {session_id} not found."
-        ) from exc
+        raise ImpersonationError(f"Impersonation session {session_id} not found.") from exc
 
     if session.ended_at is not None:
         return session
@@ -1503,17 +1444,13 @@ def end_impersonation(
         affected_entity_id=str(session.id),
         payload={
             "end_reason": end_reason[:64],
-            "duration_seconds": int(
-                (session.ended_at - session.started_at).total_seconds()
-            ),
+            "duration_seconds": int((session.ended_at - session.started_at).total_seconds()),
         },
     )
     return session
 
 
-def get_active_impersonation_for_session(
-    *, session_id: UUID | str | None
-) -> dict[str, Any] | None:
+def get_active_impersonation_for_session(*, session_id: UUID | str | None) -> dict[str, Any] | None:
     """Return the active impersonation context for a Django session.
 
     Called from the identity ``/me/`` endpoint so the frontend can render
@@ -1597,24 +1534,18 @@ def admin_update_membership(
     from apps.identity.tenancy import super_admin_context
 
     if is_active is None and role_name is None:
-        raise MembershipUpdateError(
-            "At least one of is_active or role_name must be supplied."
-        )
+        raise MembershipUpdateError("At least one of is_active or role_name must be supplied.")
     if not reason or not reason.strip():
         raise MembershipUpdateError("A reason is required for membership updates.")
 
     with super_admin_context(reason="admin.membership_update"):
         with transaction.atomic():
             try:
-                membership = (
-                    OrganizationMembership.objects.select_for_update().get(
-                        id=membership_id
-                    )
+                membership = OrganizationMembership.objects.select_for_update().get(
+                    id=membership_id
                 )
             except OrganizationMembership.DoesNotExist as exc:
-                raise MembershipUpdateError(
-                    f"Membership {membership_id} not found."
-                ) from exc
+                raise MembershipUpdateError(f"Membership {membership_id} not found.") from exc
 
             changes: dict[str, Any] = {}
             if is_active is not None and bool(is_active) != bool(membership.is_active):
@@ -1624,9 +1555,7 @@ def admin_update_membership(
                 try:
                     role = Role.objects.get(name=role_name)
                 except Role.DoesNotExist as exc:
-                    raise MembershipUpdateError(
-                        f"Unknown role {role_name!r}."
-                    ) from exc
+                    raise MembershipUpdateError(f"Unknown role {role_name!r}.") from exc
                 if role.id != membership.role_id:
                     membership.role = role
                     changes["role"] = role_name
@@ -1702,9 +1631,7 @@ def list_engines_for_admin(*, actor_user_id: UUID | str) -> list[dict[str, Any]]
     engines = list(Engine.objects.order_by("capability", "name"))
     engine_ids = [e.id for e in engines]
     recent_calls = dict(
-        EngineCall.objects.filter(
-            engine_id__in=engine_ids, started_at__gte=cutoff
-        )
+        EngineCall.objects.filter(engine_id__in=engine_ids, started_at__gte=cutoff)
         .values_list("engine_id")
         .annotate(c=Count("id"))
     )
@@ -1736,12 +1663,8 @@ def list_engines_for_admin(*, actor_user_id: UUID | str) -> list[dict[str, Any]]
                 "credential_keys": credential_keys,
                 "calls_last_7d": int(recent_calls.get(engine.id, 0)),
                 "calls_success_last_7d": int(success_calls.get(engine.id, 0)),
-                "created_at": engine.created_at.isoformat()
-                if engine.created_at
-                else None,
-                "updated_at": engine.updated_at.isoformat()
-                if engine.updated_at
-                else None,
+                "created_at": engine.created_at.isoformat() if engine.created_at else None,
+                "updated_at": engine.updated_at.isoformat() if engine.updated_at else None,
             }
         )
 
@@ -1801,8 +1724,7 @@ def update_engine(
     invalid = set(field_updates) - _EDITABLE_ENGINE_FIELDS
     if invalid:
         raise EngineUpdateError(
-            f"Fields not editable: {sorted(invalid)}. "
-            f"Allowed: {sorted(_EDITABLE_ENGINE_FIELDS)}"
+            f"Fields not editable: {sorted(invalid)}. Allowed: {sorted(_EDITABLE_ENGINE_FIELDS)}"
         )
 
     if "status" in field_updates and field_updates["status"] not in {
@@ -1811,8 +1733,7 @@ def update_engine(
         Engine.Status.ARCHIVED,
     }:
         raise EngineUpdateError(
-            f"Invalid status {field_updates['status']!r}. "
-            f"Allowed: active, degraded, archived"
+            f"Invalid status {field_updates['status']!r}. Allowed: active, degraded, archived"
         )
 
     with transaction.atomic():
@@ -1907,7 +1828,5 @@ def refresh_reference_catalogs() -> dict[str, int]:
         ("tax_type", TaxTypeCode),
         ("country", CountryCode),
     ):
-        counts[label] = model.objects.filter(is_active=True).update(
-            last_refreshed_at=now
-        )
+        counts[label] = model.objects.filter(is_active=True).update(last_refreshed_at=now)
     return counts

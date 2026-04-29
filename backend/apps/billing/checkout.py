@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone as dtz
+from datetime import UTC, datetime
 from typing import Any
 
 from django.db import transaction
@@ -68,17 +68,13 @@ def start_checkout(
     with super_admin_context(reason="billing.checkout.lookup"):
         org = Organization.objects.filter(id=organization_id).first()
         if org is None:
-            raise CheckoutError(
-                f"Organization {organization_id} not found."
-            )
+            raise CheckoutError(f"Organization {organization_id} not found.")
         plan = Plan.objects.filter(id=plan_id, is_active=True).first()
         if plan is None:
             raise CheckoutError(f"Plan {plan_id} not found or inactive.")
 
     price_id = (
-        plan.stripe_price_id_annual
-        if billing_cycle == "annual"
-        else plan.stripe_price_id_monthly
+        plan.stripe_price_id_annual if billing_cycle == "annual" else plan.stripe_price_id_monthly
     )
     if not price_id:
         raise CheckoutError(
@@ -152,9 +148,7 @@ def handle_webhook(*, event: dict[str, Any]) -> dict[str, Any]:
     """
     event_type = event.get("type", "")
     event_id = event.get("id", "")
-    obj = event.get("data", {}).get("object", {}) if isinstance(
-        event.get("data"), dict
-    ) else {}
+    obj = event.get("data", {}).get("object", {}) if isinstance(event.get("data"), dict) else {}
 
     handler = {
         "checkout.session.completed": _handle_checkout_completed,
@@ -175,9 +169,7 @@ def handle_webhook(*, event: dict[str, Any]) -> dict[str, Any]:
     return handler(event_id=event_id, obj=obj)
 
 
-def _handle_checkout_completed(
-    *, event_id: str, obj: dict[str, Any]
-) -> dict[str, Any]:
+def _handle_checkout_completed(*, event_id: str, obj: dict[str, Any]) -> dict[str, Any]:
     """Customer completed Checkout — activate or update the Subscription."""
     metadata = obj.get("metadata") or {}
     organization_id = metadata.get("organization_id", "")
@@ -193,9 +185,7 @@ def _handle_checkout_completed(
         )
         return {"handled": False, "reason": "missing-metadata"}
 
-    with transaction.atomic(), super_admin_context(
-        reason="billing.webhook.checkout_completed"
-    ):
+    with transaction.atomic(), super_admin_context(reason="billing.webhook.checkout_completed"):
         sub, created = Subscription.objects.update_or_create(
             organization_id=organization_id,
             stripe_subscription_id=subscription_id,
@@ -235,9 +225,7 @@ def _handle_checkout_completed(
     }
 
 
-def _handle_subscription_updated(
-    *, event_id: str, obj: dict[str, Any]
-) -> dict[str, Any]:
+def _handle_subscription_updated(*, event_id: str, obj: dict[str, Any]) -> dict[str, Any]:
     """Period rolled over OR plan changed OR status flipped."""
     subscription_id = obj.get("id", "")
     if not subscription_id:
@@ -249,17 +237,13 @@ def _handle_subscription_updated(
     cancel_at_end = bool(obj.get("cancel_at_period_end", False))
 
     with super_admin_context(reason="billing.webhook.subscription_updated"):
-        rows_updated = Subscription.objects.filter(
-            stripe_subscription_id=subscription_id
-        ).update(
+        rows_updated = Subscription.objects.filter(stripe_subscription_id=subscription_id).update(
             status=new_status,
             current_period_start=period_start or timezone.now(),
             current_period_end=period_end,
             cancel_at_period_end=cancel_at_end,
         )
-        sub = Subscription.objects.filter(
-            stripe_subscription_id=subscription_id
-        ).first()
+        sub = Subscription.objects.filter(stripe_subscription_id=subscription_id).first()
 
     if rows_updated == 0 or sub is None:
         # Webhook arrived before our checkout-completed handler — log
@@ -290,21 +274,15 @@ def _handle_subscription_updated(
     return {"handled": True, "event_type": "customer.subscription.updated"}
 
 
-def _handle_subscription_deleted(
-    *, event_id: str, obj: dict[str, Any]
-) -> dict[str, Any]:
+def _handle_subscription_deleted(*, event_id: str, obj: dict[str, Any]) -> dict[str, Any]:
     subscription_id = obj.get("id", "")
     with super_admin_context(reason="billing.webhook.subscription_deleted"):
-        sub = Subscription.objects.filter(
-            stripe_subscription_id=subscription_id
-        ).first()
+        sub = Subscription.objects.filter(stripe_subscription_id=subscription_id).first()
         if sub is None:
             return {"handled": False, "reason": "no-local-row"}
         sub.status = Subscription.Status.CANCELLED
         sub.cancelled_at = timezone.now()
-        sub.save(
-            update_fields=["status", "cancelled_at", "updated_at"]
-        )
+        sub.save(update_fields=["status", "cancelled_at", "updated_at"])
         Organization.objects.filter(id=sub.organization_id).update(
             subscription_state=Organization.SubscriptionState.CANCELLED,
         )
@@ -323,16 +301,12 @@ def _handle_subscription_deleted(
     return {"handled": True, "event_type": "customer.subscription.deleted"}
 
 
-def _handle_payment_failed(
-    *, event_id: str, obj: dict[str, Any]
-) -> dict[str, Any]:
+def _handle_payment_failed(*, event_id: str, obj: dict[str, Any]) -> dict[str, Any]:
     subscription_id = obj.get("subscription", "")
     if not subscription_id:
         return {"handled": False, "reason": "no-subscription"}
     with super_admin_context(reason="billing.webhook.payment_failed"):
-        sub = Subscription.objects.filter(
-            stripe_subscription_id=subscription_id
-        ).first()
+        sub = Subscription.objects.filter(stripe_subscription_id=subscription_id).first()
         if sub is None:
             return {"handled": False, "reason": "no-local-row"}
         sub.status = Subscription.Status.PAST_DUE
@@ -390,6 +364,6 @@ def _parse_unix(value):
     if value is None:
         return None
     try:
-        return datetime.fromtimestamp(int(value), tz=dtz.utc)
+        return datetime.fromtimestamp(int(value), tz=UTC)
     except (TypeError, ValueError):
         return None

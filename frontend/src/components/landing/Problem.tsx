@@ -20,8 +20,8 @@ export function Problem() {
             invoices a month — not for fifty or two hundred.
           </p>
           <p>
-            You are choosing between three paths: build it yourself, wait for your accounting
-            vendor to catch up, or use a tool built specifically for MyInvois.
+            You are choosing between three paths: build it yourself, wait for your accounting vendor
+            to catch up, or use a tool built specifically for MyInvois.
           </p>
         </div>
       </div>

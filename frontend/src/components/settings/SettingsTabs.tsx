@@ -35,18 +35,14 @@ export function SettingsTabs() {
     <nav className="flex flex-wrap items-center gap-1 border-b border-slate-100 pb-px">
       {TABS.map((tab) => {
         const active =
-          tab.match === "prefix"
-            ? pathname?.startsWith(tab.href)
-            : pathname === tab.href;
+          tab.match === "prefix" ? pathname?.startsWith(tab.href) : pathname === tab.href;
         return (
           <Link
             key={tab.href}
             href={tab.href}
             className={cn(
               "relative -mb-px border-b-2 px-3 py-2 text-2xs font-medium transition",
-              active
-                ? "border-ink text-ink"
-                : "border-transparent text-slate-500 hover:text-ink",
+              active ? "border-ink text-ink" : "border-transparent text-slate-500 hover:text-ink",
             )}
           >
             {tab.label}

@@ -30,9 +30,7 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def org_user(seeded) -> tuple[Organization, User]:
-    org = Organization.objects.create(
-        legal_name="Acme", tin="C10000000001", contact_email="o@a"
-    )
+    org = Organization.objects.create(legal_name="Acme", tin="C10000000001", contact_email="o@a")
     user = User.objects.create_user(email="o@a.test", password="x")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
@@ -115,9 +113,7 @@ class TestCreateWebhook:
         client = _client(org_user)
         create = client.post(
             "/api/v1/integrations/webhooks/",
-            data=json.dumps(
-                {"label": "x", "url": "https://example.com/h"}
-            ),
+            data=json.dumps({"label": "x", "url": "https://example.com/h"}),
             content_type="application/json",
         )
         plaintext = create.json()["plaintext_secret"]
@@ -141,9 +137,7 @@ class TestRevoke:
     def test_revoke_flips_active(self, org_user) -> None:
         client = _client(org_user)
         webhook_id = self._create(client)
-        response = client.delete(
-            f"/api/v1/integrations/webhooks/{webhook_id}/"
-        )
+        response = client.delete(f"/api/v1/integrations/webhooks/{webhook_id}/")
         assert response.status_code == 200
         row = WebhookEndpoint.objects.get(id=webhook_id)
         assert row.is_active is False
@@ -171,9 +165,7 @@ class TestTestDelivery:
             "apps.integrations.delivery.httpx.post",
             return_value=_mock_response(200, "ok"),
         ) as posted:
-            response = client.post(
-                f"/api/v1/integrations/webhooks/{webhook_id}/test/"
-            )
+            response = client.post(f"/api/v1/integrations/webhooks/{webhook_id}/test/")
         assert response.status_code == 200
         body = response.json()
         assert body["outcome"] == "success"
@@ -187,9 +179,7 @@ class TestTestDelivery:
         assert row.outcome == "success"
         assert row.response_status == 200
 
-    def test_test_delivery_failure_records_failure_outcome(
-        self, org_user
-    ) -> None:
+    def test_test_delivery_failure_records_failure_outcome(self, org_user) -> None:
         client = _client(org_user)
         create = client.post(
             "/api/v1/integrations/webhooks/",
@@ -201,9 +191,7 @@ class TestTestDelivery:
             "apps.integrations.delivery.httpx.post",
             return_value=_mock_response(500, "boom"),
         ):
-            response = client.post(
-                f"/api/v1/integrations/webhooks/{webhook_id}/test/"
-            )
+            response = client.post(f"/api/v1/integrations/webhooks/{webhook_id}/test/")
         assert response.status_code == 200
         body = response.json()
         assert body["outcome"] == "failure"
@@ -222,9 +210,7 @@ class TestTestDelivery:
             "apps.integrations.delivery.httpx.post",
             side_effect=httpx.ConnectError("refused"),
         ):
-            response = client.post(
-                f"/api/v1/integrations/webhooks/{webhook_id}/test/"
-            )
+            response = client.post(f"/api/v1/integrations/webhooks/{webhook_id}/test/")
         body = response.json()
         assert body["outcome"] == "failure"
         # Error class only — never str(exc) (tested explicitly).
@@ -258,9 +244,7 @@ class TestTestDelivery:
 
 @pytest.mark.django_db
 class TestSignature:
-    def test_signature_header_attached_when_secret_present(
-        self, org_user
-    ) -> None:
+    def test_signature_header_attached_when_secret_present(self, org_user) -> None:
         client = _client(org_user)
         create = client.post(
             "/api/v1/integrations/webhooks/",
@@ -275,9 +259,7 @@ class TestSignature:
             captured["body"] = content
             return _mock_response(200)
 
-        with patch(
-            "apps.integrations.delivery.httpx.post", side_effect=_capture
-        ):
+        with patch("apps.integrations.delivery.httpx.post", side_effect=_capture):
             client.post(f"/api/v1/integrations/webhooks/{webhook_id}/test/")
         sig = captured["headers"].get("X-ZeroKey-Signature")
         assert sig is not None
@@ -286,7 +268,8 @@ class TestSignature:
         assert ",v1=" in sig
         # Recompute + verify with the plaintext we captured at create.
         plaintext = create.json()["plaintext_secret"]
-        import hashlib, hmac
+        import hashlib
+        import hmac
 
         t_part, v_part = sig.split(",")
         t_value = t_part[2:]
@@ -312,9 +295,7 @@ class TestSignature:
             captured["headers"] = headers
             return _mock_response(200)
 
-        with patch(
-            "apps.integrations.delivery.httpx.post", side_effect=_capture
-        ):
+        with patch("apps.integrations.delivery.httpx.post", side_effect=_capture):
             client.post(f"/api/v1/integrations/webhooks/{webhook_id}/test/")
         h = captured["headers"]
         assert h["X-ZeroKey-Event-Type"] == "ping"
@@ -355,9 +336,7 @@ class TestFanOut:
             content_type="application/json",
         )
 
-        with patch(
-            "apps.integrations.tasks.deliver_webhook_task.delay"
-        ) as queued:
+        with patch("apps.integrations.tasks.deliver_webhook_task.delay") as queued:
             result = fan_out_event(
                 organization_id=org.id,
                 event_type="invoice.validated",
@@ -387,9 +366,7 @@ class TestFanOut:
         # Revoke (flips is_active=False).
         client.delete(f"/api/v1/integrations/webhooks/{webhook_id}/")
 
-        with patch(
-            "apps.integrations.tasks.deliver_webhook_task.delay"
-        ) as queued:
+        with patch("apps.integrations.tasks.deliver_webhook_task.delay") as queued:
             result = fan_out_event(
                 organization_id=org.id,
                 event_type="invoice.validated",

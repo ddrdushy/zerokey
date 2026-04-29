@@ -51,13 +51,7 @@ export function ThroughputChart({ data }: { data?: ThroughputPoint[] }) {
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={points} barGap={4} barCategoryGap="20%">
             <CartesianGrid stroke="#E8E8E0" vertical={false} />
-            <XAxis
-              dataKey="day"
-              stroke="#8A8A7F"
-              tickLine={false}
-              axisLine={false}
-              fontSize={11}
-            />
+            <XAxis dataKey="day" stroke="#8A8A7F" tickLine={false} axisLine={false} fontSize={11} />
             <YAxis stroke="#8A8A7F" tickLine={false} axisLine={false} fontSize={11} width={28} />
             <Tooltip
               cursor={{ fill: "rgba(10,14,26,0.04)" }}

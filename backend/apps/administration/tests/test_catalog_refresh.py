@@ -2,47 +2,43 @@
 
 from __future__ import annotations
 
-import os
-from unittest.mock import patch
-
 import pytest
 
 from apps.administration import catalog_refresh
 from apps.administration.models import (
     ClassificationCode,
-    CountryCode,
-    MsicCode,
     TaxTypeCode,
-    UnitOfMeasureCode,
 )
 
 
 def _msic_fetcher(rows: list[tuple[str, str]] | None = None):
-    rows = rows if rows is not None else [
-        ("47190", "Other retail sale in non-specialized stores"),
-        ("62010", "Computer programming activities"),
-    ]
+    rows = (
+        rows
+        if rows is not None
+        else [
+            ("47190", "Other retail sale in non-specialized stores"),
+            ("62010", "Computer programming activities"),
+        ]
+    )
 
     def fetch():
-        return [
-            {"code": c, "description_en": en, "description_bm": ""}
-            for c, en in rows
-        ]
+        return [{"code": c, "description_en": en, "description_bm": ""} for c, en in rows]
 
     return fetch
 
 
 def _classification_fetcher(rows: list[tuple[str, str]] | None = None):
-    rows = rows if rows is not None else [
-        ("004", "Consolidated e-invoice"),
-        ("022", "Others"),
-    ]
+    rows = (
+        rows
+        if rows is not None
+        else [
+            ("004", "Consolidated e-invoice"),
+            ("022", "Others"),
+        ]
+    )
 
     def fetch():
-        return [
-            {"code": c, "description_en": en, "description_bm": ""}
-            for c, en in rows
-        ]
+        return [{"code": c, "description_en": en, "description_bm": ""} for c, en in rows]
 
     return fetch
 
@@ -88,9 +84,7 @@ class TestRefreshReconciliation:
         )
         fetchers = {
             "msic": _msic_fetcher([]),
-            "classification": _classification_fetcher(
-                [("022", "Others")]
-            ),
+            "classification": _classification_fetcher([("022", "Others")]),
             **_trivial_other_fetchers(),
         }
         summary = catalog_refresh.refresh_all_catalogs(fetchers=fetchers)
@@ -107,9 +101,7 @@ class TestRefreshReconciliation:
         )
         fetchers = {
             "msic": _msic_fetcher([]),
-            "classification": _classification_fetcher(
-                [("004", "Consolidated e-invoice")]
-            ),
+            "classification": _classification_fetcher([("004", "Consolidated e-invoice")]),
             **_trivial_other_fetchers(),
         }
         summary = catalog_refresh.refresh_all_catalogs(fetchers=fetchers)
@@ -129,9 +121,7 @@ class TestRefreshReconciliation:
         )
         fetchers = {
             "msic": _msic_fetcher([]),
-            "classification": _classification_fetcher(
-                [("022", "Others")]
-            ),
+            "classification": _classification_fetcher([("022", "Others")]),
             **_trivial_other_fetchers(),
         }
         summary = catalog_refresh.refresh_all_catalogs(fetchers=fetchers)
@@ -196,9 +186,7 @@ class TestRefreshReconciliation:
 
         fetchers = {
             "msic": boom,  # blows up
-            "classification": _classification_fetcher(
-                [("022", "Others")]
-            ),
+            "classification": _classification_fetcher([("022", "Others")]),
             **_trivial_other_fetchers(),
         }
         summary = catalog_refresh.refresh_all_catalogs(fetchers=fetchers)
@@ -221,9 +209,7 @@ class TestDefaultFetchers:
             catalog_refresh.default_fetchers()
 
     def test_returns_http_fetchers_when_url_set(self, monkeypatch) -> None:
-        monkeypatch.setenv(
-            "LHDN_CATALOG_BASE_URL", "https://example.test/codes"
-        )
+        monkeypatch.setenv("LHDN_CATALOG_BASE_URL", "https://example.test/codes")
         fetchers = catalog_refresh.default_fetchers()
         # All 5 catalogs covered.
         assert set(fetchers.keys()) == {
@@ -253,8 +239,6 @@ class TestRefreshTask:
         monkeypatch.delenv("LHDN_CATALOG_BASE_URL", raising=False)
         result = refresh_reference_catalogs()
         assert result == {}
-        ev = AuditEvent.objects.filter(
-            action_type="administration.catalog_refresh.skipped"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="administration.catalog_refresh.skipped").first()
         assert ev is not None
         assert "LHDN_CATALOG_BASE_URL" in ev.payload["reason"]

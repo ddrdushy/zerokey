@@ -62,9 +62,7 @@ export function ImpersonationBanner({ ctx }: Props) {
     >
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 text-2xs">
         <ShieldAlert className="h-3.5 w-3.5" />
-        <span className="font-semibold uppercase tracking-wider">
-          Impersonating
-        </span>
+        <span className="font-semibold uppercase tracking-wider">Impersonating</span>
         <span className="font-medium text-ink">{ctx.tenant_legal_name}</span>
         <span className="text-slate-500">· {ctx.reason}</span>
         <span className="ml-auto inline-flex items-center gap-3">

@@ -151,9 +151,7 @@ def classify_merge(inputs: ClassifyInputs) -> Verdict:
     # At this point existing is non-empty, incoming differs, no
     # lock, no authority. The provenance source determines whether
     # we trust the incoming write or kick to the conflict queue.
-    existing_source = (
-        (inputs.existing_provenance or {}).get("source") or ""
-    ).strip()
+    existing_source = ((inputs.existing_provenance or {}).get("source") or "").strip()
 
     # Step 5 — same-source synced overwrite. If both the existing
     # value and the incoming value come from the same connector,
@@ -161,10 +159,7 @@ def classify_merge(inputs: ClassifyInputs) -> Verdict:
     # the source system right now). Auto-overwrite is the right
     # call — the customer's source-of-truth for this connector
     # changed.
-    if (
-        existing_source.startswith("synced_")
-        and existing_source == inputs.incoming_source
-    ):
+    if existing_source.startswith("synced_") and existing_source == inputs.incoming_source:
         return Verdict.AUTO_OVERWRITE
 
     # Step 6 — everything else: differing values + different

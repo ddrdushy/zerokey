@@ -129,18 +129,13 @@ def credentials_for_org(*, organization_id: uuid.UUID | str) -> LHDNCredentials:
         ).first()
 
     if row is None:
-        raise LHDNError(
-            "LHDN MyInvois integration not configured for this organization."
-        )
+        raise LHDNError("LHDN MyInvois integration not configured for this organization.")
 
     env = row.active_environment
     column = f"{env}_credentials"
     plain = decrypt_dict_values(getattr(row, column) or {})
 
-    missing = [
-        k for k in ("client_id", "client_secret", "base_url", "tin")
-        if not plain.get(k)
-    ]
+    missing = [k for k in ("client_id", "client_secret", "base_url", "tin") if not plain.get(k)]
     if missing:
         raise LHDNError(
             f"LHDN {env} credentials missing fields: {missing}. "
@@ -204,9 +199,7 @@ def get_access_token(creds: LHDNCredentials, *, force: bool = False) -> str:
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as exc:
-        raise LHDNAuthError(
-            f"LHDN auth request failed: {type(exc).__name__}"
-        ) from exc
+        raise LHDNAuthError(f"LHDN auth request failed: {type(exc).__name__}") from exc
 
     if response.status_code != 200:
         # LHDN returns OAuth2-style error JSON ({"error": "invalid_client",
@@ -285,9 +278,7 @@ def submit_documents(
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as exc:
-        raise LHDNError(
-            f"LHDN submit request failed: {type(exc).__name__}"
-        ) from exc
+        raise LHDNError(f"LHDN submit request failed: {type(exc).__name__}") from exc
 
     if response.status_code == 401:
         raise LHDNAuthError("LHDN rejected the bearer token.")
@@ -311,9 +302,7 @@ def submit_documents(
     if response.status_code >= 500:
         raise LHDNError(f"LHDN server error: HTTP {response.status_code}")
     if response.status_code != 202:
-        raise LHDNError(
-            f"Unexpected LHDN response: HTTP {response.status_code}"
-        )
+        raise LHDNError(f"Unexpected LHDN response: HTTP {response.status_code}")
 
     return response.json()
 
@@ -338,14 +327,12 @@ def _enforce_batch_limits(documents: list[dict[str, Any]]) -> None:
         size = len(encoded)
         if size > MAX_PER_DOCUMENT_BYTES:
             raise LHDNError(
-                f"Document #{idx} is {size} bytes (post-base64) > "
-                f"{MAX_PER_DOCUMENT_BYTES} max."
+                f"Document #{idx} is {size} bytes (post-base64) > {MAX_PER_DOCUMENT_BYTES} max."
             )
         total += size
     if total > MAX_TOTAL_SUBMISSION_BYTES:
         raise LHDNError(
-            f"Submission total {total} bytes > "
-            f"{MAX_TOTAL_SUBMISSION_BYTES} max. Split the batch."
+            f"Submission total {total} bytes > {MAX_TOTAL_SUBMISSION_BYTES} max. Split the batch."
         )
 
 
@@ -389,9 +376,7 @@ def _extract_error_code(body: Any) -> str:
     return str(code) if code else ""
 
 
-def encode_for_submission(
-    *, signed_xml_bytes: bytes, code_number: str
-) -> dict[str, str]:
+def encode_for_submission(*, signed_xml_bytes: bytes, code_number: str) -> dict[str, str]:
     """Wrap one signed XML document in LHDN's submit envelope.
 
     ``code_number`` is a caller-supplied unique identifier (we use
@@ -410,9 +395,7 @@ def encode_for_submission(
     }
 
 
-def get_submission_status(
-    *, creds: LHDNCredentials, submission_uid: str
-) -> dict[str, Any]:
+def get_submission_status(*, creds: LHDNCredentials, submission_uid: str) -> dict[str, Any]:
     """Poll LHDN for a submission's current state.
 
     Response carries:
@@ -430,9 +413,7 @@ def get_submission_status(
     return _authed_get(creds=creds, url=url, what="submission")
 
 
-def get_document_raw(
-    *, creds: LHDNCredentials, document_uuid: str
-) -> dict[str, Any]:
+def get_document_raw(*, creds: LHDNCredentials, document_uuid: str) -> dict[str, Any]:
     """Fetch a validated document (per spec §4.4: ``/raw``).
 
     Returns the document body wrapped in LHDN's envelope. The
@@ -484,9 +465,7 @@ def cancel_document(
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as exc:
-        raise LHDNError(
-            f"LHDN cancel request failed: {type(exc).__name__}"
-        ) from exc
+        raise LHDNError(f"LHDN cancel request failed: {type(exc).__name__}") from exc
 
     if response.status_code == 401:
         raise LHDNAuthError("LHDN rejected the bearer token.")
@@ -506,16 +485,12 @@ def cancel_document(
     if response.status_code >= 500:
         raise LHDNError(f"LHDN server error: HTTP {response.status_code}")
     if response.status_code not in (200, 204):
-        raise LHDNError(
-            f"Unexpected LHDN cancel response: HTTP {response.status_code}"
-        )
+        raise LHDNError(f"Unexpected LHDN cancel response: HTTP {response.status_code}")
 
     return _safe_json(response) or {"status": "cancelled"}
 
 
-def validate_tin(
-    *, creds: LHDNCredentials, tin: str
-) -> bool:
+def validate_tin(*, creds: LHDNCredentials, tin: str) -> bool:
     """Check whether LHDN recognizes a TIN (per spec §4.5).
 
     Per LHDN docs, the response body is empty + the status code
@@ -530,9 +505,7 @@ def validate_tin(
     tin = (tin or "").strip()
     if not tin:
         return False
-    url = urljoin(
-        creds.base_url + "/", f"api/v1.0/taxpayer/validate/{tin}"
-    )
+    url = urljoin(creds.base_url + "/", f"api/v1.0/taxpayer/validate/{tin}")
     token = get_access_token(creds)
     try:
         response = httpx.get(
@@ -544,9 +517,7 @@ def validate_tin(
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as exc:
-        raise LHDNError(
-            f"LHDN TIN validation failed: {type(exc).__name__}"
-        ) from exc
+        raise LHDNError(f"LHDN TIN validation failed: {type(exc).__name__}") from exc
 
     if response.status_code == 401:
         raise LHDNAuthError("LHDN rejected the bearer token.")
@@ -561,14 +532,10 @@ def validate_tin(
         )
     if response.status_code >= 500:
         raise LHDNError(f"LHDN server error: HTTP {response.status_code}")
-    raise LHDNError(
-        f"Unexpected LHDN TIN-validate response: HTTP {response.status_code}"
-    )
+    raise LHDNError(f"Unexpected LHDN TIN-validate response: HTTP {response.status_code}")
 
 
-def _authed_get(
-    *, creds: LHDNCredentials, url: str, what: str
-) -> dict[str, Any]:
+def _authed_get(*, creds: LHDNCredentials, url: str, what: str) -> dict[str, Any]:
     """Common GET path: bearer auth + status-code routing.
 
     Used by ``get_submission_status`` and ``get_document_raw``.
@@ -585,9 +552,7 @@ def _authed_get(
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as exc:
-        raise LHDNError(
-            f"LHDN {what} request failed: {type(exc).__name__}"
-        ) from exc
+        raise LHDNError(f"LHDN {what} request failed: {type(exc).__name__}") from exc
 
     if response.status_code == 401:
         raise LHDNAuthError("LHDN rejected the bearer token.")
@@ -599,9 +564,7 @@ def _authed_get(
             retry_after_seconds=_parse_retry_after(response),
         )
     if response.status_code != 200:
-        raise LHDNError(
-            f"Unexpected LHDN {what} response: HTTP {response.status_code}"
-        )
+        raise LHDNError(f"Unexpected LHDN {what} response: HTTP {response.status_code}")
 
     return response.json()
 

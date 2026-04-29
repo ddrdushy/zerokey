@@ -193,9 +193,7 @@ def upload_api_file(
         file_mime_type=stored.content_type,
         s3_object_key=object_key,
         status=IngestionJob.Status.RECEIVED,
-        state_transitions=[
-            {"status": IngestionJob.Status.RECEIVED.value, "at": _now_iso()}
-        ],
+        state_transitions=[{"status": IngestionJob.Status.RECEIVED.value, "at": _now_iso()}],
     )
 
     record_event(
@@ -252,9 +250,7 @@ _FAILED_STATUSES = frozenset(
 )
 
 
-def throughput_for_organization(
-    *, organization_id: UUID | str, days: int = 7
-) -> dict[str, Any]:
+def throughput_for_organization(*, organization_id: UUID | str, days: int = 7) -> dict[str, Any]:
     """Daily ingestion throughput for the dashboard chart.
 
     Buckets jobs by ``upload_timestamp`` date over the trailing ``days`` window

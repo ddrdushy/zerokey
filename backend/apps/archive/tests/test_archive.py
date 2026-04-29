@@ -26,9 +26,7 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def org(seeded) -> Organization:
-    org = Organization.objects.create(
-        legal_name="Acme", tin="C10000000001", contact_email="o@a"
-    )
+    org = Organization.objects.create(legal_name="Acme", tin="C10000000001", contact_email="o@a")
     user = User.objects.create_user(email="o@a.test", password="x")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
@@ -72,9 +70,7 @@ class TestArchiveB2CTransaction:
             payload={"separate": True},
         )
 
-        rows = list_for_invoice(
-            organization_id=org.id, parent_invoice_id=parent_id
-        )
+        rows = list_for_invoice(organization_id=org.id, parent_invoice_id=parent_id)
         assert len(rows) == 3
 
     def test_emits_audit_event(self, org) -> None:

@@ -19,11 +19,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Bell, ShieldAlert, ShieldCheck } from "lucide-react";
 
-import {
-  api,
-  type InboxItem,
-  type LatestVerification,
-} from "@/lib/api";
+import { api, type InboxItem, type LatestVerification } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const POLL_INTERVAL_MS = 60_000;
@@ -89,10 +85,7 @@ export function NotificationBell() {
   useEffect(() => {
     if (!open) return;
     function onClick(e: MouseEvent) {
-      if (
-        popoverRef.current &&
-        !popoverRef.current.contains(e.target as Node)
-      ) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
@@ -228,17 +221,13 @@ function InboxSection({
               className="flex items-start gap-2 px-3 py-2 hover:bg-slate-50"
             >
               <div className="flex-1 text-2xs">
-                <div className="font-medium text-ink">
-                  {REASON_LABEL[item.reason]}
-                </div>
+                <div className="font-medium text-ink">{REASON_LABEL[item.reason]}</div>
                 <div className="truncate text-slate-500">
                   {item.invoice_number || "Untitled invoice"}
                   {item.buyer_legal_name && ` · ${item.buyer_legal_name}`}
                 </div>
               </div>
-              <div className="text-[10px] text-slate-400">
-                {formatRelative(item.created_at)}
-              </div>
+              <div className="text-[10px] text-slate-400">{formatRelative(item.created_at)}</div>
             </Link>
           </li>
         ))}

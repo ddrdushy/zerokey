@@ -21,7 +21,6 @@ import pytest
 
 from apps.identity.models import (
     Organization,
-    OrganizationIntegration,
     OrganizationMembership,
     Role,
     User,
@@ -150,9 +149,7 @@ class TestCertificates:
 
         certificates.ensure_certificate(organization_id=org.id)
         event = (
-            AuditEvent.objects.filter(
-                action_type="submission.cert.self_signed_minted"
-            )
+            AuditEvent.objects.filter(action_type="submission.cert.self_signed_minted")
             .order_by("-sequence")
             .first()
         )
@@ -209,9 +206,7 @@ class TestXmlSignature:
     def test_signed_xml_includes_signature_element(self, org, invoice) -> None:
         cert = certificates.ensure_certificate(organization_id=org.id)
         unsigned = ubl_xml.build_invoice_xml(invoice)
-        signed = xml_signature.sign_invoice_xml(
-            xml_bytes=unsigned, certificate=cert
-        )
+        signed = xml_signature.sign_invoice_xml(xml_bytes=unsigned, certificate=cert)
         text = signed.decode("utf-8")
         assert "Signature" in text
         assert "SignatureValue" in text
@@ -220,32 +215,22 @@ class TestXmlSignature:
     def test_signature_round_trips(self, org, invoice) -> None:
         cert = certificates.ensure_certificate(organization_id=org.id)
         unsigned = ubl_xml.build_invoice_xml(invoice)
-        signed = xml_signature.sign_invoice_xml(
-            xml_bytes=unsigned, certificate=cert
-        )
+        signed = xml_signature.sign_invoice_xml(xml_bytes=unsigned, certificate=cert)
         # The verifier reads the embedded cert from KeyInfo + checks
         # the RSA signature against the canonicalised SignedInfo.
         assert xml_signature.verify_invoice_signature(signed_xml_bytes=signed)
 
-    def test_tampered_signature_fails_verification(
-        self, org, invoice
-    ) -> None:
+    def test_tampered_signature_fails_verification(self, org, invoice) -> None:
         cert = certificates.ensure_certificate(organization_id=org.id)
         unsigned = ubl_xml.build_invoice_xml(invoice)
-        signed = xml_signature.sign_invoice_xml(
-            xml_bytes=unsigned, certificate=cert
-        )
+        signed = xml_signature.sign_invoice_xml(xml_bytes=unsigned, certificate=cert)
         # Flip a byte INSIDE the SignatureValue base64 — tampering.
         text = signed.decode("utf-8")
         idx = text.find("<ds:SignatureValue>") + len("<ds:SignatureValue>")
-        tampered = (
-            text[:idx]
-            + ("A" if text[idx] != "A" else "B")
-            + text[idx + 1 :]
-        ).encode("utf-8")
-        assert not xml_signature.verify_invoice_signature(
-            signed_xml_bytes=tampered
+        tampered = (text[:idx] + ("A" if text[idx] != "A" else "B") + text[idx + 1 :]).encode(
+            "utf-8"
         )
+        assert not xml_signature.verify_invoice_signature(signed_xml_bytes=tampered)
 
 
 # =============================================================================
@@ -268,9 +253,7 @@ def _mock_response(status_code: int, body: dict | str | None = None) -> MagicMoc
 @pytest.mark.django_db
 class TestLhdnClient:
     def test_credentials_for_org(self, org_with_lhdn_creds) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_lhdn_creds.id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_lhdn_creds.id)
         assert creds.client_id == "demo-client"
         assert creds.client_secret == "demo-secret"
         assert creds.environment == "sandbox"
@@ -280,16 +263,12 @@ class TestLhdnClient:
             lhdn_client.credentials_for_org(organization_id=org.id)
 
     def test_get_access_token_caches(self, org_with_lhdn_creds) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_lhdn_creds.id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_lhdn_creds.id)
         # Reset cache for test isolation.
         lhdn_client._token_cache.clear()
         with patch(
             "apps.submission.lhdn_client.httpx.post",
-            return_value=_mock_response(
-                200, {"access_token": "abc123", "expires_in": 3600}
-            ),
+            return_value=_mock_response(200, {"access_token": "abc123", "expires_in": 3600}),
         ) as posted:
             t1 = lhdn_client.get_access_token(creds)
             t2 = lhdn_client.get_access_token(creds)
@@ -299,9 +278,7 @@ class TestLhdnClient:
         assert posted.call_count == 1
 
     def test_get_access_token_401_raises(self, org_with_lhdn_creds) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_lhdn_creds.id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_lhdn_creds.id)
         lhdn_client._token_cache.clear()
         with patch(
             "apps.submission.lhdn_client.httpx.post",
@@ -310,20 +287,14 @@ class TestLhdnClient:
             with pytest.raises(lhdn_client.LHDNAuthError):
                 lhdn_client.get_access_token(creds)
 
-    def test_submit_documents_validation_error(
-        self, org_with_lhdn_creds
-    ) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_lhdn_creds.id
-        )
+    def test_submit_documents_validation_error(self, org_with_lhdn_creds) -> None:
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_lhdn_creds.id)
         lhdn_client._token_cache.clear()
         # Mock token + then a 400 on submit.
         with patch(
             "apps.submission.lhdn_client.httpx.post",
             side_effect=[
-                _mock_response(
-                    200, {"access_token": "abc", "expires_in": 3600}
-                ),
+                _mock_response(200, {"access_token": "abc", "expires_in": 3600}),
                 _mock_response(400, {"error": "schema_invalid"}),
             ],
         ):
@@ -341,17 +312,13 @@ class TestLhdnClient:
 
 @pytest.mark.django_db
 class TestLhdnSubmission:
-    def test_sign_invoice_produces_signed_xml(
-        self, org_with_lhdn_creds, invoice
-    ) -> None:
+    def test_sign_invoice_produces_signed_xml(self, org_with_lhdn_creds, invoice) -> None:
         result = lhdn_submission.sign_invoice(invoice.id)
         assert result["ok"] is True
         assert result["digest_hex"]
         signed = base64.b64decode(result["signed_xml_b64"])
         # Round-trip the signature.
-        assert xml_signature.verify_invoice_signature(
-            signed_xml_bytes=signed
-        )
+        assert xml_signature.verify_invoice_signature(signed_xml_bytes=signed)
 
     def test_submit_invoice_flips_to_submitting_on_success(
         self, org_with_lhdn_creds, invoice
@@ -360,9 +327,7 @@ class TestLhdnSubmission:
         with patch(
             "apps.submission.lhdn_client.httpx.post",
             side_effect=[
-                _mock_response(
-                    200, {"access_token": "tok", "expires_in": 3600}
-                ),
+                _mock_response(200, {"access_token": "tok", "expires_in": 3600}),
                 _mock_response(
                     202,
                     {
@@ -384,23 +349,15 @@ class TestLhdnSubmission:
         assert invoice.submission_uid == "submission-abc-123"
         assert invoice.lhdn_uuid == "lhdn-uuid-xyz"
 
-    def test_submit_invoice_lhdn_validation_rejection(
-        self, org_with_lhdn_creds, invoice
-    ) -> None:
+    def test_submit_invoice_lhdn_validation_rejection(self, org_with_lhdn_creds, invoice) -> None:
         lhdn_client._token_cache.clear()
         with patch(
             "apps.submission.lhdn_client.httpx.post",
             side_effect=[
-                _mock_response(
-                    200, {"access_token": "tok", "expires_in": 3600}
-                ),
+                _mock_response(200, {"access_token": "tok", "expires_in": 3600}),
                 _mock_response(
                     400,
-                    {
-                        "errors": [
-                            {"code": "BadStructure", "message": "missing TaxAmount"}
-                        ]
-                    },
+                    {"errors": [{"code": "BadStructure", "message": "missing TaxAmount"}]},
                 ),
             ],
         ):
@@ -412,42 +369,41 @@ class TestLhdnSubmission:
         assert invoice.status == Invoice.Status.REJECTED
         assert "rejected" in invoice.error_message.lower()
 
-    def test_poll_invoice_status_marks_validated(
-        self, org_with_lhdn_creds, invoice
-    ) -> None:
+    def test_poll_invoice_status_marks_validated(self, org_with_lhdn_creds, invoice) -> None:
         # Simulate a prior submission that captured the submission UID.
         invoice.submission_uid = "sub-xyz"
         invoice.status = Invoice.Status.SUBMITTING
         invoice.save()
 
         lhdn_client._token_cache.clear()
-        with patch(
-            "apps.submission.lhdn_client.httpx.post",
-            return_value=_mock_response(
-                200, {"access_token": "tok", "expires_in": 3600}
+        with (
+            patch(
+                "apps.submission.lhdn_client.httpx.post",
+                return_value=_mock_response(200, {"access_token": "tok", "expires_in": 3600}),
             ),
-        ), patch(
-            "apps.submission.lhdn_client.httpx.get",
-            side_effect=[
-                _mock_response(
-                    200,
-                    {
-                        "submissionUid": "sub-xyz",
-                        "overallStatus": "Valid",
-                        "documentSummary": [
-                            {
-                                "uuid": "doc-uuid-001",
-                                "status": "Valid",
-                                "invoiceCodeNumber": "INV-2026-0001",
-                            }
-                        ],
-                    },
-                ),
-                _mock_response(
-                    200,
-                    {"longId": "lookup/doc-uuid-001"},
-                ),
-            ],
+            patch(
+                "apps.submission.lhdn_client.httpx.get",
+                side_effect=[
+                    _mock_response(
+                        200,
+                        {
+                            "submissionUid": "sub-xyz",
+                            "overallStatus": "Valid",
+                            "documentSummary": [
+                                {
+                                    "uuid": "doc-uuid-001",
+                                    "status": "Valid",
+                                    "invoiceCodeNumber": "INV-2026-0001",
+                                }
+                            ],
+                        },
+                    ),
+                    _mock_response(
+                        200,
+                        {"longId": "lookup/doc-uuid-001"},
+                    ),
+                ],
+            ),
         ):
             result = lhdn_submission.poll_invoice_status(invoice.id)
 
@@ -472,16 +428,12 @@ class TestLhdnSubmission:
 
 @pytest.mark.django_db
 class TestOauthTester:
-    def test_real_oauth_call_on_test_connection(
-        self, org_with_lhdn_creds
-    ) -> None:
+    def test_real_oauth_call_on_test_connection(self, org_with_lhdn_creds) -> None:
         from apps.identity.integrations import test_connection
 
         with patch(
             "apps.identity.integrations.httpx.post",
-            return_value=_mock_response(
-                200, {"access_token": "fresh-token", "expires_in": 3600}
-            ),
+            return_value=_mock_response(200, {"access_token": "fresh-token", "expires_in": 3600}),
         ) as posted:
             outcome = test_connection(
                 organization_id=org_with_lhdn_creds.id,
@@ -494,16 +446,12 @@ class TestOauthTester:
         called_url = posted.call_args[0][0]
         assert "/connect/token" in called_url
 
-    def test_oauth_failure_surfaces_error_code(
-        self, org_with_lhdn_creds
-    ) -> None:
+    def test_oauth_failure_surfaces_error_code(self, org_with_lhdn_creds) -> None:
         from apps.identity.integrations import test_connection
 
         with patch(
             "apps.identity.integrations.httpx.post",
-            return_value=_mock_response(
-                401, {"error": "invalid_client"}
-            ),
+            return_value=_mock_response(401, {"error": "invalid_client"}),
         ):
             outcome = test_connection(
                 organization_id=org_with_lhdn_creds.id,

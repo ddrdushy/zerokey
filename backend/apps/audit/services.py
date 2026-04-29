@@ -191,9 +191,7 @@ def stats_for_organization(
     }
 
 
-def _daily_sparkline(
-    queryset, *, now: datetime, days: int
-) -> list[dict[str, Any]]:
+def _daily_sparkline(queryset, *, now: datetime, days: int) -> list[dict[str, Any]]:
     """Bucket a queryset by the date of ``timestamp`` for the last ``days``.
 
     Gap-fills missing days with zero so the front-end always gets a series of
@@ -244,9 +242,7 @@ def list_events_for_organization(
     return list(qs.order_by("-sequence")[:limit])
 
 
-def list_action_types_for_organization(
-    *, organization_id: UUID | str
-) -> list[str]:
+def list_action_types_for_organization(*, organization_id: UUID | str) -> list[str]:
     """Distinct action types present on the org's audit log.
 
     Drives the filter dropdown on the audit log page so the user only
@@ -272,9 +268,7 @@ def count_events_for_organization(*, organization_id: UUID | str) -> int:
     return AuditEvent.objects.filter(organization_id=organization_id).count()
 
 
-def _run_chain_verification(
-    *, source: ChainVerificationRun.Source
-) -> ChainVerificationRun:
+def _run_chain_verification(*, source: ChainVerificationRun.Source) -> ChainVerificationRun:
     """Execute one chain verification and record a ``ChainVerificationRun`` row.
 
     Shared core for both the customer-triggered (manual) call and the

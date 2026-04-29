@@ -120,9 +120,7 @@ def verify_master_tin(master_id: uuid.UUID | str) -> dict[str, str]:
         return {"state": "skipped", "reason": "no_tin"}
 
     try:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=master.organization_id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=master.organization_id)
     except lhdn_client.LHDNError as exc:
         # No creds → leave the master alone. Customer hasn't
         # configured LHDN yet; they'll get verification once they do.

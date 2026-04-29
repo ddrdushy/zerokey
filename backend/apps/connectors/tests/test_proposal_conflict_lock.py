@@ -60,8 +60,7 @@ class TestSyncProposalShape:
             organization=org,
             integration_config=integration_config,
             actor_user_id=actor,
-            expires_at=timezone.now()
-            + timedelta(days=SyncProposal.REVERT_WINDOW_DAYS),
+            expires_at=timezone.now() + timedelta(days=SyncProposal.REVERT_WINDOW_DAYS),
             diff={"customers": {"would_add": []}},
         )
         assert proposal.id is not None
@@ -70,9 +69,7 @@ class TestSyncProposalShape:
         assert proposal.reverted_at is None
         assert proposal.applied_changes == {}
 
-    def test_protect_blocks_integration_config_delete(
-        self, org, integration_config
-    ) -> None:
+    def test_protect_blocks_integration_config_delete(self, org, integration_config) -> None:
         SyncProposal.objects.create(
             organization=org,
             integration_config=integration_config,
@@ -132,12 +129,7 @@ class TestMasterFieldLockShape:
             field_name="address",
             locked_by_user_id=uuid.uuid4(),
         )
-        assert (
-            MasterFieldLock.objects.filter(
-                organization=org, master_id=master_id
-            ).count()
-            == 2
-        )
+        assert MasterFieldLock.objects.filter(organization=org, master_id=master_id).count() == 2
 
     def test_customer_and_item_with_same_uuid_independent(self, org) -> None:
         # Defense-in-depth: master_id is a UUID — the chance of
@@ -160,12 +152,7 @@ class TestMasterFieldLockShape:
             field_name="tin",
             locked_by_user_id=uuid.uuid4(),
         )
-        assert (
-            MasterFieldLock.objects.filter(
-                organization=org, master_id=same_id
-            ).count()
-            == 2
-        )
+        assert MasterFieldLock.objects.filter(organization=org, master_id=same_id).count() == 2
 
 
 # =============================================================================
@@ -217,13 +204,9 @@ class TestMasterFieldConflictShape:
         conflict.resolved_by_user_id = actor
         conflict.save()
         assert conflict.is_open is False
-        assert (
-            conflict.resolution == MasterFieldConflict.Resolution.TAKE_INCOMING
-        )
+        assert conflict.resolution == MasterFieldConflict.Resolution.TAKE_INCOMING
 
-    def test_cascade_from_proposal_deletes_conflicts(
-        self, org, integration_config
-    ) -> None:
+    def test_cascade_from_proposal_deletes_conflicts(self, org, integration_config) -> None:
         proposal = self._make_proposal(org, integration_config)
         for i in range(3):
             MasterFieldConflict.objects.create(

@@ -132,9 +132,5 @@ def list_action_types(request: Request) -> Response:
     if not organization_id:
         return Response({"results": []})
     return Response(
-        {
-            "results": services.list_action_types_for_organization(
-                organization_id=organization_id
-            )
-        }
+        {"results": services.list_action_types_for_organization(organization_id=organization_id)}
     )

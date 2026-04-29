@@ -11,15 +11,7 @@
 // Same contract the engine credentials surface uses.
 
 import { useEffect, useState } from "react";
-import {
-  CircleCheck,
-  Cog,
-  CreditCard,
-  Database,
-  Globe,
-  Mail,
-  ShieldAlert,
-} from "lucide-react";
+import { CircleCheck, Cog, CreditCard, Database, Globe, Mail, ShieldAlert } from "lucide-react";
 
 import { api, type SystemSettingNamespace } from "@/lib/api";
 import { AdminShell } from "@/components/admin/AdminShell";
@@ -35,9 +27,7 @@ const NAMESPACE_ICON: Record<string, React.ComponentType<{ className?: string }>
 };
 
 export default function AdminSettingsPage() {
-  const [namespaces, setNamespaces] = useState<SystemSettingNamespace[] | null>(
-    null,
-  );
+  const [namespaces, setNamespaces] = useState<SystemSettingNamespace[] | null>(null);
   const [activeNs, setActiveNs] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,9 +55,7 @@ export default function AdminSettingsPage() {
     <AdminShell>
       <div className="flex flex-col gap-6">
         <header>
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            System settings
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">System settings</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Platform-wide configuration · cross-tenant
           </p>
@@ -83,11 +71,7 @@ export default function AdminSettingsPage() {
         )}
 
         <div className="flex flex-col gap-6 md:flex-row">
-          <NamespaceTabs
-            namespaces={namespaces}
-            active={activeNs}
-            onPick={setActiveNs}
-          />
+          <NamespaceTabs namespaces={namespaces} active={activeNs} onPick={setActiveNs} />
           <div className="flex-1">
             {namespaces === null ? (
               <Loading />
@@ -136,8 +120,7 @@ function NamespaceTabs({
       {namespaces.map((ns) => {
         const Icon = NAMESPACE_ICON[ns.namespace] ?? Cog;
         const isActive = ns.namespace === active;
-        const credCount = Object.values(ns.credential_keys).filter(Boolean)
-          .length;
+        const credCount = Object.values(ns.credential_keys).filter(Boolean).length;
         const credTotal = Object.keys(ns.credential_keys).length;
         return (
           <button
@@ -282,9 +265,7 @@ function NamespaceEditor({
   return (
     <section className="rounded-xl border border-slate-100 bg-white">
       <header className="border-b border-slate-100 px-5 py-4">
-        <h2 className="font-display text-lg font-semibold text-ink">
-          {ns.label}
-        </h2>
+        <h2 className="font-display text-lg font-semibold text-ink">{ns.label}</h2>
         <p className="mt-1 text-2xs text-slate-500">{ns.description}</p>
         {ns.updated_at && (
           <p className="mt-1 text-[10px] text-slate-400">
@@ -315,8 +296,8 @@ function NamespaceEditor({
       </div>
       <footer className="border-t border-slate-100 px-5 py-4">
         <p className="mb-2 text-[11px] text-slate-500">
-          Privileged action — every change is audited under your staff
-          identity. A reason is required.
+          Privileged action — every change is audited under your staff identity. A reason is
+          required.
         </p>
         <input
           type="text"
@@ -336,11 +317,7 @@ function NamespaceEditor({
   );
 }
 
-function TestEmailPanel({
-  onError,
-}: {
-  onError: (msg: string | null) => void;
-}) {
+function TestEmailPanel({ onError }: { onError: (msg: string | null) => void }) {
   const [to, setTo] = useState("");
   const [sending, setSending] = useState(false);
   const [last, setLast] = useState<{ ok: boolean; detail: string } | null>(null);
@@ -365,8 +342,8 @@ function TestEmailPanel({
   return (
     <div className="border-t border-slate-100 bg-slate-50 px-5 py-4">
       <p className="mb-2 text-[11px] text-slate-500">
-        Send a test email to verify the SMTP credentials are working.
-        The recipient gets a short ZeroKey test message.
+        Send a test email to verify the SMTP credentials are working. The recipient gets a short
+        ZeroKey test message.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -374,19 +351,14 @@ function TestEmailPanel({
           value={to}
           onChange={(e) => setTo(e.target.value)}
           placeholder="ops@example.com"
-          className="flex-1 min-w-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+          className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
         />
         <Button size="sm" onClick={onSend} disabled={sending}>
           {sending ? "Sending…" : "Send test"}
         </Button>
       </div>
       {last && (
-        <div
-          className={
-            "mt-2 text-[11px] " +
-            (last.ok ? "text-success" : "text-error")
-          }
-        >
+        <div className={"mt-2 text-[11px] " + (last.ok ? "text-success" : "text-error")}>
           {last.ok ? "✓ Sent: " : "✗ "}
           {last.detail}
         </div>
@@ -414,16 +386,12 @@ function FieldEditor({
   return (
     <label className="flex flex-col gap-1 text-2xs">
       <div className="flex items-center justify-between">
-        <span className="font-medium uppercase tracking-wider text-slate-400">
-          {field.label}
-        </span>
+        <span className="font-medium uppercase tracking-wider text-slate-400">{field.label}</span>
         {isCred && (
           <span
             className={cn(
               "inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider",
-              isSet
-                ? "bg-success/10 text-success"
-                : "bg-slate-100 text-slate-500",
+              isSet ? "bg-success/10 text-success" : "bg-slate-100 text-slate-500",
             )}
           >
             {isSet ? (
@@ -443,11 +411,7 @@ function FieldEditor({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={
-          isCred
-            ? isSet
-              ? "•••• (set — type to rotate)"
-              : "(unset)"
-            : (field.placeholder ?? "")
+          isCred ? (isSet ? "•••• (set — type to rotate)" : "(unset)") : (field.placeholder ?? "")
         }
         className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
       />

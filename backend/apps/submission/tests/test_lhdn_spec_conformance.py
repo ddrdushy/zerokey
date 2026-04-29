@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import timedelta
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -26,7 +27,6 @@ from apps.identity.models import (
 )
 from apps.submission import lhdn_client, lhdn_submission, tin_validation
 from apps.submission.models import Invoice, LineItem
-from decimal import Decimal
 
 
 @pytest.fixture
@@ -42,9 +42,7 @@ def org_with_creds(seeded) -> Organization:
         tin="C1234567890",
         contact_email="o@a",
     )
-    user = User.objects.create_user(
-        email="o@a", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="o@a", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -87,15 +85,11 @@ def _resp(
 class TestTokenCacheBuffer:
     def test_cache_ttl_subtracts_300s_buffer(self, org_with_creds) -> None:
         """Per spec §3.2: cache TTL = expires_in - 300."""
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_creds.id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_creds.id)
         lhdn_client._token_cache.clear()
         with patch(
             "apps.submission.lhdn_client.httpx.post",
-            return_value=_resp(
-                200, {"access_token": "tok", "expires_in": 3600}
-            ),
+            return_value=_resp(200, {"access_token": "tok", "expires_in": 3600}),
         ):
             before = time.time()
             lhdn_client.get_access_token(creds)
@@ -115,32 +109,21 @@ class TestTokenCacheBuffer:
 
 @pytest.mark.django_db
 class TestBatchLimits:
-    def test_too_many_documents_rejected_before_http(
-        self, org_with_creds
-    ) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_creds.id
-        )
+    def test_too_many_documents_rejected_before_http(self, org_with_creds) -> None:
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_creds.id)
         lhdn_client._token_cache.clear()
         oversized = [
-            {"format": "XML", "documentHash": "h", "codeNumber": str(i),
-             "document": "x"}
+            {"format": "XML", "documentHash": "h", "codeNumber": str(i), "document": "x"}
             for i in range(101)
         ]
-        with patch(
-            "apps.submission.lhdn_client.httpx.post"
-        ) as posted:
+        with patch("apps.submission.lhdn_client.httpx.post") as posted:
             with pytest.raises(lhdn_client.LHDNError, match="100 max"):
-                lhdn_client.submit_documents(
-                    creds=creds, signed_xml_documents=oversized
-                )
+                lhdn_client.submit_documents(creds=creds, signed_xml_documents=oversized)
         # Request never went on the wire.
         posted.assert_not_called()
 
     def test_per_document_size_limit(self, org_with_creds) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_creds.id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_creds.id)
         lhdn_client._token_cache.clear()
         # 301 KB single document — over the 300 KB / doc limit.
         big_doc = {
@@ -151,36 +134,32 @@ class TestBatchLimits:
         }
         with patch("apps.submission.lhdn_client.httpx.post") as posted:
             with pytest.raises(lhdn_client.LHDNError, match="300 KB|307200"):
-                lhdn_client.submit_documents(
-                    creds=creds, signed_xml_documents=[big_doc]
-                )
+                lhdn_client.submit_documents(creds=creds, signed_xml_documents=[big_doc])
         posted.assert_not_called()
 
     def test_total_submission_size_limit(self, org_with_creds) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_creds.id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_creds.id)
         lhdn_client._token_cache.clear()
         # 30 docs × 200 KB = 6 MB > 5 MB cap
         docs = [
-            {"format": "XML", "documentHash": "h", "codeNumber": str(i),
-             "document": "x" * (200 * 1024)}
+            {
+                "format": "XML",
+                "documentHash": "h",
+                "codeNumber": str(i),
+                "document": "x" * (200 * 1024),
+            }
             for i in range(30)
         ]
         with patch("apps.submission.lhdn_client.httpx.post") as posted:
             with pytest.raises(lhdn_client.LHDNError, match="5"):
-                lhdn_client.submit_documents(
-                    creds=creds, signed_xml_documents=docs
-                )
+                lhdn_client.submit_documents(creds=creds, signed_xml_documents=docs)
         posted.assert_not_called()
 
 
 @pytest.mark.django_db
 class TestRateLimit:
     def test_429_raises_with_retry_after(self, org_with_creds) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_creds.id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_creds.id)
         lhdn_client._token_cache.clear()
         with patch(
             "apps.submission.lhdn_client.httpx.post",
@@ -203,12 +182,8 @@ class TestRateLimit:
                 )
         assert exc_info.value.retry_after_seconds == 45
 
-    def test_429_without_retry_after_returns_minus_one(
-        self, org_with_creds
-    ) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_creds.id
-        )
+    def test_429_without_retry_after_returns_minus_one(self, org_with_creds) -> None:
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_creds.id)
         lhdn_client._token_cache.clear()
         with patch(
             "apps.submission.lhdn_client.httpx.post",
@@ -240,9 +215,7 @@ class TestRateLimit:
 @pytest.mark.django_db
 class TestTypedErrors:
     def test_duplicate_submission_typed(self, org_with_creds) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_creds.id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_creds.id)
         lhdn_client._token_cache.clear()
         with patch(
             "apps.submission.lhdn_client.httpx.post",
@@ -273,9 +246,7 @@ class TestTypedErrors:
         assert exc_info.value.retry_after_seconds == 600
 
     def test_operation_period_over_typed(self, org_with_creds) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_creds.id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_creds.id)
         lhdn_client._token_cache.clear()
         with patch(
             "apps.submission.lhdn_client.httpx.post",
@@ -309,29 +280,24 @@ class TestTypedErrors:
 @pytest.mark.django_db
 class TestGetDocumentRaw:
     def test_uses_raw_endpoint(self, org_with_creds) -> None:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=org_with_creds.id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=org_with_creds.id)
         lhdn_client._token_cache.clear()
-        with patch(
-            "apps.submission.lhdn_client.httpx.post",
-            return_value=_resp(
-                200, {"access_token": "tok", "expires_in": 3600}
+        with (
+            patch(
+                "apps.submission.lhdn_client.httpx.post",
+                return_value=_resp(200, {"access_token": "tok", "expires_in": 3600}),
             ),
-        ), patch(
-            "apps.submission.lhdn_client.httpx.get",
-            return_value=_resp(200, {"longId": "abc123"}),
-        ) as got:
-            lhdn_client.get_document_raw(
-                creds=creds, document_uuid="doc-xyz"
-            )
+            patch(
+                "apps.submission.lhdn_client.httpx.get",
+                return_value=_resp(200, {"longId": "abc123"}),
+            ) as got,
+        ):
+            lhdn_client.get_document_raw(creds=creds, document_uuid="doc-xyz")
         called_url = got.call_args[0][0]
         assert called_url.endswith("/api/v1.0/documents/doc-xyz/raw")
         assert "/details" not in called_url
 
-    def test_back_compat_alias_get_document_qr(
-        self, org_with_creds
-    ) -> None:
+    def test_back_compat_alias_get_document_qr(self, org_with_creds) -> None:
         # Slice 58 callers used get_document_qr; alias must still work.
         assert lhdn_client.get_document_qr is lhdn_client.get_document_raw
 
@@ -348,18 +314,17 @@ class TestTinValidation:
 
         django_cache.clear()
         lhdn_client._token_cache.clear()
-        with patch(
-            "apps.submission.lhdn_client.httpx.post",
-            return_value=_resp(
-                200, {"access_token": "tok", "expires_in": 3600}
+        with (
+            patch(
+                "apps.submission.lhdn_client.httpx.post",
+                return_value=_resp(200, {"access_token": "tok", "expires_in": 3600}),
             ),
-        ), patch(
-            "apps.submission.lhdn_client.httpx.get",
-            return_value=_resp(200, {}),
+            patch(
+                "apps.submission.lhdn_client.httpx.get",
+                return_value=_resp(200, {}),
+            ),
         ):
-            ok = tin_validation.is_tin_valid(
-                organization_id=org_with_creds.id, tin="C1234567890"
-            )
+            ok = tin_validation.is_tin_valid(organization_id=org_with_creds.id, tin="C1234567890")
         assert ok is True
 
     def test_invalid_tin_returns_false(self, org_with_creds) -> None:
@@ -367,42 +332,36 @@ class TestTinValidation:
 
         django_cache.clear()
         lhdn_client._token_cache.clear()
-        with patch(
-            "apps.submission.lhdn_client.httpx.post",
-            return_value=_resp(
-                200, {"access_token": "tok", "expires_in": 3600}
+        with (
+            patch(
+                "apps.submission.lhdn_client.httpx.post",
+                return_value=_resp(200, {"access_token": "tok", "expires_in": 3600}),
             ),
-        ), patch(
-            "apps.submission.lhdn_client.httpx.get",
-            return_value=_resp(404, {}),
+            patch(
+                "apps.submission.lhdn_client.httpx.get",
+                return_value=_resp(404, {}),
+            ),
         ):
-            ok = tin_validation.is_tin_valid(
-                organization_id=org_with_creds.id, tin="C0000000000"
-            )
+            ok = tin_validation.is_tin_valid(organization_id=org_with_creds.id, tin="C0000000000")
         assert ok is False
 
-    def test_cache_short_circuits_second_call(
-        self, org_with_creds
-    ) -> None:
+    def test_cache_short_circuits_second_call(self, org_with_creds) -> None:
         from django.core.cache import cache as django_cache
 
         django_cache.clear()
         lhdn_client._token_cache.clear()
-        with patch(
-            "apps.submission.lhdn_client.httpx.post",
-            return_value=_resp(
-                200, {"access_token": "tok", "expires_in": 3600}
+        with (
+            patch(
+                "apps.submission.lhdn_client.httpx.post",
+                return_value=_resp(200, {"access_token": "tok", "expires_in": 3600}),
             ),
-        ), patch(
-            "apps.submission.lhdn_client.httpx.get",
-            return_value=_resp(200, {}),
-        ) as got:
-            tin_validation.is_tin_valid(
-                organization_id=org_with_creds.id, tin="C9999999999"
-            )
-            tin_validation.is_tin_valid(
-                organization_id=org_with_creds.id, tin="C9999999999"
-            )
+            patch(
+                "apps.submission.lhdn_client.httpx.get",
+                return_value=_resp(200, {}),
+            ) as got,
+        ):
+            tin_validation.is_tin_valid(organization_id=org_with_creds.id, tin="C9999999999")
+            tin_validation.is_tin_valid(organization_id=org_with_creds.id, tin="C9999999999")
         # Second call hit the cache, not the network.
         assert got.call_count == 1
 
@@ -411,22 +370,19 @@ class TestTinValidation:
 
         django_cache.clear()
         lhdn_client._token_cache.clear()
-        with patch(
-            "apps.submission.lhdn_client.httpx.post",
-            return_value=_resp(
-                200, {"access_token": "tok", "expires_in": 3600}
+        with (
+            patch(
+                "apps.submission.lhdn_client.httpx.post",
+                return_value=_resp(200, {"access_token": "tok", "expires_in": 3600}),
             ),
-        ), patch(
-            "apps.submission.lhdn_client.httpx.get",
-            return_value=_resp(200, {}),
-        ) as got:
-            tin_validation.is_tin_valid(
-                organization_id=org_with_creds.id, tin="C7777777777"
-            )
+            patch(
+                "apps.submission.lhdn_client.httpx.get",
+                return_value=_resp(200, {}),
+            ) as got,
+        ):
+            tin_validation.is_tin_valid(organization_id=org_with_creds.id, tin="C7777777777")
             tin_validation.invalidate_cached_tin(tin="C7777777777")
-            tin_validation.is_tin_valid(
-                organization_id=org_with_creds.id, tin="C7777777777"
-            )
+            tin_validation.is_tin_valid(organization_id=org_with_creds.id, tin="C7777777777")
         # Second call re-hit LHDN because we invalidated.
         assert got.call_count == 2
 
@@ -466,18 +422,17 @@ def submitted_invoice(org_with_creds) -> Invoice:
 
 @pytest.mark.django_db
 class TestCancel:
-    def test_cancel_within_window_succeeds(
-        self, org_with_creds, submitted_invoice
-    ) -> None:
+    def test_cancel_within_window_succeeds(self, org_with_creds, submitted_invoice) -> None:
         lhdn_client._token_cache.clear()
-        with patch(
-            "apps.submission.lhdn_client.httpx.post",
-            return_value=_resp(
-                200, {"access_token": "tok", "expires_in": 3600}
+        with (
+            patch(
+                "apps.submission.lhdn_client.httpx.post",
+                return_value=_resp(200, {"access_token": "tok", "expires_in": 3600}),
             ),
-        ), patch(
-            "apps.submission.lhdn_client.httpx.put",
-            return_value=_resp(200, {"status": "cancelled"}),
+            patch(
+                "apps.submission.lhdn_client.httpx.put",
+                return_value=_resp(200, {"status": "cancelled"}),
+            ),
         ):
             result = lhdn_submission.cancel_invoice(
                 invoice_id=submitted_invoice.id,
@@ -489,13 +444,9 @@ class TestCancel:
         assert submitted_invoice.status == Invoice.Status.CANCELLED
         assert submitted_invoice.cancellation_timestamp is not None
 
-    def test_cancel_outside_window_blocked_locally(
-        self, org_with_creds, submitted_invoice
-    ) -> None:
+    def test_cancel_outside_window_blocked_locally(self, org_with_creds, submitted_invoice) -> None:
         # Push validation_timestamp back beyond 72 hours.
-        submitted_invoice.validation_timestamp = (
-            timezone.now() - timedelta(hours=80)
-        )
+        submitted_invoice.validation_timestamp = timezone.now() - timedelta(hours=80)
         submitted_invoice.save()
         lhdn_client._token_cache.clear()
         # No HTTP call should be made.
@@ -514,15 +465,14 @@ class TestCancel:
     ) -> None:
         # Local clock thinks we're inside the window, but LHDN says no.
         lhdn_client._token_cache.clear()
-        with patch(
-            "apps.submission.lhdn_client.httpx.post",
-            return_value=_resp(
-                200, {"access_token": "tok", "expires_in": 3600}
+        with (
+            patch(
+                "apps.submission.lhdn_client.httpx.post",
+                return_value=_resp(200, {"access_token": "tok", "expires_in": 3600}),
             ),
-        ), patch(
-            "apps.submission.lhdn_client.httpx.put",
-            return_value=_resp(
-                400, {"code": "OperationPeriodOver", "message": "72h"}
+            patch(
+                "apps.submission.lhdn_client.httpx.put",
+                return_value=_resp(400, {"code": "OperationPeriodOver", "message": "72h"}),
             ),
         ):
             result = lhdn_submission.cancel_invoice(
@@ -533,9 +483,7 @@ class TestCancel:
         assert result["ok"] is False
         assert "credit note" in result["reason"]
 
-    def test_cancel_requires_reason(
-        self, org_with_creds, submitted_invoice
-    ) -> None:
+    def test_cancel_requires_reason(self, org_with_creds, submitted_invoice) -> None:
         result = lhdn_submission.cancel_invoice(
             invoice_id=submitted_invoice.id,
             reason="",
@@ -544,9 +492,7 @@ class TestCancel:
         assert result["ok"] is False
         assert "reason" in result["reason"].lower()
 
-    def test_cancel_unsubmitted_invoice_refused(
-        self, org_with_creds
-    ) -> None:
+    def test_cancel_unsubmitted_invoice_refused(self, org_with_creds) -> None:
         # Invoice exists but has no lhdn_uuid yet.
         inv = Invoice.objects.create(
             organization=org_with_creds,

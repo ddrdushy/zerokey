@@ -125,7 +125,7 @@ def register_owner(
         from apps.billing.services import bootstrap_trial_subscription
 
         bootstrap_trial_subscription(organization_id=organization.id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         # Registration must not fail because billing fell over;
         # operations can backfill via admin or shell.
         pass
@@ -272,9 +272,7 @@ class MembershipManagementError(Exception):
     """Raised when a customer-side membership update is invalid."""
 
 
-def list_organization_members(
-    *, organization_id: uuid.UUID | str
-) -> list[dict]:
+def list_organization_members(*, organization_id: uuid.UUID | str) -> list[dict]:
     """Return active + inactive memberships for one organization.
 
     Customer-facing — caller's tenant context is the org being listed.
@@ -326,9 +324,7 @@ def update_organization_member(
     from apps.audit.services import record_event
 
     if is_active is None and role_name is None:
-        raise MembershipManagementError(
-            "At least one of is_active or role_name must be supplied."
-        )
+        raise MembershipManagementError("At least one of is_active or role_name must be supplied.")
 
     actor_membership = (
         OrganizationMembership.objects.filter(
@@ -340,19 +336,15 @@ def update_organization_member(
         .first()
     )
     if actor_membership is None:
-        raise MembershipManagementError(
-            "You are not a member of this organization."
-        )
+        raise MembershipManagementError("You are not a member of this organization.")
     actor_role = actor_membership.role.name
     if actor_role not in {"owner", "admin"}:
-        raise MembershipManagementError(
-            "Only owners and admins can change member access."
-        )
+        raise MembershipManagementError("Only owners and admins can change member access.")
 
     try:
-        membership = OrganizationMembership.objects.select_related(
-            "role", "user"
-        ).get(id=membership_id, organization_id=organization_id)
+        membership = OrganizationMembership.objects.select_related("role", "user").get(
+            id=membership_id, organization_id=organization_id
+        )
     except OrganizationMembership.DoesNotExist as exc:
         raise MembershipManagementError(
             f"Membership {membership_id} not found in this organization."
@@ -363,9 +355,7 @@ def update_organization_member(
             "You cannot change your own membership through this endpoint."
         )
     if membership.role.name == "owner" and actor_role != "owner":
-        raise MembershipManagementError(
-            "Only owners can change another owner's membership."
-        )
+        raise MembershipManagementError("Only owners can change another owner's membership.")
 
     changes: dict = {}
     if is_active is not None and bool(is_active) != bool(membership.is_active):
@@ -376,13 +366,9 @@ def update_organization_member(
         try:
             new_role = Role.objects.get(name=role_name)
         except Role.DoesNotExist as exc:
-            raise MembershipManagementError(
-                f"Unknown role {role_name!r}."
-            ) from exc
+            raise MembershipManagementError(f"Unknown role {role_name!r}.") from exc
         if new_role.name == "owner" and actor_role != "owner":
-            raise MembershipManagementError(
-                "Only owners can promote another member to owner."
-            )
+            raise MembershipManagementError("Only owners can promote another member to owner.")
         if new_role.id != membership.role_id:
             membership.role = new_role
             changes["role"] = role_name
@@ -405,7 +391,5 @@ def update_organization_member(
         "email": membership.user.email,
         "role": membership.role.name,
         "is_active": bool(membership.is_active),
-        "joined_date": membership.joined_date.isoformat()
-        if membership.joined_date
-        else None,
+        "joined_date": membership.joined_date.isoformat() if membership.joined_date else None,
     }

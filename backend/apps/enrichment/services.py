@@ -109,9 +109,7 @@ def enrich_invoice(invoice_id: UUID | str) -> EnrichmentResult:
             affected_entity_type="Invoice",
             affected_entity_id=str(invoice.id),
             payload={
-                "customer_master_id": (
-                    str(customer.master.id) if customer.master else None
-                ),
+                "customer_master_id": (str(customer.master.id) if customer.master else None),
                 "customer_matched": customer.matched,
                 "customer_created": customer.created,
                 "items_matched": items_matched,
@@ -130,9 +128,7 @@ def enrich_invoice(invoice_id: UUID | str) -> EnrichmentResult:
                 from .tasks import verify_master_tin
 
                 master_id = str(customer.master.id)
-                transaction.on_commit(
-                    lambda mid=master_id: verify_master_tin.delay(mid)
-                )
+                transaction.on_commit(lambda mid=master_id: verify_master_tin.delay(mid))
 
     return EnrichmentResult(
         customer_matched=customer.matched,
@@ -314,9 +310,7 @@ def _enrich_line_items(invoice: Invoice) -> tuple[int, int]:
     return matched, created
 
 
-def _find_or_create_item_master(
-    invoice: Invoice, line: LineItem
-) -> tuple[ItemMaster, bool]:
+def _find_or_create_item_master(invoice: Invoice, line: LineItem) -> tuple[ItemMaster, bool]:
     target = line.description.strip()
     qs = ItemMaster.objects.filter(organization_id=invoice.organization_id)
 
@@ -405,11 +399,7 @@ def list_customer_masters(
 def get_customer_master(
     *, organization_id: UUID | str, customer_id: UUID | str
 ) -> CustomerMaster | None:
-    return (
-        CustomerMaster.objects.filter(
-            organization_id=organization_id, id=customer_id
-        ).first()
-    )
+    return CustomerMaster.objects.filter(organization_id=organization_id, id=customer_id).first()
 
 
 def list_invoices_for_customer_master(
@@ -433,9 +423,7 @@ def list_invoices_for_customer_master(
     # Lazy import to avoid enrichment -> submission cycle at module load.
     from apps.submission.models import Invoice
 
-    master = get_customer_master(
-        organization_id=organization_id, customer_id=customer_id
-    )
+    master = get_customer_master(organization_id=organization_id, customer_id=customer_id)
     if master is None:
         return []
 
@@ -483,9 +471,7 @@ def update_customer_master(
             f"Editable: {sorted(EDITABLE_CUSTOMER_FIELDS)}"
         )
 
-    master = CustomerMaster.objects.get(
-        organization_id=organization_id, id=customer_id
-    )
+    master = CustomerMaster.objects.get(organization_id=organization_id, id=customer_id)
 
     changed: list[str] = []
     rename_old_name: str | None = None

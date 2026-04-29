@@ -160,15 +160,9 @@ class Organization(TimestampedModel):
     # Inline encrypted blobs. Only populated for self-signed dev certs;
     # production swaps to KMS-stored S3 blobs (alias above).
     certificate_pem = models.TextField(blank=True, default="")
-    certificate_private_key_pem_encrypted = models.TextField(
-        blank=True, default=""
-    )
-    certificate_subject_common_name = models.CharField(
-        max_length=255, blank=True, default=""
-    )
-    certificate_serial_hex = models.CharField(
-        max_length=64, blank=True, default=""
-    )
+    certificate_private_key_pem_encrypted = models.TextField(blank=True, default="")
+    certificate_subject_common_name = models.CharField(max_length=255, blank=True, default="")
+    certificate_serial_hex = models.CharField(max_length=64, blank=True, default="")
 
     logo_url = models.URLField(blank=True)
     language_preference = models.CharField(max_length=10, default="en-MY")
@@ -179,9 +173,7 @@ class Organization(TimestampedModel):
     # Generated on first email-forward request; rotatable from
     # Settings (rotation invalidates the old token immediately).
     # 16-char URL-safe slug; unique per organization.
-    inbox_token = models.CharField(
-        max_length=32, blank=True, default="", db_index=True
-    )
+    inbox_token = models.CharField(max_length=32, blank=True, default="", db_index=True)
 
     # Per-tenant extraction lane (Slice 54). Default is the AI lane —
     # accuracy first, customer can opt down to the cost-saver. The
@@ -350,10 +342,7 @@ class OrganizationIntegration(TenantScopedModel):
         ]
 
     def __str__(self) -> str:
-        return (
-            f"{self.integration_key}@{self.organization_id} "
-            f"({self.active_environment})"
-        )
+        return f"{self.integration_key}@{self.organization_id} ({self.active_environment})"
 
 
 class MembershipInvitation(TenantScopedModel):
@@ -381,9 +370,7 @@ class MembershipInvitation(TenantScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     email = models.EmailField()
-    role = models.ForeignKey(
-        "identity.Role", on_delete=models.PROTECT, related_name="+"
-    )
+    role = models.ForeignKey("identity.Role", on_delete=models.PROTECT, related_name="+")
     invited_by = models.ForeignKey(
         "identity.User",
         on_delete=models.SET_NULL,
@@ -402,9 +389,7 @@ class MembershipInvitation(TenantScopedModel):
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoked_by_user_id = models.UUIDField(null=True, blank=True)
 
-    status = models.CharField(
-        max_length=16, choices=Status.choices, default=Status.PENDING
-    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
 
     class Meta:
         db_table = "identity_membership_invitation"

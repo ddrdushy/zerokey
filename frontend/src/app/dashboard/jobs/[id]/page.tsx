@@ -20,13 +20,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import {
-  api,
-  ApiError,
-  type IngestionJob,
-  type Invoice,
-  type ValidationIssue,
-} from "@/lib/api";
+import { api, ApiError, type IngestionJob, type Invoice, type ValidationIssue } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/shell/AppShell";
 import { DocumentPreview } from "@/components/review/DocumentPreview";
@@ -135,17 +129,11 @@ export default function JobDetailPage() {
     }));
   }
 
-  function onChangePendingAdd(
-    pendingNumber: number,
-    field: string,
-    value: string,
-  ) {
+  function onChangePendingAdd(pendingNumber: number, field: string, value: string) {
     setSaveError(null);
     setPendingAdds((prev) =>
       prev.map((p) =>
-        p.pendingNumber === pendingNumber
-          ? { ...p, fields: { ...p.fields, [field]: value } }
-          : p,
+        p.pendingNumber === pendingNumber ? { ...p, fields: { ...p.fields, [field]: value } } : p,
       ),
     );
   }
@@ -156,18 +144,14 @@ export default function JobDetailPage() {
     // impossible since real numbers start at 1. Each click decrements.
     setPendingAdds((prev) => {
       const nextPending =
-        prev.length === 0
-          ? -1
-          : Math.min(...prev.map((p) => p.pendingNumber)) - 1;
+        prev.length === 0 ? -1 : Math.min(...prev.map((p) => p.pendingNumber)) - 1;
       return [...prev, { pendingNumber: nextPending, fields: {} }];
     });
   }
 
   function onRemoveLine(lineNumber: number) {
     setSaveError(null);
-    setRemovedNumbers((prev) =>
-      prev.includes(lineNumber) ? prev : [...prev, lineNumber],
-    );
+    setRemovedNumbers((prev) => (prev.includes(lineNumber) ? prev : [...prev, lineNumber]));
   }
 
   function onUndoRemove(lineNumber: number) {
@@ -177,9 +161,7 @@ export default function JobDetailPage() {
 
   function onDiscardPendingAdd(pendingNumber: number) {
     setSaveError(null);
-    setPendingAdds((prev) =>
-      prev.filter((p) => p.pendingNumber !== pendingNumber),
-    );
+    setPendingAdds((prev) => prev.filter((p) => p.pendingNumber !== pendingNumber));
   }
 
   async function onSave() {
@@ -213,10 +195,7 @@ export default function JobDetailPage() {
       if (removedNumbers.length > 0) {
         payload.remove_line_items = removedNumbers;
       }
-      const updated = await api.updateInvoice(
-        invoice.id,
-        payload as Record<string, string | null>,
-      );
+      const updated = await api.updateInvoice(invoice.id, payload as Record<string, string | null>);
       setInvoice(updated);
       setDraft({});
       setLineDrafts({});
@@ -245,8 +224,7 @@ export default function JobDetailPage() {
     Object.keys(draft).length +
     Object.values(lineDrafts).reduce((sum, d) => sum + Object.keys(d).length, 0) +
     // Each non-empty pending add counts once; empty ones are dropped on save.
-    pendingAdds.filter((p) => (p.fields.description ?? "").trim() !== "")
-      .length +
+    pendingAdds.filter((p) => (p.fields.description ?? "").trim() !== "").length +
     removedNumbers.length;
 
   return (
@@ -290,16 +268,11 @@ export default function JobDetailPage() {
               </summary>
               <ul className="divide-y divide-slate-100 border-t border-slate-100">
                 {(job.state_transitions ?? []).map((t, idx) => (
-                  <li
-                    key={idx}
-                    className="flex items-center justify-between px-4 py-2 text-2xs"
-                  >
+                  <li key={idx} className="flex items-center justify-between px-4 py-2 text-2xs">
                     <span className="font-medium uppercase tracking-wider text-slate-600">
                       {t.status.replace(/_/g, " ")}
                     </span>
-                    <span className="text-slate-400">
-                      {new Date(t.at).toLocaleString()}
-                    </span>
+                    <span className="text-slate-400">{new Date(t.at).toLocaleString()}</span>
                   </li>
                 ))}
               </ul>
@@ -379,11 +352,7 @@ type ReviewPanelProps = {
   removedNumbers: number[];
   onChangeField: (name: string, value: string) => void;
   onChangeLineCell: (lineNumber: number, field: string, value: string) => void;
-  onChangePendingAdd: (
-    pendingNumber: number,
-    field: string,
-    value: string,
-  ) => void;
+  onChangePendingAdd: (pendingNumber: number, field: string, value: string) => void;
   onAddLine: () => void;
   onRemoveLine: (lineNumber: number) => void;
   onUndoRemove: (lineNumber: number) => void;
@@ -407,9 +376,10 @@ function ReviewPanel({
   onDiscardPendingAdd,
   onInvoiceChanged,
 }: ReviewPanelProps) {
-  const issuesByPath = useMemo(() => groupByPath(invoice.validation_issues), [
-    invoice.validation_issues,
-  ]);
+  const issuesByPath = useMemo(
+    () => groupByPath(invoice.validation_issues),
+    [invoice.validation_issues],
+  );
   const conf = invoice.per_field_confidence ?? {};
 
   // ``valueOf(name)`` returns the value the user is currently looking at:
@@ -437,9 +407,7 @@ function ReviewPanel({
   // Slice 59B: blocking issues for the LHDN submit gate. We treat
   // any open validation issue as blocking — same threshold the
   // ValidationBanner shows.
-  const blockingIssues = invoice.validation_issues.filter(
-    (i) => i.severity !== "info",
-  ).length;
+  const blockingIssues = invoice.validation_issues.filter((i) => i.severity !== "info").length;
 
   return (
     <>
@@ -722,8 +690,8 @@ function PartyIdTypeRow({
         />
       </div>
       <p className="mt-1 text-[10px] text-slate-400">
-        LHDN matches TIN + this ID against HITS. Wrong scheme returns
-        ERR206 even when the number is right.
+        LHDN matches TIN + this ID against HITS. Wrong scheme returns ERR206 even when the number is
+        right.
       </p>
     </div>
   );

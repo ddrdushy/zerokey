@@ -86,29 +86,21 @@ class TestPlatformAuditEvents:
         org_ids = {evt["organization_id"] for evt in results if evt["organization_id"]}
         assert len(org_ids) >= 2
 
-    def test_filter_by_organization(
-        self, staff_user, two_orgs_with_events
-    ) -> None:
+    def test_filter_by_organization(self, staff_user, two_orgs_with_events) -> None:
         org_a, _ = two_orgs_with_events
         client = Client()
         client.force_login(staff_user)
-        response = client.get(
-            f"/api/v1/admin/audit/events/?organization_id={org_a.id}"
-        )
+        response = client.get(f"/api/v1/admin/audit/events/?organization_id={org_a.id}")
         assert response.status_code == 200
         results = response.json()["results"]
         # All returned events belong to org A.
         for evt in results:
             assert evt["organization_id"] == str(org_a.id)
 
-    def test_filter_by_action_type(
-        self, staff_user, two_orgs_with_events
-    ) -> None:
+    def test_filter_by_action_type(self, staff_user, two_orgs_with_events) -> None:
         client = Client()
         client.force_login(staff_user)
-        response = client.get(
-            "/api/v1/admin/audit/events/?action_type=invoice.created"
-        )
+        response = client.get("/api/v1/admin/audit/events/?action_type=invoice.created")
         assert response.status_code == 200
         for evt in response.json()["results"]:
             assert evt["action_type"] == "invoice.created"
@@ -119,20 +111,14 @@ class TestPlatformAuditEvents:
         response = client.get("/api/v1/admin/audit/events/?limit=oops")
         assert response.status_code == 400
 
-    def test_listing_itself_creates_audit_event(
-        self, staff_user, two_orgs_with_events
-    ) -> None:
+    def test_listing_itself_creates_audit_event(self, staff_user, two_orgs_with_events) -> None:
         """Cross-tenant reads are themselves audited (admin.platform_audit_listed)."""
         client = Client()
         client.force_login(staff_user)
 
-        before = AuditEvent.objects.filter(
-            action_type="admin.platform_audit_listed"
-        ).count()
+        before = AuditEvent.objects.filter(action_type="admin.platform_audit_listed").count()
         client.get("/api/v1/admin/audit/events/?limit=10")
-        after = AuditEvent.objects.filter(
-            action_type="admin.platform_audit_listed"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="admin.platform_audit_listed").count()
         assert after == before + 1
 
         # The audit event is system-level (org_id=None — crosses tenants

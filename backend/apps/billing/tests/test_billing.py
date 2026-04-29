@@ -48,9 +48,7 @@ def seeded_plans(db) -> None:
 
 @pytest.fixture
 def org_user(seeded_roles, seeded_plans) -> tuple[Organization, User]:
-    org = Organization.objects.create(
-        legal_name="Acme", tin="C10000000001", contact_email="o@a"
-    )
+    org = Organization.objects.create(legal_name="Acme", tin="C10000000001", contact_email="o@a")
     user = User.objects.create_user(email="o@a.test", password="x")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
@@ -105,9 +103,7 @@ class TestBillingOverview:
         response = Client().get("/api/v1/billing/overview/")
         assert response.status_code in (401, 403)
 
-    def test_authenticated_returns_subscription_and_usage(
-        self, org_user
-    ) -> None:
+    def test_authenticated_returns_subscription_and_usage(self, org_user) -> None:
         org, _ = org_user
         bootstrap_trial_subscription(organization_id=org.id)
         client = _client(org_user)
@@ -157,9 +153,7 @@ class TestUsageEvents:
         assert usage["limit"] == 50
         assert usage["overage_count"] == 0
 
-    def test_overage_count_when_over_limit(
-        self, org_user, seeded_plans
-    ) -> None:
+    def test_overage_count_when_over_limit(self, org_user, seeded_plans) -> None:
         org, _ = org_user
         # Move tenant to a 100-included plan and rack up 105 events.
         solo = Plan.objects.get(slug="solo", version=1)
@@ -181,9 +175,7 @@ class TestUsageEvents:
 
 @pytest.mark.django_db
 class TestRegistrationBootstrapsTrial:
-    def test_register_creates_trial_subscription(
-        self, seeded_roles, seeded_plans
-    ) -> None:
+    def test_register_creates_trial_subscription(self, seeded_roles, seeded_plans) -> None:
         from apps.identity.services import register_owner
 
         result = register_owner(

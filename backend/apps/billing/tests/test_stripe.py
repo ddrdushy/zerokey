@@ -12,8 +12,8 @@ import httpx
 import pytest
 
 from apps.administration.services import upsert_system_setting
-from apps.billing.models import Plan, Subscription
 from apps.billing import checkout, stripe_client
+from apps.billing.models import Plan, Subscription
 from apps.identity.models import (
     Organization,
     OrganizationMembership,
@@ -48,9 +48,7 @@ def org_owner(seeded) -> tuple[Organization, User]:
         tin="C1234567890",
         contact_email="dushy@acme.example",
     )
-    user = User.objects.create_user(
-        email="dushy@acme.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="dushy@acme.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -87,51 +85,35 @@ def _mock_response(status_code: int, body: dict | None = None) -> MagicMock:
 
 @pytest.mark.django_db
 class TestWebhookSignature:
-    def _signed_payload(
-        self, body: bytes, secret: str, *, ts: int | None = None
-    ) -> str:
+    def _signed_payload(self, body: bytes, secret: str, *, ts: int | None = None) -> str:
         ts = ts or int(time.time())
         signed = f"{ts}.".encode() + body
-        sig = hmac.new(
-            secret.encode("utf-8"), signed, hashlib.sha256
-        ).hexdigest()
+        sig = hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
         return f"t={ts},v1={sig}"
 
     def test_verifies_correct_signature(self, stripe_configured) -> None:
         body = b'{"id":"evt_1","type":"customer.subscription.updated"}'
         header = self._signed_payload(body, "whsec_test_secret")
-        event = stripe_client.verify_webhook_signature(
-            payload=body, signature_header=header
-        )
+        event = stripe_client.verify_webhook_signature(payload=body, signature_header=header)
         assert event["id"] == "evt_1"
 
     def test_rejects_bad_signature(self, stripe_configured) -> None:
         body = b'{"id":"evt_1"}'
         header = self._signed_payload(body, "whsec_WRONG")
-        with pytest.raises(
-            stripe_client.StripeWebhookError, match="did not verify"
-        ):
-            stripe_client.verify_webhook_signature(
-                payload=body, signature_header=header
-            )
+        with pytest.raises(stripe_client.StripeWebhookError, match="did not verify"):
+            stripe_client.verify_webhook_signature(payload=body, signature_header=header)
 
     def test_rejects_stale_timestamp(self, stripe_configured) -> None:
         body = b"{}"
         # 10 minutes old → outside 5-minute window.
         ts = int(time.time()) - 600
         header = self._signed_payload(body, "whsec_test_secret", ts=ts)
-        with pytest.raises(
-            stripe_client.StripeWebhookError, match="too old"
-        ):
-            stripe_client.verify_webhook_signature(
-                payload=body, signature_header=header
-            )
+        with pytest.raises(stripe_client.StripeWebhookError, match="too old"):
+            stripe_client.verify_webhook_signature(payload=body, signature_header=header)
 
     def test_rejects_missing_header(self, stripe_configured) -> None:
         with pytest.raises(stripe_client.StripeWebhookError, match="Missing"):
-            stripe_client.verify_webhook_signature(
-                payload=b"{}", signature_header=""
-            )
+            stripe_client.verify_webhook_signature(payload=b"{}", signature_header="")
 
     def test_rejects_when_no_webhook_secret_configured(self, seeded) -> None:
         # Configure stripe but without the webhook secret.
@@ -142,12 +124,8 @@ class TestWebhookSignature:
                 "webhook_secret": "",
             },
         )
-        with pytest.raises(
-            stripe_client.StripeWebhookError, match="webhook_secret"
-        ):
-            stripe_client.verify_webhook_signature(
-                payload=b"{}", signature_header="t=1,v1=abc"
-            )
+        with pytest.raises(stripe_client.StripeWebhookError, match="webhook_secret"):
+            stripe_client.verify_webhook_signature(payload=b"{}", signature_header="t=1,v1=abc")
 
 
 # =============================================================================
@@ -157,9 +135,7 @@ class TestWebhookSignature:
 
 @pytest.mark.django_db
 class TestStartCheckout:
-    def test_creates_customer_then_session(
-        self, stripe_configured, org_owner, plan
-    ) -> None:
+    def test_creates_customer_then_session(self, stripe_configured, org_owner, plan) -> None:
         org, _ = org_owner
         with patch(
             "apps.billing.stripe_client.httpx.post",
@@ -189,14 +165,10 @@ class TestStartCheckout:
         # Audit captured.
         from apps.audit.models import AuditEvent
 
-        ev = AuditEvent.objects.filter(
-            action_type="billing.checkout.started"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="billing.checkout.started").first()
         assert ev is not None
 
-    def test_rejects_invalid_billing_cycle(
-        self, stripe_configured, org_owner, plan
-    ) -> None:
+    def test_rejects_invalid_billing_cycle(self, stripe_configured, org_owner, plan) -> None:
         org, _ = org_owner
         with pytest.raises(checkout.CheckoutError, match="billing_cycle"):
             checkout.start_checkout(
@@ -207,9 +179,7 @@ class TestStartCheckout:
                 cancel_url="https://app/c",
             )
 
-    def test_rejects_plan_without_stripe_price(
-        self, stripe_configured, org_owner
-    ) -> None:
+    def test_rejects_plan_without_stripe_price(self, stripe_configured, org_owner) -> None:
         plan_no_price = Plan.objects.create(
             slug="test-stripe-noprice",
             version=1,
@@ -228,9 +198,7 @@ class TestStartCheckout:
                 cancel_url="https://app/c",
             )
 
-    def test_reuses_existing_stripe_customer_id(
-        self, stripe_configured, org_owner, plan
-    ) -> None:
+    def test_reuses_existing_stripe_customer_id(self, stripe_configured, org_owner, plan) -> None:
         org, _ = org_owner
         # Pretend a prior subscription captured a customer ID.
         Subscription.objects.create(
@@ -323,13 +291,9 @@ class TestWebhookHandlers:
         sub.refresh_from_db()
         assert sub.status == Subscription.Status.PAST_DUE
         org.refresh_from_db()
-        assert (
-            org.subscription_state == Organization.SubscriptionState.PAST_DUE
-        )
+        assert org.subscription_state == Organization.SubscriptionState.PAST_DUE
 
-    def test_subscription_deleted_marks_cancelled(
-        self, stripe_configured, org_owner, plan
-    ) -> None:
+    def test_subscription_deleted_marks_cancelled(self, stripe_configured, org_owner, plan) -> None:
         org, _ = org_owner
         sub = Subscription.objects.create(
             organization=org,
@@ -348,9 +312,7 @@ class TestWebhookHandlers:
         assert sub.status == Subscription.Status.CANCELLED
         assert sub.cancelled_at is not None
 
-    def test_payment_failed_marks_past_due(
-        self, stripe_configured, org_owner, plan
-    ) -> None:
+    def test_payment_failed_marks_past_due(self, stripe_configured, org_owner, plan) -> None:
         org, _ = org_owner
         sub = Subscription.objects.create(
             organization=org,
@@ -368,9 +330,7 @@ class TestWebhookHandlers:
         sub.refresh_from_db()
         assert sub.status == Subscription.Status.PAST_DUE
 
-    def test_unsupported_event_type_silently_acks(
-        self, stripe_configured
-    ) -> None:
+    def test_unsupported_event_type_silently_acks(self, stripe_configured) -> None:
         result = checkout.handle_webhook(
             event={"id": "evt_x", "type": "some.other.event", "data": {}}
         )
@@ -395,9 +355,7 @@ class TestWebhookEndpoint:
         )
         assert response.status_code == 400
 
-    def test_endpoint_200_on_valid_signature(
-        self, stripe_configured, org_owner, plan
-    ) -> None:
+    def test_endpoint_200_on_valid_signature(self, stripe_configured, org_owner, plan) -> None:
         from django.test import Client
 
         org, _ = org_owner

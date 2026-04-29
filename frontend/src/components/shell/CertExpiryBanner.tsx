@@ -133,8 +133,7 @@ export function CertExpiryBanner() {
       className={cn(
         "flex items-start gap-3 border-b px-4 py-3 text-2xs md:px-8",
         copy.severity === "error" && "border-error/30 bg-error/5 text-error",
-        copy.severity === "warning" &&
-          "border-warning/30 bg-warning/10 text-warning",
+        copy.severity === "warning" && "border-warning/30 bg-warning/10 text-warning",
         copy.severity === "notice" && "border-amber-200 bg-amber-50 text-amber-800",
       )}
     >

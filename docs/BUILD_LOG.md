@@ -7434,6 +7434,70 @@ Durable design decisions:
 
 ---
 
+### Slice 79 — GitHub Actions CI workflow + first-pass lint/format baseline
+
+The productivity foundation: every push + every PR runs ruff +
+pytest + frontend typecheck/lint/build. Catches regressions
+before they ship.
+
+`.github/workflows/ci.yml`:
+
+- **Backend job** — uv install with cache, `ruff check`,
+  `ruff format --check`, pytest with sqlite settings (the
+  same in-memory backend the test settings already use; 5
+  RLS-only tests skip cleanly without Postgres).
+- **Frontend job** — npm ci with cache,
+  `prettier --check`, `next lint`, `tsc --noEmit`,
+  `next build` so a release-mode regression doesn't sneak
+  through.
+- **Concurrency** — cancels in-progress runs on the same ref
+  so a fast follow-up commit doesn't queue behind a slow
+  earlier one.
+- **15-minute timeouts** per job — abuse-prevention + fast
+  feedback when CI hangs on a flaky test.
+
+Drive-by: first-pass formatting baseline so CI can be strict
+from day one without 100+ retroactive lint errors:
+
+- **Backend** — ruff applied to 129 files (whitespace, import
+  order, single-line trims). Zero functional changes; 881
+  tests still pass.
+- **Frontend** — prettier applied to 46 files. TypeScript
+  + ESLint clean.
+- **Ruff config tuned** — added per-rule ignores for
+  intentional-by-context patterns: `S110` (try/except/pass for
+  best-effort writes), `S314` (XML parse of own-source content),
+  `RUF002/3` (ambiguous Unicode in docstrings — false-positive
+  on legit non-Latin chars), `E402` (Django pattern with
+  conditional imports), `B904`/`F841` (deferred to follow-up
+  cleanup), etc. Each ignore documented in pyproject.toml so
+  the next reader knows why.
+
+Drive-by: fixed a `react-hooks/rules-of-hooks` violation in
+the proposal preview page where `useMemo` ran after a
+conditional return.
+
+Durable design decisions:
+
+- **CI gate on format-check, not auto-fix.** A PR with
+  unformatted code fails CI; the developer runs
+  `make format` locally + commits. Auto-fixing in CI would
+  hide the friction + drift the convention.
+- **No matrix testing.** One Python version (3.12), one
+  Node version (20). Matrices are noise until we have a
+  reason to support multiple — which we don't. Pin precisely.
+- **Sqlite-in-memory for the backend job.** The 5 RLS-only
+  tests skip; they're worth running, but the cost of a
+  per-PR Postgres service in CI vs. running Postgres-only
+  tests in a separate scheduled workflow is not worth it
+  yet.
+- **First-pass format baseline.** ~175 files reformatted in
+  one commit + the CI gate from there forward. Doing it
+  per-feature would have left CI red for weeks while the
+  long-tail files trickled through.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -7703,8 +7767,9 @@ Still open (ordered roughly by Phase 4–5 priority):
    PP-Structure tables + LayoutLMv3 KIE on top of the
    RapidOCR text (Slice 72). Closes the "merged columns"
    gap on poor-quality scans.
-6. **CI workflow** — `.github/workflows/ci.yml` wrapping
-   `make test` + frontend lint/build.
+- ~~**CI workflow**~~ — Slice 79. `.github/workflows/ci.yml`
+  wraps `ruff` + `pytest` + frontend `prettier` / `lint` /
+  `typecheck` / `build`.
 7. **i18n** — Bahasa Malaysia + Mandarin + Tamil per
    ROADMAP Phase 6. English-only today.
 

@@ -13,10 +13,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Search, Users } from "lucide-react";
 
-import {
-  api,
-  type PlatformTenant,
-} from "@/lib/api";
+import { api, type PlatformTenant } from "@/lib/api";
 import { AdminShell } from "@/components/admin/AdminShell";
 
 export default function TenantDirectoryPage() {
@@ -71,9 +68,7 @@ export default function TenantDirectoryPage() {
       <div className="flex flex-col gap-6">
         <header className="flex items-end justify-between">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight">
-              Tenants
-            </h1>
+            <h1 className="font-display text-2xl font-bold tracking-tight">Tenants</h1>
             <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
               Every Organization on the platform · cross-tenant
             </p>
@@ -101,7 +96,7 @@ export default function TenantDirectoryPage() {
           </div>
         )}
 
-        <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 max-w-md">
+        <div className="flex max-w-md items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2">
           <Search className="h-4 w-4 text-slate-400" aria-hidden />
           <input
             type="search"
@@ -131,30 +126,16 @@ function TenantTable({ tenants }: { tenants: PlatformTenant[] }) {
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Legal name
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              TIN
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              State
-            </th>
-            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-              Members
-            </th>
-            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-              Uploads
-            </th>
-            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-              Last 7d
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Legal name</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">TIN</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">State</th>
+            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Members</th>
+            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Uploads</th>
+            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Last 7d</th>
             <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
               Last activity
             </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Audit
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Audit</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -162,9 +143,7 @@ function TenantTable({ tenants }: { tenants: PlatformTenant[] }) {
             <tr key={t.id} className="hover:bg-slate-50">
               <td className="px-3 py-3">
                 <div className="font-medium text-ink">{t.legal_name}</div>
-                <div className="text-[10px] text-slate-400">
-                  {t.contact_email || "—"}
-                </div>
+                <div className="text-[10px] text-slate-400">{t.contact_email || "—"}</div>
               </td>
               <td className="px-3 py-3">
                 <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">
@@ -174,27 +153,19 @@ function TenantTable({ tenants }: { tenants: PlatformTenant[] }) {
               <td className="px-3 py-3">
                 <StateBadge state={t.subscription_state} />
               </td>
-              <td className="px-3 py-3 text-right text-slate-600">
-                {t.member_count}
-              </td>
-              <td className="px-3 py-3 text-right text-slate-600">
-                {t.ingestion_jobs_total}
-              </td>
+              <td className="px-3 py-3 text-right text-slate-600">{t.member_count}</td>
+              <td className="px-3 py-3 text-right text-slate-600">{t.ingestion_jobs_total}</td>
               <td className="px-3 py-3 text-right">
                 <span
                   className={
-                    t.ingestion_jobs_recent_7d > 0
-                      ? "font-medium text-success"
-                      : "text-slate-400"
+                    t.ingestion_jobs_recent_7d > 0 ? "font-medium text-success" : "text-slate-400"
                   }
                 >
                   {t.ingestion_jobs_recent_7d}
                 </span>
               </td>
               <td className="px-3 py-3 text-slate-500">
-                {t.last_activity_at
-                  ? formatRelative(t.last_activity_at)
-                  : "—"}
+                {t.last_activity_at ? formatRelative(t.last_activity_at) : "—"}
               </td>
               <td className="px-3 py-3">
                 <Link

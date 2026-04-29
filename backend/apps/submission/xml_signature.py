@@ -53,9 +53,7 @@ ALGO_RSA_SHA256 = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
 ENVELOPED_REFERENCE_URI = ""
 
 
-def sign_invoice_xml(
-    *, xml_bytes: bytes, certificate: LoadedCertificate
-) -> bytes:
+def sign_invoice_xml(*, xml_bytes: bytes, certificate: LoadedCertificate) -> bytes:
     """Apply an enveloped XML-DSig signature to a UBL invoice document.
 
     Returns the signed XML as UTF-8 bytes. The output contains
@@ -81,9 +79,7 @@ def sign_invoice_xml(
     signature_el = ET.Element(f"{{{NS_DS}}}Signature")
     signed_info = ET.SubElement(signature_el, f"{{{NS_DS}}}SignedInfo")
 
-    c14n_method = ET.SubElement(
-        signed_info, f"{{{NS_DS}}}CanonicalizationMethod"
-    )
+    c14n_method = ET.SubElement(signed_info, f"{{{NS_DS}}}CanonicalizationMethod")
     c14n_method.set("Algorithm", ALGO_C14N)
 
     sig_method = ET.SubElement(signed_info, f"{{{NS_DS}}}SignatureMethod")
@@ -106,9 +102,7 @@ def sign_invoice_xml(
 
     # Step 3 — canonicalise SignedInfo and sign with the private key.
     signed_info_xml = ET.tostring(signed_info, encoding="utf-8")
-    signed_info_canonical = ET.canonicalize(
-        signed_info_xml, with_comments=False
-    ).encode("utf-8")
+    signed_info_canonical = ET.canonicalize(signed_info_xml, with_comments=False).encode("utf-8")
 
     signature_bytes = certificate.private_key.sign(
         signed_info_canonical,
@@ -188,9 +182,7 @@ def verify_invoice_signature(*, signed_xml_bytes: bytes) -> bool:
     # Verify the document digest matches. The doc with the signature
     # element removed should produce the same digest claimed in the
     # Reference/DigestValue.
-    digest_value_el = signed_info.find(
-        f"{{{NS_DS}}}Reference/{{{NS_DS}}}DigestValue"
-    )
+    digest_value_el = signed_info.find(f"{{{NS_DS}}}Reference/{{{NS_DS}}}DigestValue")
     if digest_value_el is None or not digest_value_el.text:
         return False
     claimed_digest = base64.b64decode(digest_value_el.text)

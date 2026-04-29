@@ -25,12 +25,7 @@ import {
   Upload,
 } from "lucide-react";
 
-import {
-  api,
-  ApiError,
-  type ConnectorType,
-  type IntegrationConfigRow,
-} from "@/lib/api";
+import { api, ApiError, type ConnectorType, type IntegrationConfigRow } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -55,8 +50,7 @@ const CATALOG: CatalogEntry[] = [
   {
     type: "autocount",
     label: "AutoCount",
-    description:
-      "Pull debtors + items directly from AutoCount Accounting.",
+    description: "Pull debtors + items directly from AutoCount Accounting.",
     icon: Database,
     shipped: false,
   },
@@ -159,9 +153,7 @@ export default function ConnectorsPage() {
     <AppShell>
       <div className="flex flex-col gap-6">
         <header>
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            Connectors
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Connectors</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Pull customers + items from systems you already use
           </p>
@@ -176,10 +168,7 @@ export default function ConnectorsPage() {
           </div>
         )}
 
-        <ActiveConnections
-          configs={configs}
-          onDisconnect={onDisconnect}
-        />
+        <ActiveConnections configs={configs} onDisconnect={onDisconnect} />
 
         <Section title="Available connectors">
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -236,9 +225,7 @@ function ActiveConnections({
               <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
                 Last sync
               </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Status
-              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Status</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -253,9 +240,7 @@ function ActiveConnections({
                     </div>
                   </td>
                   <td className="px-3 py-3 text-slate-600">
-                    {config.last_sync_at
-                      ? new Date(config.last_sync_at).toLocaleString()
-                      : "—"}
+                    {config.last_sync_at ? new Date(config.last_sync_at).toLocaleString() : "—"}
                   </td>
                   <td className="px-3 py-3">
                     <SyncStatusPill status={config.last_sync_status} />
@@ -337,11 +322,7 @@ function ConnectorCard({
   );
 }
 
-function SyncStatusPill({
-  status,
-}: {
-  status: IntegrationConfigRow["last_sync_status"];
-}) {
+function SyncStatusPill({ status }: { status: IntegrationConfigRow["last_sync_status"] }) {
   const tone =
     status === "applied"
       ? "bg-success/10 text-success"
@@ -362,13 +343,7 @@ function SyncStatusPill({
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-base font-semibold">{title}</h2>

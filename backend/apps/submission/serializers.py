@@ -47,16 +47,10 @@ class ExceptionInboxItemSerializer(serializers.ModelSerializer):
     """
 
     invoice_id = serializers.UUIDField(source="invoice.id", read_only=True)
-    ingestion_job_id = serializers.UUIDField(
-        source="invoice.ingestion_job_id", read_only=True
-    )
-    invoice_number = serializers.CharField(
-        source="invoice.invoice_number", read_only=True
-    )
+    ingestion_job_id = serializers.UUIDField(source="invoice.ingestion_job_id", read_only=True)
+    invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
     invoice_status = serializers.CharField(source="invoice.status", read_only=True)
-    buyer_legal_name = serializers.CharField(
-        source="invoice.buyer_legal_name", read_only=True
-    )
+    buyer_legal_name = serializers.CharField(source="invoice.buyer_legal_name", read_only=True)
 
     class Meta:
         # Avoid the late-import; reach the model via the serializer field declarations.
@@ -189,15 +183,11 @@ class InvoiceSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_validation_issues(self, invoice: Invoice) -> list[dict]:
-        rows = issues_for_invoice(
-            organization_id=invoice.organization_id, invoice_id=invoice.id
-        )
+        rows = issues_for_invoice(organization_id=invoice.organization_id, invoice_id=invoice.id)
         return ValidationIssueSerializer(rows, many=True).data
 
     def get_validation_summary(self, invoice: Invoice) -> dict:
-        rows = issues_for_invoice(
-            organization_id=invoice.organization_id, invoice_id=invoice.id
-        )
+        rows = issues_for_invoice(organization_id=invoice.organization_id, invoice_id=invoice.id)
         summary = {"errors": 0, "warnings": 0, "infos": 0}
         for row in rows:
             if row.severity == "error":

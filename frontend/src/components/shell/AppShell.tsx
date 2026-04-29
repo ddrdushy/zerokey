@@ -61,9 +61,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Settings",
-    items: [
-      { label: "Organization", href: "/dashboard/settings", icon: Settings },
-    ],
+    items: [{ label: "Organization", href: "/dashboard/settings", icon: Settings }],
   },
 ];
 
@@ -91,12 +89,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex min-h-0 flex-1">
         <Sidebar />
         <div className="flex flex-1 flex-col">
-          <TopBar
-            me={me}
-            menuOpen={menuOpen}
-            setMenuOpen={setMenuOpen}
-            onLogout={onLogout}
-          />
+          <TopBar me={me} menuOpen={menuOpen} setMenuOpen={setMenuOpen} onLogout={onLogout} />
           {me && <CertExpiryBanner />}
           <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
             {error && (
@@ -193,9 +186,7 @@ function TopBar({
       .join("")
       .slice(0, 2) || "··";
 
-  const activeOrg = me?.memberships.find(
-    (m) => m.organization.id === me?.active_organization_id,
-  );
+  const activeOrg = me?.memberships.find((m) => m.organization.id === me?.active_organization_id);
 
   return (
     <header className="sticky top-0 z-40 border-b border-slate-100 bg-paper/85 backdrop-blur">
@@ -205,7 +196,7 @@ function TopBar({
           <input
             type="search"
             placeholder="Search invoices, customers, audit log…"
-            className="h-9 flex-1 max-w-md bg-transparent text-sm text-ink placeholder-slate-400 outline-none"
+            className="h-9 max-w-md flex-1 bg-transparent text-sm text-ink placeholder-slate-400 outline-none"
             aria-label="Search"
           />
         </div>

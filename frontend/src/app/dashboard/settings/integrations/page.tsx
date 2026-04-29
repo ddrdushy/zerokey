@@ -28,12 +28,7 @@ import {
   Upload,
 } from "lucide-react";
 
-import {
-  api,
-  ApiError,
-  type IntegrationCard,
-  type Me,
-} from "@/lib/api";
+import { api, ApiError, type IntegrationCard, type Me } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { SettingsTabs } from "@/components/settings/SettingsTabs";
@@ -58,16 +53,18 @@ export default function IntegrationsSettingsPage() {
   }
 
   useEffect(() => {
-    api.me().then(setMe).catch(() => {});
+    api
+      .me()
+      .then(setMe)
+      .catch(() => {});
     refresh();
   }, []);
 
   const myRole = useMemo(
     () =>
       me
-        ? me.memberships.find(
-            (m) => m.organization.id === me.active_organization_id,
-          )?.role ?? null
+        ? (me.memberships.find((m) => m.organization.id === me.active_organization_id)?.role ??
+          null)
         : null,
     [me],
   );
@@ -77,9 +74,7 @@ export default function IntegrationsSettingsPage() {
     <AppShell>
       <div className="flex flex-col gap-6">
         <header>
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            Settings
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Settings</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Organization, members, and platform integrations
           </p>
@@ -141,17 +136,10 @@ function IntegrationCardView({
           </div>
           <div>
             <h2 className="text-sm font-semibold text-ink">{card.label}</h2>
-            <p className="mt-1 max-w-xl text-2xs text-slate-500">
-              {card.description}
-            </p>
+            <p className="mt-1 max-w-xl text-2xs text-slate-500">{card.description}</p>
           </div>
         </div>
-        <ActiveEnvBadge
-          card={card}
-          canManage={canManage}
-          onChanged={onChanged}
-          onError={onError}
-        />
+        <ActiveEnvBadge card={card} canManage={canManage} onChanged={onChanged} onError={onError} />
       </header>
 
       <div className="grid gap-px bg-slate-100 sm:grid-cols-2">
@@ -215,20 +203,13 @@ function ActiveEnvBadge({
       <div
         className={cn(
           "rounded-md px-2 py-1 text-[10px] font-medium uppercase tracking-wider",
-          isProd
-            ? "bg-warning/15 text-warning"
-            : "bg-slate-100 text-slate-500",
+          isProd ? "bg-warning/15 text-warning" : "bg-slate-100 text-slate-500",
         )}
       >
         {isProd ? "Live · production" : "Sandbox / dev"}
       </div>
       {canManage && (
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={flip}
-          disabled={switching}
-        >
+        <Button size="sm" variant="ghost" onClick={flip} disabled={switching}>
           {switching ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : isProd ? (
@@ -256,8 +237,7 @@ function EnvironmentSubCard({
   onError: (m: string | null) => void;
 }) {
   const env = card[environment];
-  const lastTest =
-    environment === "sandbox" ? card.last_test_sandbox : card.last_test_production;
+  const lastTest = environment === "sandbox" ? card.last_test_sandbox : card.last_test_production;
   const isActive = card.active_environment === environment;
 
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -282,11 +262,7 @@ function EnvironmentSubCard({
     setSaving(true);
     onError(null);
     try {
-      await api.patchIntegrationCredentials(
-        card.integration_key,
-        environment,
-        draft,
-      );
+      await api.patchIntegrationCredentials(card.integration_key, environment, draft);
       onChanged();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Save failed.");
@@ -331,7 +307,7 @@ function EnvironmentSubCard({
           const isCred = field.kind === "credential";
           const isPresent = isCred && env.credential_present[field.key];
           const draftValue = draft[field.key];
-          const value = draftValue ?? (isCred ? "" : env.values[field.key] ?? "");
+          const value = draftValue ?? (isCred ? "" : (env.values[field.key] ?? ""));
 
           return (
             <label key={field.key} className="flex flex-col gap-1 text-2xs">
@@ -350,9 +326,7 @@ function EnvironmentSubCard({
                 value={value}
                 onChange={(e) => setField(field.key, e.target.value)}
                 placeholder={
-                  isCred && isPresent
-                    ? "•••••••• (leave empty to keep)"
-                    : field.placeholder
+                  isCred && isPresent ? "•••••••• (leave empty to keep)" : field.placeholder
                 }
                 className={cn(
                   "rounded-md border bg-white px-2 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink",
@@ -374,22 +348,12 @@ function EnvironmentSubCard({
               {saving ? "Saving…" : "Save changes"}
             </Button>
             {dirty && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setDraft({})}
-                disabled={saving}
-              >
+              <Button size="sm" variant="ghost" onClick={() => setDraft({})} disabled={saving}>
                 Discard
               </Button>
             )}
           </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={runTest}
-            disabled={testing}
-          >
+          <Button size="sm" variant="ghost" onClick={runTest} disabled={testing}>
             {testing ? (
               <>
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -438,9 +402,7 @@ function TestOutcomePanel({
     >
       <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <div>
-        <p className="font-medium">
-          {outcome.ok ? "Connection OK" : "Test failed"}
-        </p>
+        <p className="font-medium">{outcome.ok ? "Connection OK" : "Test failed"}</p>
         <p className="mt-0.5 text-[11px] text-slate-600">{outcome.detail}</p>
         {!isFresh && lastTestAt && (
           <p className="mt-0.5 text-[10px] text-slate-400">
@@ -464,9 +426,7 @@ function EmptyState() {
   return (
     <div className="grid place-items-center px-5 py-12 text-center">
       <PlugZap className="h-6 w-6 text-slate-300" aria-hidden />
-      <p className="mt-2 text-2xs text-slate-500">
-        No integrations yet.
-      </p>
+      <p className="mt-2 text-2xs text-slate-500">No integrations yet.</p>
     </div>
   );
 }
@@ -541,10 +501,7 @@ function CertificateCard({
     const bytes = new Uint8Array(buf);
     const chunk = 0x8000;
     for (let i = 0; i < bytes.length; i += chunk) {
-      binary += String.fromCharCode.apply(
-        null,
-        Array.from(bytes.subarray(i, i + chunk)),
-      );
+      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
     }
     setPfxBase64(window.btoa(binary));
   }
@@ -581,15 +538,12 @@ function CertificateCard({
             <FileKey2 className="h-4 w-4 text-ink" />
           </div>
           <div>
-            <h2 className="text-sm font-semibold text-ink">
-              LHDN signing certificate
-            </h2>
+            <h2 className="text-sm font-semibold text-ink">LHDN signing certificate</h2>
             <p className="mt-1 max-w-xl text-2xs text-slate-500">
-              Used to sign every invoice before submission to LHDN.
-              We auto-generate a dev certificate so you can test end-
-              to-end immediately. For LHDN production, upload a real
-              certificate from a recognised Malaysian CA (MSC
-              Trustgate, Pos Digicert, Telekom Applied Business).
+              Used to sign every invoice before submission to LHDN. We auto-generate a dev
+              certificate so you can test end- to-end immediately. For LHDN production, upload a
+              real certificate from a recognised Malaysian CA (MSC Trustgate, Pos Digicert, Telekom
+              Applied Business).
             </p>
           </div>
         </div>
@@ -615,47 +569,30 @@ function CertificateCard({
         {state && state.uploaded ? (
           <dl className="grid gap-2 sm:grid-cols-3">
             <div>
-              <dt className="text-[10px] uppercase tracking-wider text-slate-400">
-                Subject
-              </dt>
-              <dd className="mt-0.5 text-ink">
-                {state.subject_common_name || "—"}
-              </dd>
+              <dt className="text-[10px] uppercase tracking-wider text-slate-400">Subject</dt>
+              <dd className="mt-0.5 text-ink">{state.subject_common_name || "—"}</dd>
             </div>
             <div>
-              <dt className="text-[10px] uppercase tracking-wider text-slate-400">
-                Serial
-              </dt>
-              <dd className="mt-0.5 font-mono text-[11px] text-ink">
-                {state.serial_hex || "—"}
-              </dd>
+              <dt className="text-[10px] uppercase tracking-wider text-slate-400">Serial</dt>
+              <dd className="mt-0.5 font-mono text-[11px] text-ink">{state.serial_hex || "—"}</dd>
             </div>
             <div>
-              <dt className="text-[10px] uppercase tracking-wider text-slate-400">
-                Expires
-              </dt>
+              <dt className="text-[10px] uppercase tracking-wider text-slate-400">Expires</dt>
               <dd className="mt-0.5 text-ink">
-                {state.expires_at
-                  ? new Date(state.expires_at).toLocaleDateString()
-                  : "—"}
+                {state.expires_at ? new Date(state.expires_at).toLocaleDateString() : "—"}
               </dd>
             </div>
           </dl>
         ) : (
           <p className="text-slate-500">
-            No certificate yet. Submit your first invoice to LHDN
-            (sandbox) and a self-signed dev certificate will be
-            generated automatically.
+            No certificate yet. Submit your first invoice to LHDN (sandbox) and a self-signed dev
+            certificate will be generated automatically.
           </p>
         )}
 
         {canManage && !showForm && (
           <div className="mt-3">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setShowForm(true)}
-            >
+            <Button size="sm" variant="ghost" onClick={() => setShowForm(true)}>
               <Upload className="mr-1.5 h-3.5 w-3.5" />
               {isUploaded ? "Replace certificate" : "Upload my LHDN certificate"}
             </Button>
@@ -698,10 +635,9 @@ function CertificateCard({
             {uploadFormat === "pem" ? (
               <>
                 <p className="text-2xs text-slate-500">
-                  Paste the PEM-encoded certificate and the matching
-                  RSA private key. The private key is encrypted at
-                  rest; the platform only decrypts it in memory during
-                  a signing operation.
+                  Paste the PEM-encoded certificate and the matching RSA private key. The private
+                  key is encrypted at rest; the platform only decrypts it in memory during a signing
+                  operation.
                 </p>
                 <label className="flex flex-col gap-1 text-2xs font-medium">
                   Certificate (PEM)
@@ -727,25 +663,20 @@ function CertificateCard({
             ) : (
               <>
                 <p className="text-2xs text-slate-500">
-                  Some Malaysian CAs (e.g. Pos Digicert) deliver
-                  certificates as a single password-protected
-                  ``.pfx`` / ``.p12`` file. Upload the file and
-                  enter the password from your CA.
+                  Some Malaysian CAs (e.g. Pos Digicert) deliver certificates as a single
+                  password-protected ``.pfx`` / ``.p12`` file. Upload the file and enter the
+                  password from your CA.
                 </p>
                 <label className="flex flex-col gap-1 text-2xs font-medium">
                   PFX / P12 file
                   <input
                     type="file"
                     accept=".pfx,.p12,application/x-pkcs12"
-                    onChange={(e) =>
-                      onPfxFileChange(e.target.files?.[0] ?? null)
-                    }
+                    onChange={(e) => onPfxFileChange(e.target.files?.[0] ?? null)}
                     className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-2xs file:mr-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-0.5 file:text-2xs file:text-ink"
                   />
                   {pfxFileName && (
-                    <span className="text-[10px] text-slate-500">
-                      Selected: {pfxFileName}
-                    </span>
+                    <span className="text-[10px] text-slate-500">Selected: {pfxFileName}</span>
                   )}
                 </label>
                 <label className="flex flex-col gap-1 text-2xs font-medium">
@@ -767,9 +698,7 @@ function CertificateCard({
                 onClick={onUpload}
                 disabled={
                   uploading ||
-                  (uploadFormat === "pem"
-                    ? !certPem.trim() || !keyPem.trim()
-                    : !pfxBase64)
+                  (uploadFormat === "pem" ? !certPem.trim() || !keyPem.trim() : !pfxBase64)
                 }
               >
                 {uploading ? "Uploading…" : "Upload certificate"}
@@ -800,11 +729,7 @@ function CertificateCard({
 // PDF/image attachment becomes an IngestionJob. The address is
 // generated lazily on first call and stable afterwards. Owners can
 // rotate it from a future operations slice; today it's append-only.
-function InboxAddressCard({
-  onError,
-}: {
-  onError: (m: string | null) => void;
-}) {
+function InboxAddressCard({ onError }: { onError: (m: string | null) => void }) {
   const [address, setAddress] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -813,9 +738,7 @@ function InboxAddressCard({
       .getInboxAddress()
       .then((r) => setAddress(r.address))
       .catch((err) => {
-        onError(
-          err instanceof Error ? err.message : "Couldn't load inbox address.",
-        );
+        onError(err instanceof Error ? err.message : "Couldn't load inbox address.");
       });
     // onError is stable in the parent for this component's lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -840,14 +763,10 @@ function InboxAddressCard({
             <Mail className="h-4 w-4 text-ink" />
           </div>
           <div>
-            <h2 className="text-sm font-semibold text-ink">
-              Inbound email address
-            </h2>
+            <h2 className="text-sm font-semibold text-ink">Inbound email address</h2>
             <p className="mt-1 max-w-xl text-2xs text-slate-500">
-              Forward any invoice email to this address — each PDF
-              or image attachment becomes a job in your dashboard,
-              same as a web upload. Useful for vendors who only
-              email PDFs.
+              Forward any invoice email to this address — each PDF or image attachment becomes a job
+              in your dashboard, same as a web upload. Useful for vendors who only email PDFs.
             </p>
           </div>
         </div>
@@ -857,12 +776,7 @@ function InboxAddressCard({
           <code className="flex-1 truncate rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-2xs text-ink">
             {address ?? "Loading…"}
           </code>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={copyAddress}
-            disabled={!address}
-          >
+          <Button size="sm" variant="ghost" onClick={copyAddress} disabled={!address}>
             {copied ? (
               <>
                 <Check className="mr-1.5 h-3.5 w-3.5 text-success" />
@@ -877,16 +791,14 @@ function InboxAddressCard({
           </Button>
         </div>
         <ul className="mt-3 space-y-1 text-[11px] text-slate-500">
+          <li>• Limits: 10 attachments per email, 25 MB per attachment.</li>
           <li>
-            • Limits: 10 attachments per email, 25 MB per attachment.
+            • Accepted: PDF, JPEG, PNG, TIFF, WebP. Other types are skipped + the rest of the email
+            is still processed.
           </li>
           <li>
-            • Accepted: PDF, JPEG, PNG, TIFF, WebP. Other types are
-            skipped + the rest of the email is still processed.
-          </li>
-          <li>
-            • Forwards from outside your organization are still
-            accepted — the address itself is the auth.
+            • Forwards from outside your organization are still accepted — the address itself is the
+            auth.
           </li>
         </ul>
       </div>

@@ -20,9 +20,7 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def staff_user(seeded) -> User:
-    return User.objects.create_user(
-        email="staff@symprio.com", password="x", is_staff=True
-    )
+    return User.objects.create_user(email="staff@symprio.com", password="x", is_staff=True)
 
 
 @pytest.fixture
@@ -70,9 +68,7 @@ class TestAdminListEngines:
         response = client.get("/api/v1/admin/engines/")
         assert response.status_code == 403
 
-    def test_staff_lists_engines_with_redacted_credentials(
-        self, staff_user, some_engines
-    ) -> None:
+    def test_staff_lists_engines_with_redacted_credentials(self, staff_user, some_engines) -> None:
         client = Client()
         client.force_login(staff_user)
         response = client.get("/api/v1/admin/engines/")
@@ -119,9 +115,7 @@ class TestAdminUpdateEngine:
         assert event.payload["fields_changed"] == ["status"]
         assert event.payload["engine_name"] == engine.name
 
-    def test_update_credentials_set_new_key(
-        self, staff_user, some_engines
-    ) -> None:
+    def test_update_credentials_set_new_key(self, staff_user, some_engines) -> None:
         engine = some_engines[0]  # Anthropic, only api_key set today
         client = Client()
         client.force_login(staff_user)
@@ -147,9 +141,7 @@ class TestAdminUpdateEngine:
         # PII-clean: the rotated value never appears in the audit payload.
         assert "sk-rotated" not in json.dumps(event.payload)
 
-    def test_clear_credential_with_empty_string(
-        self, staff_user, some_engines
-    ) -> None:
+    def test_clear_credential_with_empty_string(self, staff_user, some_engines) -> None:
         engine = some_engines[1]  # Ollama, has 3 credentials
         client = Client()
         client.force_login(staff_user)
@@ -200,15 +192,11 @@ class TestAdminUpdateEngine:
         )
         assert response.status_code == 404
 
-    def test_no_op_does_not_create_audit_event(
-        self, staff_user, some_engines
-    ) -> None:
+    def test_no_op_does_not_create_audit_event(self, staff_user, some_engines) -> None:
         engine = some_engines[0]
         client = Client()
         client.force_login(staff_user)
-        before = AuditEvent.objects.filter(
-            action_type="admin.engine_updated"
-        ).count()
+        before = AuditEvent.objects.filter(action_type="admin.engine_updated").count()
         # Send the SAME api_key value already on the engine.
         response = client.patch(
             f"/api/v1/admin/engines/{engine.id}/",
@@ -216,9 +204,7 @@ class TestAdminUpdateEngine:
             content_type="application/json",
         )
         assert response.status_code == 200
-        after = AuditEvent.objects.filter(
-            action_type="admin.engine_updated"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="admin.engine_updated").count()
         assert before == after  # no-op produced no audit row
 
     def test_customer_cannot_update(self, some_engines, seeded) -> None:

@@ -17,21 +17,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  AlertCircle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Sparkles,
-  Zap,
-} from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Sparkles, Zap } from "lucide-react";
 
-import {
-  api,
-  ApiError,
-  type EngineCallRecord,
-  type EngineSummary,
-} from "@/lib/api";
+import { api, ApiError, type EngineCallRecord, type EngineSummary } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -48,10 +36,7 @@ export default function EngineActivityPage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      api.engineSummary(),
-      api.listEngineCalls({ limit: PAGE_SIZE }),
-    ])
+    Promise.all([api.engineSummary(), api.listEngineCalls({ limit: PAGE_SIZE })])
       .then(([s, c]) => {
         if (cancelled) return;
         setSummary(s);
@@ -63,9 +48,7 @@ export default function EngineActivityPage() {
           router.replace("/sign-in");
           return;
         }
-        setError(
-          err instanceof Error ? err.message : "Failed to load engine activity.",
-        );
+        setError(err instanceof Error ? err.message : "Failed to load engine activity.");
         setSummary([]);
         setCalls([]);
       });
@@ -99,9 +82,7 @@ export default function EngineActivityPage() {
     <AppShell>
       <div className="flex flex-col gap-6">
         <header>
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            Engine activity
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Engine activity</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             AI engines that have processed your invoices
           </p>
@@ -163,15 +144,11 @@ function SummarySection({ summary }: { summary: EngineSummary[] | null }) {
         <table className="w-full text-2xs">
           <thead className="bg-slate-50 text-slate-400">
             <tr>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Engine
-              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Engine</th>
               <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
                 Capability
               </th>
-              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-                Calls
-              </th>
+              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Calls</th>
               <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
                 Success rate
               </th>
@@ -188,13 +165,9 @@ function SummarySection({ summary }: { summary: EngineSummary[] | null }) {
               <tr key={row.engine_name} className="hover:bg-slate-50">
                 <td className="px-3 py-3">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium text-ink">
-                      {row.engine_name}
-                    </span>
+                    <span className="font-medium text-ink">{row.engine_name}</span>
                   </div>
-                  <div className="mt-0.5 text-2xs text-slate-400">
-                    {row.vendor}
-                  </div>
+                  <div className="mt-0.5 text-2xs text-slate-400">{row.vendor}</div>
                 </td>
                 <td className="px-3 py-3">
                   <CapabilityBadge capability={row.capability} />
@@ -203,10 +176,7 @@ function SummarySection({ summary }: { summary: EngineSummary[] | null }) {
                   {row.total_calls.toLocaleString()}
                 </td>
                 <td className="px-3 py-3 text-right">
-                  <SuccessRate
-                    rate={row.success_rate}
-                    total={row.total_calls}
-                  />
+                  <SuccessRate rate={row.success_rate} total={row.total_calls} />
                 </td>
                 <td className="px-3 py-3 text-right font-mono">
                   {formatLatency(row.avg_duration_ms)}
@@ -257,21 +227,11 @@ function CallsSection({
           <thead className="bg-slate-50 text-slate-400">
             <tr>
               <th className="w-10 px-3 py-2" />
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                When
-              </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Engine
-              </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Outcome
-              </th>
-              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-                Latency
-              </th>
-              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-                Cost
-              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">When</th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Engine</th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Outcome</th>
+              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Latency</th>
+              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Cost</th>
               <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
                 Confidence
               </th>
@@ -290,12 +250,7 @@ function CallsSection({
         </table>
       </div>
       <div className="flex justify-center">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onLoadMore}
-          disabled={loadingMore}
-        >
+        <Button variant="ghost" size="sm" onClick={onLoadMore} disabled={loadingMore}>
           {loadingMore ? "Loading…" : "Load more"}
         </Button>
       </div>
@@ -322,16 +277,10 @@ function CallRow({
             aria-label={isOpen ? "Collapse details" : "Expand details"}
             className="text-slate-400 hover:text-ink"
           >
-            {isOpen ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
+            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </button>
         </td>
-        <td className="px-3 py-3 text-slate-600">
-          {new Date(call.started_at).toLocaleString()}
-        </td>
+        <td className="px-3 py-3 text-slate-600">{new Date(call.started_at).toLocaleString()}</td>
         <td className="px-3 py-3">
           <span className="font-medium">{call.engine_name}</span>
           <span className="ml-1.5 text-2xs text-slate-400">{call.vendor}</span>
@@ -339,9 +288,7 @@ function CallRow({
         <td className="px-3 py-3">
           <OutcomeBadge outcome={call.outcome} errorClass={call.error_class} />
         </td>
-        <td className="px-3 py-3 text-right font-mono">
-          {formatLatency(call.duration_ms)}
-        </td>
+        <td className="px-3 py-3 text-right font-mono">{formatLatency(call.duration_ms)}</td>
         <td className="px-3 py-3 text-right font-mono text-slate-600">
           {formatCost(call.cost_micros)}
         </td>
@@ -405,19 +352,10 @@ function CapabilityBadge({ capability }: { capability: string }) {
 function SuccessRate({ rate, total }: { rate: number; total: number }) {
   if (total === 0) return <span className="text-slate-400">—</span>;
   const pct = Math.round(rate * 100);
-  const tone =
-    rate >= 0.95
-      ? "text-success"
-      : rate >= 0.8
-        ? "text-warning"
-        : "text-error";
+  const tone = rate >= 0.95 ? "text-success" : rate >= 0.8 ? "text-warning" : "text-error";
   return (
     <span className={cn("inline-flex items-center gap-1.5 font-mono", tone)}>
-      {pct === 100 ? (
-        <CheckCircle2 className="h-3 w-3" />
-      ) : (
-        <AlertCircle className="h-3 w-3" />
-      )}
+      {pct === 100 ? <CheckCircle2 className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
       {pct}%
     </span>
   );
@@ -437,7 +375,12 @@ function OutcomeBadge({
         ? "bg-warning/10 text-warning"
         : "bg-error/10 text-error";
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium", tone)}>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium",
+        tone,
+      )}
+    >
       {outcome === "success" ? (
         <CheckCircle2 className="h-3 w-3" />
       ) : outcome === "unavailable" ? (
@@ -456,9 +399,7 @@ function OutcomeBadge({
 function Detail({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">
-        {label}
-      </div>
+      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">{label}</div>
       <div className="mt-0.5">{children}</div>
     </div>
   );

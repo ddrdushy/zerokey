@@ -21,10 +21,7 @@ import { cn } from "@/lib/utils";
 
 type Tone = "neutral" | "synced" | "manual" | "resolved";
 
-const SOURCE_COPY: Record<
-  FieldProvenanceSource,
-  { label: string; tone: Tone }
-> = {
+const SOURCE_COPY: Record<FieldProvenanceSource, { label: string; tone: Tone }> = {
   extracted: { label: "Extracted from invoice", tone: "neutral" },
   manual: { label: "Entered manually", tone: "manual" },
   manually_resolved: { label: "Manually resolved", tone: "resolved" },
@@ -48,27 +45,18 @@ function deriveTimestamp(entry: FieldProvenanceEntry): string | null {
   // Prefer the most specific timestamp — `synced_at` for synced
   // sources, `entered_at` for manual, `extracted_at` for
   // extracted. The first one present wins.
-  return (
-    entry.synced_at ?? entry.entered_at ?? entry.extracted_at ?? null
-  );
+  return entry.synced_at ?? entry.entered_at ?? entry.extracted_at ?? null;
 }
 
-export function ProvenancePill({
-  entry,
-}: {
-  entry: FieldProvenanceEntry | undefined | null;
-}) {
+export function ProvenancePill({ entry }: { entry: FieldProvenanceEntry | undefined | null }) {
   if (!entry) return null;
-  const copy =
-    (SOURCE_COPY as Record<string, { label: string; tone: Tone }>)[
-      entry.source
-    ] ?? {
-      // Forward-compat: an unknown source key (server adds a new
-      // connector before the FE bundle ships) renders generically
-      // rather than crashing.
-      label: "Source recorded",
-      tone: "neutral" as const,
-    };
+  const copy = (SOURCE_COPY as Record<string, { label: string; tone: Tone }>)[entry.source] ?? {
+    // Forward-compat: an unknown source key (server adds a new
+    // connector before the FE bundle ships) renders generically
+    // rather than crashing.
+    label: "Source recorded",
+    tone: "neutral" as const,
+  };
   const ts = deriveTimestamp(entry);
   return (
     <div

@@ -44,10 +44,10 @@ class Invoice(TenantScopedModel):
     class InvoiceType(models.TextChoices):
         # Maps 1:1 to LHDN's 8 document type codes (see
         # ``apps.submission.lhdn_json.LHDN_TYPE_CODES``).
-        STANDARD = "standard", "Invoice"                            # 01
-        CREDIT_NOTE = "credit_note", "Credit Note"                  # 02
-        DEBIT_NOTE = "debit_note", "Debit Note"                     # 03
-        REFUND_NOTE = "refund_note", "Refund Note"                  # 04
+        STANDARD = "standard", "Invoice"  # 01
+        CREDIT_NOTE = "credit_note", "Credit Note"  # 02
+        DEBIT_NOTE = "debit_note", "Debit Note"  # 03
+        REFUND_NOTE = "refund_note", "Refund Note"  # 04
         SELF_BILLED_INVOICE = "self_billed_invoice", "Self-Billed Invoice"  # 11
         SELF_BILLED_CREDIT_NOTE = "self_billed_credit_note", "Self-Billed Credit Note"  # 12
         SELF_BILLED_DEBIT_NOTE = "self_billed_debit_note", "Self-Billed Debit Note"  # 13
@@ -162,9 +162,7 @@ class Invoice(TenantScopedModel):
     # UUID + internal-id be embedded in the BillingReference block;
     # otherwise the CN/DN won't link correctly in MyInvois reporting.
     original_invoice_uuid = models.CharField(max_length=64, blank=True)
-    original_invoice_internal_id = models.CharField(
-        max_length=128, blank=True
-    )
+    original_invoice_internal_id = models.CharField(max_length=128, blank=True)
     # Optional — describes WHY the CN/DN was issued (refund, return,
     # discount adjustment, etc.). Surfaced in LHDN's portal.
     adjustment_reason = models.TextField(blank=True)
@@ -276,14 +274,10 @@ class ExceptionInboxItem(TenantScopedModel):
         RESOLVED = "resolved", "Resolved"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    invoice = models.ForeignKey(
-        Invoice, on_delete=models.CASCADE, related_name="inbox_items"
-    )
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="inbox_items")
 
     reason = models.CharField(max_length=32, choices=Reason.choices, db_index=True)
-    priority = models.CharField(
-        max_length=8, choices=Priority.choices, default=Priority.NORMAL
-    )
+    priority = models.CharField(max_length=8, choices=Priority.choices, default=Priority.NORMAL)
     status = models.CharField(
         max_length=12,
         choices=Status.choices,

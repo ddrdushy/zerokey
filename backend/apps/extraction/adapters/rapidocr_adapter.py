@@ -86,9 +86,7 @@ def _get_reader() -> object:
         try:
             from rapidocr_onnxruntime import RapidOCR  # type: ignore[import-untyped]
         except ImportError as exc:
-            raise EngineUnavailable(
-                "rapidocr-onnxruntime is not installed"
-            ) from exc
+            raise EngineUnavailable("rapidocr-onnxruntime is not installed") from exc
         # Default RapidOCR config: PP-OCRv4 English models, CPU-only
         # ONNX Runtime, default thresholds. The defaults are well-tuned
         # for printed documents which is exactly our use case.
@@ -96,9 +94,7 @@ def _get_reader() -> object:
         return _reader_cache
 
 
-def _rasterize_pdf_pages(
-    body: bytes, max_pages: int = _MAX_PDF_PAGES
-) -> list[bytes]:
+def _rasterize_pdf_pages(body: bytes, max_pages: int = _MAX_PDF_PAGES) -> list[bytes]:
     """Render up to ``max_pages`` PDF pages to PNG bytes via pypdfium2.
 
     Identical implementation to the EasyOCR adapter; lifted here
@@ -146,13 +142,11 @@ def _ocr_image(image_bytes: bytes) -> tuple[str, float]:
         # path is the most direct since we already have raw bytes
         # from S3 / multipart.
         result, _elapse = reader(image_bytes)  # type: ignore[operator]
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # RapidOCR can raise on bad images / unexpected formats.
         # Surface as EngineUnavailable so the router can escalate
         # to EasyOCR rather than failing the whole pipeline.
-        raise EngineUnavailable(
-            f"rapidocr could not process image: {type(exc).__name__}"
-        ) from exc
+        raise EngineUnavailable(f"rapidocr could not process image: {type(exc).__name__}") from exc
 
     if not result:
         return "", 0.0
@@ -173,9 +167,7 @@ def _ocr_image(image_bytes: bytes) -> tuple[str, float]:
             continue
 
     joined = "\n".join(text_parts).strip()
-    mean_confidence = (
-        sum(confidences) / len(confidences) if confidences else 0.0
-    )
+    mean_confidence = sum(confidences) / len(confidences) if confidences else 0.0
     return joined, mean_confidence
 
 
@@ -184,9 +176,7 @@ class RapidOCRAdapter(TextExtractEngine):
 
     name = ADAPTER_NAME
 
-    def extract_text(
-        self, *, body: bytes, mime_type: str
-    ) -> TextExtractResult:
+    def extract_text(self, *, body: bytes, mime_type: str) -> TextExtractResult:
         if mime_type in _IMAGE_MIMES:
             text, confidence = _ocr_image(body)
             return TextExtractResult(
@@ -206,14 +196,12 @@ class RapidOCRAdapter(TextExtractEngine):
                 page_images = _rasterize_pdf_pages(body)
             except EngineUnavailable:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "rapidocr.pypdfium2_failed",
                     extra={"error": str(exc)},
                 )
-                raise EngineUnavailable(
-                    f"rapidocr could not rasterise PDF pages: {exc}"
-                ) from exc
+                raise EngineUnavailable(f"rapidocr could not rasterise PDF pages: {exc}") from exc
 
             page_texts: list[str] = []
             page_confidences: list[float] = []
@@ -224,11 +212,7 @@ class RapidOCRAdapter(TextExtractEngine):
                     page_confidences.append(page_confidence)
 
             joined = "\n\n".join(t for t in page_texts if t).strip()
-            confidence = (
-                sum(page_confidences) / len(page_confidences)
-                if page_confidences
-                else 0.0
-            )
+            confidence = sum(page_confidences) / len(page_confidences) if page_confidences else 0.0
             return TextExtractResult(
                 text=joined,
                 confidence=confidence,
@@ -244,6 +228,5 @@ class RapidOCRAdapter(TextExtractEngine):
             )
 
         raise EngineUnavailable(
-            f"{ADAPTER_NAME} only handles "
-            f"{(*_IMAGE_MIMES, _PDF_MIME)}, got {mime_type}"
+            f"{ADAPTER_NAME} only handles {(*_IMAGE_MIMES, _PDF_MIME)}, got {mime_type}"
         )

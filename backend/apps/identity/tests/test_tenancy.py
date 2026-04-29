@@ -93,9 +93,5 @@ class TestTenantIsolation:
         # Same for the access-check helper.
         assert can_user_act_for_organization(u_a, a.id) is True
         # And it correctly says NO for an org the user doesn't belong to.
-        b_org_id = next(
-            org.id
-            for org in Organization.objects.all()
-            if org.id != a.id
-        )
+        b_org_id = next(org.id for org in Organization.objects.all() if org.id != a.id)
         assert can_user_act_for_organization(u_a, b_org_id) is False

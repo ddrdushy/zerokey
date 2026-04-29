@@ -20,9 +20,7 @@ def _check_org(request: Request):
             {"detail": "No active organization."},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    if not identity_services.can_user_act_for_organization(
-        request.user, organization_id
-    ):
+    if not identity_services.can_user_act_for_organization(request.user, organization_id):
         return None, Response(
             {"detail": "You are not a member of that organization."},
             status=status.HTTP_403_FORBIDDEN,

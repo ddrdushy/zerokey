@@ -44,15 +44,9 @@ def _resolve_smtp_config() -> dict[str, Any]:
         "port": system_setting(namespace="email", key="smtp_port", default=""),
         "user": system_setting(namespace="email", key="smtp_user", default=""),
         "password": system_setting(namespace="email", key="smtp_password", default=""),
-        "from_address": system_setting(
-            namespace="email", key="from_address", default=""
-        ),
-        "from_name": system_setting(
-            namespace="email", key="from_name", default="ZeroKey"
-        ),
-        "use_tls": system_setting(
-            namespace="email", key="use_tls", default="true"
-        ),
+        "from_address": system_setting(namespace="email", key="from_address", default=""),
+        "from_name": system_setting(namespace="email", key="from_name", default="ZeroKey"),
+        "use_tls": system_setting(namespace="email", key="use_tls", default="true"),
     }
 
 
@@ -103,9 +97,7 @@ def send_email(
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = (
-        f"{cfg['from_name']} <{cfg['from_address']}>"
-        if cfg["from_name"]
-        else cfg["from_address"]
+        f"{cfg['from_name']} <{cfg['from_address']}>" if cfg["from_name"] else cfg["from_address"]
     )
     msg["To"] = to
     msg.set_content(body)

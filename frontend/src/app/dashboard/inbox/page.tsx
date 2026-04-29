@@ -17,12 +17,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  AlertCircle,
-  CheckCircle2,
-  Inbox as InboxIcon,
-  Sparkles,
-} from "lucide-react";
+import { AlertCircle, CheckCircle2, Inbox as InboxIcon, Sparkles } from "lucide-react";
 
 import { api, ApiError, type InboxItem } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
@@ -102,9 +97,7 @@ export default function InboxPage() {
       <div className="flex flex-col gap-6">
         <header className="flex items-end justify-between">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight">
-              Inbox
-            </h1>
+            <h1 className="font-display text-2xl font-bold tracking-tight">Inbox</h1>
             <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
               Invoices that need a human look
             </p>
@@ -128,11 +121,7 @@ export default function InboxPage() {
         ) : items.length === 0 ? (
           <EmptyState filtered={!!reason} />
         ) : (
-          <InboxTable
-            items={items}
-            resolving={resolving}
-            onResolve={onResolve}
-          />
+          <InboxTable items={items} resolving={resolving} onResolve={onResolve} />
         )}
       </div>
     </AppShell>
@@ -140,8 +129,7 @@ export default function InboxPage() {
 }
 
 function CountBadge({ total }: { total: number }) {
-  const tone =
-    total === 0 ? "bg-success/10 text-success" : "bg-warning/10 text-warning";
+  const tone = total === 0 ? "bg-success/10 text-success" : "bg-warning/10 text-warning";
   const Icon = total === 0 ? CheckCircle2 : AlertCircle;
   return (
     <div className={cn("rounded-md px-3 py-1.5 text-2xs", tone)}>
@@ -154,13 +142,7 @@ function CountBadge({ total }: { total: number }) {
   );
 }
 
-function FilterBar({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-}) {
+function FilterBar({ value, onChange }: { value: string; onChange: (next: string) => void }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <label className="text-2xs font-medium uppercase tracking-wider text-slate-400">
@@ -204,24 +186,12 @@ function InboxTable({
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Reason
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Invoice
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Buyer
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Detail
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Created
-            </th>
-            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-              Action
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Reason</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Invoice</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Buyer</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Detail</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Created</th>
+            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -235,18 +205,14 @@ function InboxTable({
                   href={`/dashboard/jobs/${item.ingestion_job_id}`}
                   className="font-medium text-ink hover:underline"
                 >
-                  {item.invoice_number || (
-                    <span className="text-slate-400">no number</span>
-                  )}
+                  {item.invoice_number || <span className="text-slate-400">no number</span>}
                 </Link>
                 <div className="mt-0.5 text-slate-400">
                   {item.invoice_status.replace(/_/g, " ")}
                 </div>
               </td>
               <td className="px-3 py-3 text-slate-600">
-                {item.buyer_legal_name || (
-                  <span className="text-slate-400">—</span>
-                )}
+                {item.buyer_legal_name || <span className="text-slate-400">—</span>}
               </td>
               <td className="px-3 py-3 text-slate-600">
                 <DetailSummary detail={item.detail} reason={item.reason} />
@@ -305,8 +271,7 @@ function DetailSummary({
   // — keeps new reasons visible even before the UI knows about them.
   if (reason === "validation_failure") {
     const errors = typeof detail.errors === "number" ? detail.errors : null;
-    const warnings =
-      typeof detail.warnings === "number" ? detail.warnings : null;
+    const warnings = typeof detail.warnings === "number" ? detail.warnings : null;
     if (errors == null && warnings == null) return <Muted>—</Muted>;
     return (
       <span>
@@ -327,16 +292,11 @@ function DetailSummary({
     );
   }
   if (reason === "structuring_skipped") {
-    const text =
-      typeof detail.reason === "string" ? detail.reason : "no detail";
-    return (
-      <span className="text-slate-600 line-clamp-2 max-w-xs">{text}</span>
-    );
+    const text = typeof detail.reason === "string" ? detail.reason : "no detail";
+    return <span className="line-clamp-2 max-w-xs text-slate-600">{text}</span>;
   }
   if (Object.keys(detail).length === 0) return <Muted>—</Muted>;
-  return (
-    <code className="text-[11px] text-slate-500">{JSON.stringify(detail)}</code>
-  );
+  return <code className="text-[11px] text-slate-500">{JSON.stringify(detail)}</code>;
 }
 
 function Muted({ children }: { children: React.ReactNode }) {

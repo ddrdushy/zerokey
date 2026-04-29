@@ -45,9 +45,7 @@ def org_with_inbox(seeded) -> tuple[Organization, str]:
 @pytest.fixture
 def authed_user(org_with_inbox) -> tuple[Organization, User]:
     org, _ = org_with_inbox
-    user = User.objects.create_user(
-        email="dushy@acme.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="dushy@acme.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -118,9 +116,7 @@ class TestInboxToken:
 # =============================================================================
 
 
-def _email(
-    *, to: str, attachments: list[InboundAttachment]
-) -> InboundEmail:
+def _email(*, to: str, attachments: list[InboundAttachment]) -> InboundEmail:
     return InboundEmail(
         to=to,
         sender="billing@vendor.example",
@@ -132,19 +128,20 @@ def _email(
 
 @pytest.mark.django_db
 class TestProcessInbound:
-    def test_creates_job_per_pdf_attachment(
-        self, org_with_inbox
-    ) -> None:
+    def test_creates_job_per_pdf_attachment(self, org_with_inbox) -> None:
         org, token = org_with_inbox
         # Mock S3 + extraction so the test is hermetic.
-        with patch(
-            "apps.integrations.storage.put_object",
-            return_value=type(
-                "Stored",
-                (),
-                {"size": 1024, "content_type": "application/pdf"},
-            )(),
-        ), patch("apps.extraction.tasks.extract_invoice.delay"):
+        with (
+            patch(
+                "apps.integrations.storage.put_object",
+                return_value=type(
+                    "Stored",
+                    (),
+                    {"size": 1024, "content_type": "application/pdf"},
+                )(),
+            ),
+            patch("apps.extraction.tasks.extract_invoice.delay"),
+        ):
             result = email_forward.process_inbound_email(
                 _email(
                     to=f"invoices+{token}@inbox.zerokey.symprio.com",
@@ -162,10 +159,7 @@ class TestProcessInbound:
         job_id = result["jobs_created"][0]
         job = IngestionJob.objects.get(id=job_id)
         assert job.organization_id == org.id
-        assert (
-            job.source_channel
-            == IngestionJob.SourceChannel.EMAIL_FORWARD
-        )
+        assert job.source_channel == IngestionJob.SourceChannel.EMAIL_FORWARD
         assert job.source_identifier == "<msg-1@vendor.example>"
 
     def test_unsupported_mime_skipped(self, org_with_inbox) -> None:
@@ -188,12 +182,13 @@ class TestProcessInbound:
     def test_octet_stream_pdf_promoted(self, org_with_inbox) -> None:
         """Some scanners send PDFs as octet-stream — sniff magic bytes."""
         _, token = org_with_inbox
-        with patch(
-            "apps.integrations.storage.put_object",
-            return_value=type(
-                "Stored", (), {"size": 5, "content_type": "application/pdf"}
-            )(),
-        ), patch("apps.extraction.tasks.extract_invoice.delay"):
+        with (
+            patch(
+                "apps.integrations.storage.put_object",
+                return_value=type("Stored", (), {"size": 5, "content_type": "application/pdf"})(),
+            ),
+            patch("apps.extraction.tasks.extract_invoice.delay"),
+        ):
             result = email_forward.process_inbound_email(
                 _email(
                     to=f"invoices+{token}@inbox.zerokey.symprio.com",
@@ -219,9 +214,7 @@ class TestProcessInbound:
             )
         )
         assert result["jobs_created"] == 0
-        ev = AuditEvent.objects.filter(
-            action_type="ingestion.email_forward.empty"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="ingestion.email_forward.empty").first()
         assert ev is not None
 
     def test_too_many_attachments_rejected(self, org_with_inbox) -> None:
@@ -262,10 +255,13 @@ class TestProcessInbound:
         from apps.audit.models import AuditEvent
 
         _, token = org_with_inbox
-        with patch(
-            "apps.integrations.storage.put_object",
-            return_value=type("S", (), {"size": 1, "content_type": "application/pdf"})(),
-        ), patch("apps.extraction.tasks.extract_invoice.delay"):
+        with (
+            patch(
+                "apps.integrations.storage.put_object",
+                return_value=type("S", (), {"size": 1, "content_type": "application/pdf"})(),
+            ),
+            patch("apps.extraction.tasks.extract_invoice.delay"),
+        ):
             email_forward.process_inbound_email(
                 _email(
                     to=f"invoices+{token}@inbox.zerokey.symprio.com",
@@ -278,9 +274,7 @@ class TestProcessInbound:
                     ],
                 )
             )
-        ev = AuditEvent.objects.filter(
-            action_type="ingestion.email_forward.processed"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="ingestion.email_forward.processed").first()
         # billing@vendor.example → b******@vendor.example (masked)
         assert "billing" not in ev.payload["sender"]
         assert "vendor.example" in ev.payload["sender"]
@@ -363,14 +357,17 @@ class TestEmailForwardWebhook:
                 }
             ],
         }
-        with patch(
-            "apps.integrations.storage.put_object",
-            return_value=type(
-                "S",
-                (),
-                {"size": 8, "content_type": "application/pdf"},
-            )(),
-        ), patch("apps.extraction.tasks.extract_invoice.delay"):
+        with (
+            patch(
+                "apps.integrations.storage.put_object",
+                return_value=type(
+                    "S",
+                    (),
+                    {"size": 8, "content_type": "application/pdf"},
+                )(),
+            ),
+            patch("apps.extraction.tasks.extract_invoice.delay"),
+        ):
             response = Client().post(
                 "/api/v1/ingestion/inbox/email-forward/",
                 data=json.dumps(body),

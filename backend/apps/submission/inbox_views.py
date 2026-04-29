@@ -1,7 +1,7 @@
 """Exception Inbox views.
 
-  GET  /api/v1/inbox/            — list open items, scoped to active org
-  POST /api/v1/inbox/<id>/resolve/ — manually mark an item resolved
+GET  /api/v1/inbox/            — list open items, scoped to active org
+POST /api/v1/inbox/<id>/resolve/ — manually mark an item resolved
 """
 
 from __future__ import annotations
@@ -42,9 +42,7 @@ def list_inbox(request: Request) -> Response:
     rows = inbox_services.list_open_for_organization(
         organization_id=organization_id, reason=reason, limit=limit
     )
-    total = inbox_services.count_open_for_organization(
-        organization_id=organization_id
-    )
+    total = inbox_services.count_open_for_organization(organization_id=organization_id)
     return Response(
         {
             "results": ExceptionInboxItemSerializer(rows, many=True).data,

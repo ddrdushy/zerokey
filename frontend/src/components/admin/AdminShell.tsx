@@ -14,15 +14,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import {
-  ChevronDown,
-  Cog,
-  LogOut,
-  ScrollText,
-  Settings,
-  ShieldCheck,
-  Users,
-} from "lucide-react";
+import { ChevronDown, Cog, LogOut, ScrollText, Settings, ShieldCheck, Users } from "lucide-react";
 
 import { api, ApiError, type AdminMe } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -127,9 +119,7 @@ function AdminSidebar() {
     <aside className="sticky top-0 hidden h-screen w-60 flex-shrink-0 flex-col border-r border-slate-100 bg-ink text-paper md:flex">
       <div className="flex h-14 items-center justify-between border-b border-paper/10 px-4">
         <div className="flex items-baseline gap-2">
-          <span className="font-display text-lg font-bold tracking-tight">
-            ZeroKey
-          </span>
+          <span className="font-display text-lg font-bold tracking-tight">ZeroKey</span>
           <span className="rounded-sm bg-signal/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-signal">
             Admin
           </span>
@@ -138,9 +128,7 @@ function AdminSidebar() {
       <nav className="flex-1 overflow-y-auto px-2 py-4">
         {NAV.map((item) => {
           const active =
-            item.href === "/admin"
-              ? pathname === "/admin"
-              : pathname?.startsWith(item.href);
+            item.href === "/admin" ? pathname === "/admin" : pathname?.startsWith(item.href);
           const Icon = item.icon;
           return (
             <Link

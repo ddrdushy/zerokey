@@ -62,9 +62,7 @@ def _make_invoice(
 @pytest.mark.django_db
 class TestRematchPendingInvoices:
     def test_no_pending_invoices_zero_counts(self, org) -> None:
-        result = rematch_pending_invoices(
-            organization_id=org.id, triggered_by="test"
-        )
+        result = rematch_pending_invoices(organization_id=org.id, triggered_by="test")
         assert result.rematched == 0
         assert result.lifted == 0
 
@@ -78,9 +76,7 @@ class TestRematchPendingInvoices:
             tin="C9999999999",
             address="Some address",
         )
-        result = rematch_pending_invoices(
-            organization_id=org.id, triggered_by="test"
-        )
+        result = rematch_pending_invoices(organization_id=org.id, triggered_by="test")
         assert result.rematched == 1
         assert result.lifted == 0
 
@@ -128,9 +124,7 @@ class TestRematchPendingInvoices:
             organization_id=org.id,
             triggered_by="connectors.sync_apply",
         )
-        ev = AuditEvent.objects.filter(
-            action_type="invoice.master_match_lifted_by_sync"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="invoice.master_match_lifted_by_sync").first()
         assert ev is not None
         assert ev.payload["triggered_by"] == "connectors.sync_apply"
         # _autofill_buyer reports invoice attribute names
@@ -151,12 +145,8 @@ class TestRematchPendingInvoices:
             tin="C9999999999",
             address="Filled",
         )
-        first = rematch_pending_invoices(
-            organization_id=org.id, triggered_by="test"
-        )
-        second = rematch_pending_invoices(
-            organization_id=org.id, triggered_by="test"
-        )
+        first = rematch_pending_invoices(organization_id=org.id, triggered_by="test")
+        second = rematch_pending_invoices(organization_id=org.id, triggered_by="test")
         assert first.lifted == 1
         # Second run: invoice already has the address, no field
         # left to fill. Re-match still ran (rematched=1) but no
@@ -181,9 +171,7 @@ class TestRematchPendingInvoices:
             tin="C9999999999",
             address="Master fill",
         )
-        result = rematch_pending_invoices(
-            organization_id=org.id, triggered_by="test"
-        )
+        result = rematch_pending_invoices(organization_id=org.id, triggered_by="test")
         assert result.rematched == 0
         assert result.lifted == 0
 
@@ -203,7 +191,5 @@ class TestRematchPendingInvoices:
         )
         # Re-match for org (not other_org). The other_org's invoice
         # must NOT be touched.
-        result = rematch_pending_invoices(
-            organization_id=org.id, triggered_by="test"
-        )
+        result = rematch_pending_invoices(organization_id=org.id, triggered_by="test")
         assert result.rematched == 0

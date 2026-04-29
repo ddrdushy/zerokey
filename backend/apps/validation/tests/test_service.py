@@ -86,9 +86,7 @@ def _invoice_with_errors(org: Organization, *, ingestion_job_id: str) -> Invoice
 @pytest.mark.django_db
 class TestValidateInvoice:
     def test_persists_issues_with_correct_severities(self, org) -> None:
-        invoice = _invoice_with_errors(
-            org, ingestion_job_id="11111111-1111-4111-8111-111111111111"
-        )
+        invoice = _invoice_with_errors(org, ingestion_job_id="11111111-1111-4111-8111-111111111111")
 
         result = validate_invoice(invoice.id)
 
@@ -96,18 +94,14 @@ class TestValidateInvoice:
         assert result.has_blocking_errors
 
         codes = set(
-            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list(
-                "code", flat=True
-            )
+            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list("code", flat=True)
         )
         assert "supplier.tin.format" in codes
         assert "required.buyer_legal_name" in codes
         assert "totals.grand_total.mismatch" in codes
 
     def test_rerun_replaces_prior_issue_set(self, org) -> None:
-        invoice = _invoice_with_errors(
-            org, ingestion_job_id="22222222-2222-4222-8222-222222222222"
-        )
+        invoice = _invoice_with_errors(org, ingestion_job_id="22222222-2222-4222-8222-222222222222")
 
         validate_invoice(invoice.id)
         first_count = ValidationIssue.objects.filter(invoice_id=invoice.id).count()
@@ -119,9 +113,7 @@ class TestValidateInvoice:
         validate_invoice(invoice.id)
 
         codes = set(
-            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list(
-                "code", flat=True
-            )
+            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list("code", flat=True)
         )
         assert "supplier.tin.format" not in codes  # fixed
         assert "totals.grand_total.mismatch" in codes  # still wrong
@@ -130,9 +122,7 @@ class TestValidateInvoice:
         assert ValidationIssue.objects.filter(invoice_id=invoice.id).count() == len(codes)
 
     def test_audit_event_carries_counts_and_codes_but_no_message_text(self, org) -> None:
-        invoice = _invoice_with_errors(
-            org, ingestion_job_id="33333333-3333-4333-8333-333333333333"
-        )
+        invoice = _invoice_with_errors(org, ingestion_job_id="33333333-3333-4333-8333-333333333333")
         validate_invoice(invoice.id)
 
         event = AuditEvent.objects.filter(action_type="invoice.validated").last()
@@ -181,9 +171,7 @@ class TestValidateInvoice:
         assert not result.has_blocking_errors
 
     def test_issues_for_invoice_filters_by_organization(self, org) -> None:
-        a = _invoice_with_errors(
-            org, ingestion_job_id="55555555-5555-4555-8555-555555555555"
-        )
+        a = _invoice_with_errors(org, ingestion_job_id="55555555-5555-4555-8555-555555555555")
         validate_invoice(a.id)
 
         # Different org with the same broken invoice — issues must NOT cross.
@@ -192,9 +180,7 @@ class TestValidateInvoice:
             tin="C99999999999",
             contact_email="ops@other.example",
         )
-        b = _invoice_with_errors(
-            other_org, ingestion_job_id="66666666-6666-4666-8666-666666666666"
-        )
+        b = _invoice_with_errors(other_org, ingestion_job_id="66666666-6666-4666-8666-666666666666")
         validate_invoice(b.id)
 
         a_issues = issues_for_invoice(organization_id=org.id, invoice_id=a.id)

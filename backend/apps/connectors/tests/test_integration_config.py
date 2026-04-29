@@ -90,9 +90,5 @@ class TestIntegrationConfigShape:
         ]
         # Create one of each and read back.
         for t in types:
-            IntegrationConfig.objects.create(
-                organization=org, connector_type=t
-            )
-        assert IntegrationConfig.objects.filter(
-            organization=org
-        ).count() == len(types)
+            IntegrationConfig.objects.create(organization=org, connector_type=t)
+        assert IntegrationConfig.objects.filter(organization=org).count() == len(types)

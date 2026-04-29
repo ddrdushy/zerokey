@@ -27,12 +27,12 @@ from __future__ import annotations
 # the rule, and this is a documentation contract, not a model relation.
 _LINE_ITEM_FIELDS = [
     ("description", "free-text description of the item"),
-    ("quantity", "decimal as string, e.g. \"2.000\""),
+    ("quantity", 'decimal as string, e.g. "2.000"'),
     ("unit_of_measurement", "e.g. EA, KG, HOUR; empty if unspecified"),
     ("unit_price_excl_tax", "decimal as string, before tax"),
     ("line_subtotal_excl_tax", "quantity * unit_price_excl_tax"),
     ("tax_type_code", "LHDN tax type code, e.g. 01 for SST; empty if not stated"),
-    ("tax_rate", "percentage as string, e.g. \"6\" for 6%"),
+    ("tax_rate", 'percentage as string, e.g. "6" for 6%'),
     ("tax_amount", "decimal as string"),
     ("line_total_incl_tax", "subtotal + tax_amount"),
     ("classification_code", "LHDN classification code; empty if absent"),
@@ -80,11 +80,9 @@ def build_field_structure_prompt(*, text: str, target_schema: list[str]) -> str:
         )
 
     if has_line_items:
-        line_listing = "\n".join(
-            f"    - {name}: {desc}" for name, desc in _LINE_ITEM_FIELDS
-        )
+        line_listing = "\n".join(f"    - {name}: {desc}" for name, desc in _LINE_ITEM_FIELDS)
         parts.append(
-            f"\"{LINE_ITEMS_KEY}\" — a JSON ARRAY of line item objects. Each "
+            f'"{LINE_ITEMS_KEY}" — a JSON ARRAY of line item objects. Each '
             "line item is one billable row from the invoice. If the document "
             "lists no line items, return an empty array. Each object has the "
             f"following keys (use empty string for absent fields):\n{line_listing}"

@@ -103,9 +103,7 @@ class WebhookDelivery(TenantScopedModel):
     payload = models.JSONField(default=dict, blank=True)
 
     attempt = models.IntegerField(default=1)
-    outcome = models.CharField(
-        max_length=16, choices=Outcome.choices, default=Outcome.PENDING
-    )
+    outcome = models.CharField(max_length=16, choices=Outcome.choices, default=Outcome.PENDING)
 
     response_status = models.IntegerField(null=True, blank=True)
     response_body_excerpt = models.CharField(max_length=512, blank=True)
@@ -125,10 +123,7 @@ class WebhookDelivery(TenantScopedModel):
         ]
 
     def __str__(self) -> str:
-        return (
-            f"{self.event_type} #{self.attempt} → {self.endpoint_id} "
-            f"({self.outcome})"
-        )
+        return f"{self.event_type} #{self.attempt} → {self.endpoint_id} ({self.outcome})"
 
 
 def generate_secret() -> tuple[str, str, str]:

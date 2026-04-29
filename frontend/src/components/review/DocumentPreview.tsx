@@ -62,7 +62,7 @@ export function DocumentPreview({ filename, mimeType, downloadUrl }: Props) {
           <img
             src={downloadUrl}
             alt={`Source document: ${filename}`}
-            className="h-full w-full object-contain bg-white"
+            className="h-full w-full bg-white object-contain"
           />
         ) : (
           <Empty message={`Preview not available for ${mimeType}. Use Open to download.`} />

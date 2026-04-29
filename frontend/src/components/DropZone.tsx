@@ -15,11 +15,7 @@ const ACCEPTED = [
   "application/zip",
 ].join(",");
 
-export function DropZone({
-  onUploaded,
-}: {
-  onUploaded: (job: IngestionJob) => void;
-}) {
+export function DropZone({ onUploaded }: { onUploaded: (job: IngestionJob) => void }) {
   const [active, setActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

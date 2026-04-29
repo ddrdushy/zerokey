@@ -85,9 +85,7 @@ class TestListEventsService:
             organization_id=str(org.id),
         )
 
-        rows = list_events_for_organization(
-            organization_id=org.id, action_type="invoice.created"
-        )
+        rows = list_events_for_organization(organization_id=org.id, action_type="invoice.created")
         assert [r.action_type for r in rows] == ["invoice.created"]
 
     def test_before_sequence_paginates(self, org_user) -> None:
@@ -199,9 +197,7 @@ class TestListEventsEndpoint:
             actor_type=AuditEvent.ActorType.SERVICE,
             organization_id=str(org.id),
         )
-        response = client.get(
-            "/api/v1/audit/events/?action_type=invoice.created"
-        )
+        response = client.get("/api/v1/audit/events/?action_type=invoice.created")
         assert response.status_code == 200
         results = response.json()["results"]
         assert all(r["action_type"] == "invoice.created" for r in results)

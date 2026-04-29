@@ -33,15 +33,11 @@ def org_user_key(seeded) -> tuple[Organization, User, str]:
         tin="C4444444444",
         contact_email="ops@apitest.example",
     )
-    user = User.objects.create_user(
-        email="api@apitest.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="api@apitest.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
-    _, plaintext = create_api_key(
-        organization_id=org.id, label="ci-key", actor_user=user
-    )
+    _, plaintext = create_api_key(organization_id=org.id, label="ci-key", actor_user=user)
     return org, user, plaintext
 
 
@@ -133,13 +129,9 @@ class TestAuthGate:
 
 @pytest.mark.django_db
 class TestHappyPath:
-    def test_creates_ingestion_job_with_api_source_channel(
-        self, org_user_key
-    ) -> None:
+    def test_creates_ingestion_job_with_api_source_channel(self, org_user_key) -> None:
         org, _user, plaintext = org_user_key
-        with _stub_storage(), patch(
-            "apps.extraction.tasks.extract_invoice.delay"
-        ):
+        with _stub_storage(), patch("apps.extraction.tasks.extract_invoice.delay"):
             response = Client().post(
                 "/api/v1/ingestion/jobs/api-upload/",
                 data=json.dumps(
@@ -163,9 +155,7 @@ class TestHappyPath:
 
     def test_audit_event_actor_external(self, org_user_key) -> None:
         _org, _user, plaintext = org_user_key
-        with _stub_storage(), patch(
-            "apps.extraction.tasks.extract_invoice.delay"
-        ):
+        with _stub_storage(), patch("apps.extraction.tasks.extract_invoice.delay"):
             Client().post(
                 "/api/v1/ingestion/jobs/api-upload/",
                 data=json.dumps(
@@ -178,9 +168,7 @@ class TestHappyPath:
                 content_type="application/json",
                 HTTP_AUTHORIZATION=f"Bearer {plaintext}",
             )
-        ev = AuditEvent.objects.filter(
-            action_type="ingestion.job.received"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="ingestion.job.received").first()
         assert ev is not None
         assert ev.actor_type == AuditEvent.ActorType.EXTERNAL
         assert ev.payload["source_channel"] == "api"
@@ -197,9 +185,7 @@ class TestValidation:
         _, _, plaintext = org_user_key
         response = Client().post(
             "/api/v1/ingestion/jobs/api-upload/",
-            data=json.dumps(
-                {"mime_type": "application/pdf", "body_b64": B64_PDF}
-            ),
+            data=json.dumps({"mime_type": "application/pdf", "body_b64": B64_PDF}),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {plaintext}",
         )
@@ -209,9 +195,7 @@ class TestValidation:
         _, _, plaintext = org_user_key
         response = Client().post(
             "/api/v1/ingestion/jobs/api-upload/",
-            data=json.dumps(
-                {"filename": "x.pdf", "mime_type": "application/pdf"}
-            ),
+            data=json.dumps({"filename": "x.pdf", "mime_type": "application/pdf"}),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {plaintext}",
         )
@@ -306,9 +290,7 @@ class TestTenantIsolation:
             tin="C5555555555",
             contact_email="o@o",
         )
-        with _stub_storage(), patch(
-            "apps.extraction.tasks.extract_invoice.delay"
-        ):
+        with _stub_storage(), patch("apps.extraction.tasks.extract_invoice.delay"):
             response = Client().post(
                 "/api/v1/ingestion/jobs/api-upload/",
                 data=json.dumps(

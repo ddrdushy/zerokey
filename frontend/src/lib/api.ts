@@ -711,12 +711,7 @@ export type ConnectorType =
   | "shopify"
   | "woocommerce";
 
-export type SyncStatus =
-  | "never"
-  | "proposed"
-  | "applied"
-  | "failed"
-  | "reverted";
+export type SyncStatus = "never" | "proposed" | "applied" | "failed" | "reverted";
 
 export type IntegrationConfigRow = {
   id: string;
@@ -731,21 +726,13 @@ export type IntegrationConfigRow = {
   updated_at: string;
 };
 
-export type ProposalStatus =
-  | "proposed"
-  | "applied"
-  | "reverted"
-  | "expired"
-  | "cancelled";
+export type ProposalStatus = "proposed" | "applied" | "reverted" | "expired" | "cancelled";
 
 export type SyncDiffEntry = {
   source_record_id?: string;
   fields?: Record<string, string>;
   existing_id?: string;
-  changes?: Record<
-    string,
-    { current: string; proposed: string; verdict: string }
-  >;
+  changes?: Record<string, { current: string; proposed: string; verdict: string }>;
   field?: string;
   existing_value?: string;
   existing_provenance?: FieldProvenanceEntry;
@@ -832,15 +819,12 @@ async function uploadCsvSync(args: {
   form.append("column_mapping", JSON.stringify(args.columnMapping));
   form.append("target", args.target ?? "customers");
 
-  const response = await fetch(
-    `${API_BASE}/connectors/configs/${args.configId}/sync-csv/`,
-    {
-      method: "POST",
-      headers,
-      credentials: "include",
-      body: form,
-    },
-  );
+  const response = await fetch(`${API_BASE}/connectors/configs/${args.configId}/sync-csv/`, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: form,
+  });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message =
@@ -871,8 +855,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  listJobs: () =>
-    request<{ results: IngestionJob[] }>("/ingestion/jobs/").then((r) => r.results),
+  listJobs: () => request<{ results: IngestionJob[] }>("/ingestion/jobs/").then((r) => r.results),
   getJob: (id: string) => request<IngestionJob>(`/ingestion/jobs/${id}/`),
   getInvoiceForJob: (jobId: string) => request<Invoice>(`/invoices/by-job/${jobId}/`),
   listInbox: (params?: { reason?: string; limit?: number }) => {
@@ -897,26 +880,19 @@ export const api = {
     if (params?.status) search.set("status", params.status);
     if (params?.search) search.set("search", params.search);
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
-    if (params?.beforeCreatedAt)
-      search.set("before_created_at", params.beforeCreatedAt);
+    if (params?.beforeCreatedAt) search.set("before_created_at", params.beforeCreatedAt);
     const qs = search.toString();
     return request<InvoiceListResponse>(`/invoices/${qs ? `?${qs}` : ""}`);
   },
   auditStats: () => request<AuditStats>("/audit/stats/"),
-  listAuditEvents: (params?: {
-    actionType?: string;
-    limit?: number;
-    beforeSequence?: number;
-  }) => {
+  listAuditEvents: (params?: { actionType?: string; limit?: number; beforeSequence?: number }) => {
     const search = new URLSearchParams();
     if (params?.actionType) search.set("action_type", params.actionType);
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     if (params?.beforeSequence !== undefined)
       search.set("before_sequence", String(params.beforeSequence));
     const qs = search.toString();
-    return request<AuditEventListResponse>(
-      `/audit/events/${qs ? `?${qs}` : ""}`,
-    );
+    return request<AuditEventListResponse>(`/audit/events/${qs ? `?${qs}` : ""}`);
   },
   listAuditActionTypes: () =>
     request<{ results: string[] }>("/audit/action-types/").then((r) => r.results),
@@ -928,13 +904,9 @@ export const api = {
       support_message: string;
     }>("/audit/verify/", { method: "POST" }),
   latestAuditVerification: () =>
-    request<{ latest: LatestVerification | null }>("/audit/verify/last/").then(
-      (r) => r.latest,
-    ),
-  adminMe: () =>
-    request<AdminMe>("/admin/me/"),
-  adminOverview: () =>
-    request<PlatformOverview>("/admin/overview/"),
+    request<{ latest: LatestVerification | null }>("/audit/verify/last/").then((r) => r.latest),
+  adminMe: () => request<AdminMe>("/admin/me/"),
+  adminOverview: () => request<PlatformOverview>("/admin/overview/"),
   adminListPlatformAuditEvents: (params?: {
     actionType?: string;
     organizationId?: string;
@@ -953,17 +925,13 @@ export const api = {
     );
   },
   adminListPlatformActionTypes: () =>
-    request<{ results: string[] }>("/admin/audit/action-types/").then(
-      (r) => r.results,
-    ),
+    request<{ results: string[] }>("/admin/audit/action-types/").then((r) => r.results),
   adminListEngines: () =>
-    request<{ results: AdminEngine[] }>("/admin/engines/").then(
+    request<{ results: AdminEngine[] }>("/admin/engines/").then((r) => r.results),
+  adminListSystemSettings: () =>
+    request<{ results: SystemSettingNamespace[] }>("/admin/system-settings/").then(
       (r) => r.results,
     ),
-  adminListSystemSettings: () =>
-    request<{ results: SystemSettingNamespace[] }>(
-      "/admin/system-settings/",
-    ).then((r) => r.results),
   adminUpdateSystemSetting: (
     namespace: string,
     body: { fields: Record<string, string>; reason: string },
@@ -1054,25 +1022,24 @@ export const api = {
       `/admin/tenants/${search ? `?${search}` : ""}`,
     ).then((r) => r.results);
   },
-  getOrganization: () =>
-    request<OrganizationDetail>("/identity/organization/"),
+  getOrganization: () => request<OrganizationDetail>("/identity/organization/"),
   listOrganizationMembers: () =>
-    request<{ results: OrganizationMemberRow[] }>(
-      "/identity/organization/members/",
-    ).then((r) => r.results),
+    request<{ results: OrganizationMemberRow[] }>("/identity/organization/members/").then(
+      (r) => r.results,
+    ),
   patchOrganizationMember: (
     membershipId: string,
     body: { is_active?: boolean; role_name?: string },
   ) =>
-    request<OrganizationMemberRow>(
-      `/identity/organization/members/${membershipId}/`,
-      { method: "PATCH", body: JSON.stringify(body) },
-    ),
+    request<OrganizationMemberRow>(`/identity/organization/members/${membershipId}/`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   // Slice 56 — invitations
   listInvitations: () =>
-    request<{ results: InvitationRow[] }>(
-      "/identity/organization/invitations/",
-    ).then((r) => r.results),
+    request<{ results: InvitationRow[] }>("/identity/organization/invitations/").then(
+      (r) => r.results,
+    ),
   createInvitation: (email: string, roleName: string) =>
     request<InvitationRow & { plaintext_token: string; invitation_url: string }>(
       "/identity/organization/invitations/",
@@ -1082,47 +1049,37 @@ export const api = {
       },
     ),
   revokeInvitation: (invitationId: string) =>
-    request<InvitationRow>(
-      `/identity/organization/invitations/${invitationId}/`,
-      { method: "DELETE" },
-    ),
+    request<InvitationRow>(`/identity/organization/invitations/${invitationId}/`, {
+      method: "DELETE",
+    }),
   previewInvitation: (token: string) =>
     request<{
       email: string;
       role: string;
       organization_legal_name: string;
       expires_at: string;
-    }>(
-      "/identity/invitations/preview/",
-      { method: "POST", body: JSON.stringify({ token }) },
-    ),
+    }>("/identity/invitations/preview/", { method: "POST", body: JSON.stringify({ token }) }),
   acceptInvitation: (token: string) =>
     request<{
       membership_id: string;
       organization_id: string;
       role: string;
       redirect_to: string;
-    }>(
-      "/identity/invitations/accept/",
-      { method: "POST", body: JSON.stringify({ token }) },
-    ),
+    }>("/identity/invitations/accept/", { method: "POST", body: JSON.stringify({ token }) }),
   // Slice 57 — per-org integrations
   listIntegrations: () =>
-    request<{ results: IntegrationCard[] }>(
-      "/identity/organization/integrations/",
-    ).then((r) => r.results),
+    request<{ results: IntegrationCard[] }>("/identity/organization/integrations/").then(
+      (r) => r.results,
+    ),
   patchIntegrationCredentials: (
     integrationKey: string,
     environment: "sandbox" | "production",
     fields: Record<string, string>,
   ) =>
-    request<IntegrationCard>(
-      `/identity/organization/integrations/${integrationKey}/credentials/`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({ environment, fields }),
-      },
-    ),
+    request<IntegrationCard>(`/identity/organization/integrations/${integrationKey}/credentials/`, {
+      method: "PATCH",
+      body: JSON.stringify({ environment, fields }),
+    }),
   switchIntegrationEnvironment: (
     integrationKey: string,
     environment: "sandbox" | "production",
@@ -1135,10 +1092,7 @@ export const api = {
         body: JSON.stringify({ environment, reason: reason || "" }),
       },
     ),
-  testIntegration: (
-    integrationKey: string,
-    environment: "sandbox" | "production",
-  ) =>
+  testIntegration: (integrationKey: string, environment: "sandbox" | "production") =>
     request<{ ok: boolean; detail: string; duration_ms: number }>(
       `/identity/organization/integrations/${integrationKey}/test/`,
       {
@@ -1237,26 +1191,19 @@ export const api = {
       body: JSON.stringify({ reason }),
     }),
   listApiKeys: () =>
-    request<{ results: APIKeyRow[] }>(
-      "/identity/organization/api-keys/",
-    ).then((r) => r.results),
+    request<{ results: APIKeyRow[] }>("/identity/organization/api-keys/").then((r) => r.results),
   createApiKey: (label: string) =>
-    request<APIKeyRow & { plaintext: string }>(
-      "/identity/organization/api-keys/",
-      { method: "POST", body: JSON.stringify({ label }) },
-    ),
+    request<APIKeyRow & { plaintext: string }>("/identity/organization/api-keys/", {
+      method: "POST",
+      body: JSON.stringify({ label }),
+    }),
   revokeApiKey: (apiKeyId: string) =>
-    request<APIKeyRow>(
-      `/identity/organization/api-keys/${apiKeyId}/`,
-      { method: "DELETE" },
-    ),
+    request<APIKeyRow>(`/identity/organization/api-keys/${apiKeyId}/`, { method: "DELETE" }),
   getNotificationPreferences: () =>
     request<{ events: NotificationPreferenceRow[] }>(
       "/identity/organization/notification-preferences/",
     ),
-  setNotificationPreferences: (
-    updates: Record<string, { in_app?: boolean; email?: boolean }>,
-  ) =>
+  setNotificationPreferences: (updates: Record<string, { in_app?: boolean; email?: boolean }>) =>
     request<{ events: NotificationPreferenceRow[] }>(
       "/identity/organization/notification-preferences/",
       { method: "PATCH", body: JSON.stringify(updates) },
@@ -1282,31 +1229,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  getInboxAddress: () =>
-    request<{ address: string }>("/ingestion/inbox/address/"),
+  getInboxAddress: () => request<{ address: string }>("/ingestion/inbox/address/"),
   listWebhooks: () =>
     request<{
       results: WebhookEndpointRow[];
       available_events: { key: string; label: string }[];
     }>("/integrations/webhooks/"),
-  createWebhook: (body: {
-    label: string;
-    url: string;
-    event_types: string[];
-  }) =>
-    request<WebhookEndpointRow & { plaintext_secret: string }>(
-      "/integrations/webhooks/",
-      { method: "POST", body: JSON.stringify(body) },
-    ),
+  createWebhook: (body: { label: string; url: string; event_types: string[] }) =>
+    request<WebhookEndpointRow & { plaintext_secret: string }>("/integrations/webhooks/", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   revokeWebhook: (webhookId: string) =>
     request<WebhookEndpointRow>(`/integrations/webhooks/${webhookId}/`, {
       method: "DELETE",
     }),
   testWebhook: (webhookId: string) =>
-    request<WebhookDeliveryRow>(
-      `/integrations/webhooks/${webhookId}/test/`,
-      { method: "POST" },
-    ),
+    request<WebhookDeliveryRow>(`/integrations/webhooks/${webhookId}/test/`, { method: "POST" }),
   listWebhookDeliveries: (params?: { webhookId?: string; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.webhookId) qs.set("webhook_id", params.webhookId);
@@ -1321,17 +1260,15 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(updates),
     }),
-  engineSummary: () =>
-    request<{ results: EngineSummary[] }>("/engines/").then((r) => r.results),
+  engineSummary: () => request<{ results: EngineSummary[] }>("/engines/").then((r) => r.results),
   listEngineCalls: (params?: { limit?: number; beforeStartedAt?: string }) => {
     const search = new URLSearchParams();
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
-    if (params?.beforeStartedAt)
-      search.set("before_started_at", params.beforeStartedAt);
+    if (params?.beforeStartedAt) search.set("before_started_at", params.beforeStartedAt);
     const qs = search.toString();
-    return request<{ results: EngineCallRecord[] }>(
-      `/engines/calls/${qs ? `?${qs}` : ""}`,
-    ).then((r) => r.results);
+    return request<{ results: EngineCallRecord[] }>(`/engines/calls/${qs ? `?${qs}` : ""}`).then(
+      (r) => r.results,
+    );
   },
   throughput: (days = 7) => request<Throughput>(`/ingestion/throughput/?days=${days}`),
   updateInvoice: (id: string, updates: Record<string, string | null>) =>
@@ -1339,8 +1276,7 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(updates),
     }),
-  listCustomers: () =>
-    request<{ results: Customer[] }>("/customers/").then((r) => r.results),
+  listCustomers: () => request<{ results: Customer[] }>("/customers/").then((r) => r.results),
   getCustomer: (id: string) => request<Customer>(`/customers/${id}/`),
   updateCustomer: (id: string, updates: Partial<Record<keyof Customer, string>>) =>
     request<Customer>(`/customers/${id}/`, {
@@ -1348,15 +1284,13 @@ export const api = {
       body: JSON.stringify(updates),
     }),
   listCustomerInvoices: (id: string) =>
-    request<{ results: CustomerInvoiceSummary[] }>(
-      `/customers/${id}/invoices/`,
-    ).then((r) => r.results),
+    request<{ results: CustomerInvoiceSummary[] }>(`/customers/${id}/invoices/`).then(
+      (r) => r.results,
+    ),
   uploadFile,
   // Connectors (Slices 73–77)
   listConnectorConfigs: () =>
-    request<{ results: IntegrationConfigRow[] }>("/connectors/configs/").then(
-      (r) => r.results,
-    ),
+    request<{ results: IntegrationConfigRow[] }>("/connectors/configs/").then((r) => r.results),
   createConnectorConfig: (connector_type: ConnectorType) =>
     request<IntegrationConfigRow>("/connectors/configs/", {
       method: "POST",
@@ -1367,8 +1301,7 @@ export const api = {
       method: "DELETE",
     }),
   uploadCsvSync,
-  getProposal: (id: string) =>
-    request<SyncProposalRow>(`/connectors/proposals/${id}/`),
+  getProposal: (id: string) => request<SyncProposalRow>(`/connectors/proposals/${id}/`),
   applyProposal: (id: string) =>
     request<SyncProposalRow>(`/connectors/proposals/${id}/apply/`, {
       method: "POST",
@@ -1379,17 +1312,14 @@ export const api = {
       body: JSON.stringify({ reason }),
     }),
   listConflicts: (state: "open" | "resolved" | "all" = "open") =>
-    request<{ results: MasterFieldConflictRow[] }>(
-      `/connectors/conflicts/?state=${state}`,
-    ).then((r) => r.results),
-  resolveConflict: (
-    id: string,
-    body: { resolution: ConflictResolution; custom_value?: string },
-  ) =>
-    request<MasterFieldConflictRow>(
-      `/connectors/conflicts/${id}/resolve/`,
-      { method: "POST", body: JSON.stringify(body) },
+    request<{ results: MasterFieldConflictRow[] }>(`/connectors/conflicts/?state=${state}`).then(
+      (r) => r.results,
     ),
+  resolveConflict: (id: string, body: { resolution: ConflictResolution; custom_value?: string }) =>
+    request<MasterFieldConflictRow>(`/connectors/conflicts/${id}/resolve/`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   lockMasterField: (body: {
     master_type: "customer" | "item";
     master_id: string;

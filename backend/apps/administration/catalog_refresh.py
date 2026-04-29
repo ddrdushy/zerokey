@@ -91,7 +91,7 @@ def refresh_all_catalogs(
     for label, fetcher in fetchers.items():
         try:
             counts = _refresh_one(label, fetcher)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception(
                 "administration.catalog_refresh.failed",
                 extra={"catalog": label, "error_class": type(exc).__name__},
@@ -181,13 +181,10 @@ def _refresh_one(label: str, fetcher: Fetcher) -> CatalogChangeCounts:
 
         # Deactivate codes that disappeared from the remote.
         if seen_codes:
-            stale_qs = (
-                model.objects.exclude(**{f"{code_field}__in": seen_codes})
-                .filter(is_active=True)
+            stale_qs = model.objects.exclude(**{f"{code_field}__in": seen_codes}).filter(
+                is_active=True
             )
-            counts.deactivated = stale_qs.update(
-                is_active=False, last_refreshed_at=now
-            )
+            counts.deactivated = stale_qs.update(is_active=False, last_refreshed_at=now)
 
     return counts
 

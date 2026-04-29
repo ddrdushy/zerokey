@@ -37,9 +37,7 @@ export default function CustomersPage() {
       <div className="flex flex-col gap-6">
         <header className="flex items-end justify-between">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight">
-              Customers
-            </h1>
+            <h1 className="font-display text-2xl font-bold tracking-tight">Customers</h1>
             <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
               Buyers ZeroKey has learned from your invoices
             </p>
@@ -84,13 +82,10 @@ function EmptyState() {
   return (
     <section className="rounded-xl border border-slate-100 bg-white p-12 text-center">
       <Users className="mx-auto h-8 w-8 text-slate-300" aria-hidden />
-      <h2 className="mt-4 font-display text-xl font-semibold">
-        No customers yet
-      </h2>
+      <h2 className="mt-4 font-display text-xl font-semibold">No customers yet</h2>
       <p className="mx-auto mt-2 max-w-md text-2xs text-slate-500">
-        Customers appear here automatically as you submit invoices. Each new
-        buyer ZeroKey reads creates a master record; subsequent invoices for
-        that buyer auto-fill from it.
+        Customers appear here automatically as you submit invoices. Each new buyer ZeroKey reads
+        creates a master record; subsequent invoices for that buyer auto-fill from it.
       </p>
       <Link
         href="/dashboard"
@@ -128,7 +123,10 @@ function CustomerTable({ customers }: { customers: Customer[] }) {
                 </Link>
                 {c.aliases.length > 0 && (
                   <div className="mt-0.5 text-slate-400">
-                    also known as {c.aliases.length === 1 ? c.aliases[0] : `${c.aliases[0]} +${c.aliases.length - 1} more`}
+                    also known as{" "}
+                    {c.aliases.length === 1
+                      ? c.aliases[0]
+                      : `${c.aliases[0]} +${c.aliases.length - 1} more`}
                   </div>
                 )}
               </td>
@@ -153,24 +151,14 @@ function CustomerTable({ customers }: { customers: Customer[] }) {
   );
 }
 
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align: "left" | "right";
-}) {
+function Th({ children, align }: { children: React.ReactNode; align: "left" | "right" }) {
   const cls =
     "px-3 py-2 font-medium uppercase tracking-wider " +
     (align === "right" ? "text-right" : "text-left");
   return <th className={cls}>{children}</th>;
 }
 
-function VerificationBadge({
-  state,
-}: {
-  state: Customer["tin_verification_state"];
-}) {
+function VerificationBadge({ state }: { state: Customer["tin_verification_state"] }) {
   if (state === "verified") {
     return (
       <span className="inline-flex items-center gap-1 rounded-md bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success">

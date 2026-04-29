@@ -18,7 +18,7 @@ from apps.connectors.models import (
     SyncProposal,
 )
 from apps.connectors.sync_services import ConnectorRecord
-from apps.enrichment.models import CustomerMaster, ItemMaster
+from apps.enrichment.models import CustomerMaster
 from apps.identity.models import Organization, Role
 
 
@@ -45,9 +45,7 @@ def config(org) -> IntegrationConfig:
     )
 
 
-def _record(
-    *, source_id: str = "DEBT-1", **fields: str
-) -> ConnectorRecord:
+def _record(*, source_id: str = "DEBT-1", **fields: str) -> ConnectorRecord:
     return ConnectorRecord(source_record_id=source_id, fields=fields)
 
 
@@ -76,9 +74,7 @@ class TestProposeSync:
         assert diff["customers"]["would_add"][0]["fields"]["tin"] == "C9999999999"
         assert proposal.status == SyncProposal.Status.PROPOSED
 
-    def test_existing_buyer_with_blank_field_auto_populates(
-        self, org, config
-    ) -> None:
+    def test_existing_buyer_with_blank_field_auto_populates(self, org, config) -> None:
         # Existing master with TIN + name only (no address).
         CustomerMaster.objects.create(
             organization=org,
@@ -105,10 +101,7 @@ class TestProposeSync:
         updates = proposal.diff["customers"]["would_update"]
         assert len(updates) == 1
         assert "address" in updates[0]["changes"]
-        assert (
-            updates[0]["changes"]["address"]["proposed"]
-            == "Now we have an address"
-        )
+        assert updates[0]["changes"]["address"]["proposed"] == "Now we have an address"
         # No conflict (existing was empty).
         assert proposal.diff["customers"]["conflicts"] == []
 
@@ -146,9 +139,7 @@ class TestProposeSync:
         assert row.incoming_value == "New synced address"
         assert row.is_open is True
 
-    def test_locked_field_routes_to_skipped_locked(
-        self, org, config
-    ) -> None:
+    def test_locked_field_routes_to_skipped_locked(self, org, config) -> None:
         master = CustomerMaster.objects.create(
             organization=org,
             legal_name="Acme",
@@ -185,9 +176,7 @@ class TestProposeSync:
         # No conflict row was created (locked != conflict).
         assert MasterFieldConflict.objects.count() == 0
 
-    def test_verified_tin_routes_to_skipped_verified(
-        self, org, config
-    ) -> None:
+    def test_verified_tin_routes_to_skipped_verified(self, org, config) -> None:
         master = CustomerMaster.objects.create(
             organization=org,
             legal_name="Acme",
@@ -220,9 +209,7 @@ class TestProposeSync:
             ],
             actor_user_id=uuid.uuid4(),
         )
-        ev = AuditEvent.objects.filter(
-            action_type="integration.sync_proposed"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="integration.sync_proposed").first()
         assert ev is not None
         assert ev.payload["customers"]["would_add"] == 1
 
@@ -248,9 +235,7 @@ class TestApplySyncProposal:
             ],
             actor_user_id=actor,
         )
-        sync_services.apply_sync_proposal(
-            proposal_id=proposal.id, actor_user_id=actor
-        )
+        sync_services.apply_sync_proposal(proposal_id=proposal.id, actor_user_id=actor)
         master = CustomerMaster.objects.get(tin="C7777777777")
         assert master.legal_name == "Brand New"
         # New rows from sync get unverified_external_source.
@@ -260,9 +245,7 @@ class TestApplySyncProposal:
         )
         # Provenance is set with source_record_id + approved_by.
         assert master.field_provenance["tin"]["source"] == "synced_autocount"
-        assert (
-            master.field_provenance["tin"]["source_record_id"] == "DEBT-1"
-        )
+        assert master.field_provenance["tin"]["source_record_id"] == "DEBT-1"
 
     def test_applies_would_update(self, org, config) -> None:
         existing = CustomerMaster.objects.create(
@@ -287,16 +270,11 @@ class TestApplySyncProposal:
             ],
             actor_user_id=actor,
         )
-        sync_services.apply_sync_proposal(
-            proposal_id=proposal.id, actor_user_id=actor
-        )
+        sync_services.apply_sync_proposal(proposal_id=proposal.id, actor_user_id=actor)
         existing.refresh_from_db()
         assert existing.address == "New from sync"
         # Provenance flipped to synced_autocount.
-        assert (
-            existing.field_provenance["address"]["source"]
-            == "synced_autocount"
-        )
+        assert existing.field_provenance["address"]["source"] == "synced_autocount"
         # applied_changes captured the prior value for revert.
         proposal.refresh_from_db()
         prior = proposal.applied_changes["customers"]["updated"][0]["prior"]
@@ -311,13 +289,9 @@ class TestApplySyncProposal:
             ],
             actor_user_id=actor,
         )
-        sync_services.apply_sync_proposal(
-            proposal_id=proposal.id, actor_user_id=actor
-        )
+        sync_services.apply_sync_proposal(proposal_id=proposal.id, actor_user_id=actor)
         with pytest.raises(sync_services.SyncError, match="proposed"):
-            sync_services.apply_sync_proposal(
-                proposal_id=proposal.id, actor_user_id=actor
-            )
+            sync_services.apply_sync_proposal(proposal_id=proposal.id, actor_user_id=actor)
 
     def test_audit_event_emitted_with_counts(self, org, config) -> None:
         actor = uuid.uuid4()
@@ -329,12 +303,8 @@ class TestApplySyncProposal:
             ],
             actor_user_id=actor,
         )
-        sync_services.apply_sync_proposal(
-            proposal_id=proposal.id, actor_user_id=actor
-        )
-        ev = AuditEvent.objects.filter(
-            action_type="integration.sync_applied"
-        ).first()
+        sync_services.apply_sync_proposal(proposal_id=proposal.id, actor_user_id=actor)
+        ev = AuditEvent.objects.filter(action_type="integration.sync_applied").first()
         assert ev is not None
         assert ev.payload["customers_created"] == 2
 
@@ -355,9 +325,7 @@ class TestRevertSyncProposal:
             ],
             actor_user_id=actor,
         )
-        sync_services.apply_sync_proposal(
-            proposal_id=proposal.id, actor_user_id=actor
-        )
+        sync_services.apply_sync_proposal(proposal_id=proposal.id, actor_user_id=actor)
         assert CustomerMaster.objects.count() == 1
         sync_services.revert_sync_proposal(
             proposal_id=proposal.id,
@@ -415,9 +383,7 @@ class TestRevertSyncProposal:
             ],
             actor_user_id=actor,
         )
-        sync_services.apply_sync_proposal(
-            proposal_id=proposal2.id, actor_user_id=actor
-        )
+        sync_services.apply_sync_proposal(proposal_id=proposal2.id, actor_user_id=actor)
         existing.refresh_from_db()
         assert existing.address == "Synced address"
 
@@ -439,9 +405,7 @@ class TestRevertSyncProposal:
             ],
             actor_user_id=actor,
         )
-        sync_services.apply_sync_proposal(
-            proposal_id=proposal.id, actor_user_id=actor
-        )
+        sync_services.apply_sync_proposal(proposal_id=proposal.id, actor_user_id=actor)
         # Push expires_at into the past.
         proposal.refresh_from_db()
         proposal.expires_at = timezone.now() - timedelta(days=1)
@@ -501,9 +465,7 @@ class TestResolveFieldConflict:
         )
         master.refresh_from_db()
         assert master.address == "Old address"
-        assert (
-            master.field_provenance["address"]["source"] == "manually_resolved"
-        )
+        assert master.field_provenance["address"]["source"] == "manually_resolved"
 
     def test_take_incoming_overwrites_value(self, org, config) -> None:
         master, conflict, actor = self._make_conflict_setup(org, config)
@@ -556,9 +518,7 @@ class TestResolveFieldConflict:
             resolution=MasterFieldConflict.Resolution.KEEP_EXISTING,
             actor_user_id=actor,
         )
-        ev = AuditEvent.objects.filter(
-            action_type="master_record.conflict_resolved"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="master_record.conflict_resolved").first()
         assert ev is not None
         assert ev.payload["resolution"] == "keep_existing"
 
@@ -582,9 +542,7 @@ class TestLockUnlock:
             reason="LHDN-verified",
         )
         assert lock.id is not None
-        ev = AuditEvent.objects.filter(
-            action_type="master_record.field_locked"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="master_record.field_locked").first()
         assert ev is not None
 
     def test_lock_idempotent(self, org) -> None:
@@ -607,9 +565,7 @@ class TestLockUnlock:
         assert first.id == second.id
         # Only one audit event (re-locking returns existing without
         # re-emitting).
-        events = AuditEvent.objects.filter(
-            action_type="master_record.field_locked"
-        ).count()
+        events = AuditEvent.objects.filter(action_type="master_record.field_locked").count()
         assert events == 1
 
     def test_unlock_removes_row(self, org) -> None:
@@ -642,7 +598,5 @@ class TestLockUnlock:
         )
         assert removed is False
         # No audit event for a no-op.
-        events = AuditEvent.objects.filter(
-            action_type="master_record.field_unlocked"
-        ).count()
+        events = AuditEvent.objects.filter(action_type="master_record.field_unlocked").count()
         assert events == 0

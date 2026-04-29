@@ -40,9 +40,7 @@ def org_owner(seeded) -> tuple[Organization, User]:
         tin="C10000000001",
         contact_email="o@acme.example",
     )
-    user = User.objects.create_user(
-        email="owner@acme.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="owner@acme.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -170,21 +168,15 @@ class TestAcceptInvitation:
         invitee = User.objects.create_user(
             email="newhire@acme.example", password="long-enough-password"
         )
-        membership = accept_invitation(
-            token=plaintext, accepting_user_id=invitee.id
-        )
+        membership = accept_invitation(token=plaintext, accepting_user_id=invitee.id)
         assert membership.organization_id == org.id
         assert membership.role.name == "submitter"
         assert membership.user_id == invitee.id
 
     def test_invalid_token_rejected(self, org_owner) -> None:
-        invitee = User.objects.create_user(
-            email="x@y.com", password="long-enough-password"
-        )
+        invitee = User.objects.create_user(email="x@y.com", password="long-enough-password")
         with pytest.raises(InvitationError, match="not valid"):
-            accept_invitation(
-                token="not-a-real-token", accepting_user_id=invitee.id
-            )
+            accept_invitation(token="not-a-real-token", accepting_user_id=invitee.id)
 
     def test_email_mismatch_rejected(self, org_owner) -> None:
         org, user = org_owner
@@ -195,9 +187,7 @@ class TestAcceptInvitation:
             actor_user_id=user.id,
         )
         # Sign in as a DIFFERENT user.
-        bob = User.objects.create_user(
-            email="bob@acme.example", password="long-enough-password"
-        )
+        bob = User.objects.create_user(email="bob@acme.example", password="long-enough-password")
         with pytest.raises(InvitationError, match="different email"):
             accept_invitation(token=plaintext, accepting_user_id=bob.id)
 
@@ -213,9 +203,7 @@ class TestAcceptInvitation:
         invitation.expires_at = timezone.now() - timedelta(seconds=1)
         invitation.save(update_fields=["expires_at"])
 
-        invitee = User.objects.create_user(
-            email="x@y.com", password="long-enough-password"
-        )
+        invitee = User.objects.create_user(email="x@y.com", password="long-enough-password")
         with pytest.raises(InvitationError, match="expired"):
             accept_invitation(token=plaintext, accepting_user_id=invitee.id)
 
@@ -230,9 +218,7 @@ class TestAcceptInvitation:
             role_name="viewer",
             actor_user_id=user.id,
         )
-        invitee = User.objects.create_user(
-            email="x@y.com", password="long-enough-password"
-        )
+        invitee = User.objects.create_user(email="x@y.com", password="long-enough-password")
         accept_invitation(token=plaintext, accepting_user_id=invitee.id)
         with pytest.raises(InvitationError, match="cannot accept"):
             accept_invitation(token=plaintext, accepting_user_id=invitee.id)
@@ -284,9 +270,7 @@ class TestEndpoints:
         client, _, _ = authed_owner
         response = client.post(
             "/api/v1/identity/organization/invitations/",
-            data=json.dumps(
-                {"email": "newhire@acme.example", "role_name": "viewer"}
-            ),
+            data=json.dumps({"email": "newhire@acme.example", "role_name": "viewer"}),
             content_type="application/json",
         )
         assert response.status_code == 201
@@ -296,12 +280,8 @@ class TestEndpoints:
         assert "/accept-invitation?token=" in body["invitation_url"]
 
     def test_non_admin_403(self, seeded) -> None:
-        org = Organization.objects.create(
-            legal_name="X", tin="C10000000002", contact_email="o@x"
-        )
-        viewer = User.objects.create_user(
-            email="viewer@x", password="long-enough-password"
-        )
+        org = Organization.objects.create(legal_name="X", tin="C10000000002", contact_email="o@x")
+        viewer = User.objects.create_user(email="viewer@x", password="long-enough-password")
         OrganizationMembership.objects.create(
             user=viewer, organization=org, role=Role.objects.get(name="viewer")
         )
@@ -340,9 +320,7 @@ class TestEndpoints:
             role_name="viewer",
             actor_user_id=user.id,
         )
-        response = client.delete(
-            f"/api/v1/identity/organization/invitations/{invitation.id}/"
-        )
+        response = client.delete(f"/api/v1/identity/organization/invitations/{invitation.id}/")
         assert response.status_code == 200
         assert response.json()["status"] == "revoked"
 
@@ -392,8 +370,10 @@ class TestEndpoints:
     def test_email_send_attempted(self, authed_owner) -> None:
         """Best-effort email send — invite still creates if SMTP down."""
         client, _, _ = authed_owner
-        with patch("apps.notifications.email.is_email_configured", return_value=True), \
-             patch("apps.notifications.email.send_email") as send_mock:
+        with (
+            patch("apps.notifications.email.is_email_configured", return_value=True),
+            patch("apps.notifications.email.send_email") as send_mock,
+        ):
             response = client.post(
                 "/api/v1/identity/organization/invitations/",
                 data=json.dumps({"email": "x@y.com", "role_name": "viewer"}),
@@ -404,11 +384,13 @@ class TestEndpoints:
 
     def test_email_failure_does_not_block_invite(self, authed_owner) -> None:
         client, _, _ = authed_owner
-        with patch("apps.notifications.email.is_email_configured", return_value=True), \
-             patch(
-                 "apps.notifications.email.send_email",
-                 side_effect=Exception("smtp down"),
-             ):
+        with (
+            patch("apps.notifications.email.is_email_configured", return_value=True),
+            patch(
+                "apps.notifications.email.send_email",
+                side_effect=Exception("smtp down"),
+            ),
+        ):
             response = client.post(
                 "/api/v1/identity/organization/invitations/",
                 data=json.dumps({"email": "x@y.com", "role_name": "viewer"}),

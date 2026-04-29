@@ -44,7 +44,6 @@ from .models import (
     User,
 )
 
-
 # How long an invite stays valid. 14 days is the industry-standard
 # default — long enough that "I'll get to it tomorrow" works, short
 # enough that an old link in an inbox doesn't enable a stale account
@@ -113,9 +112,7 @@ def create_invitation(
         is_active=True,
     ).exists()
     if existing_member:
-        raise InvitationError(
-            f"{email} is already an active member of this organization."
-        )
+        raise InvitationError(f"{email} is already an active member of this organization.")
 
     # Refuse duplicate pending invite to the same email.
     duplicate = MembershipInvitation.objects.filter(
@@ -162,9 +159,7 @@ def create_invitation(
     return invitation, plaintext
 
 
-def accept_invitation(
-    *, token: str, accepting_user_id: uuid.UUID | str
-) -> OrganizationMembership:
+def accept_invitation(*, token: str, accepting_user_id: uuid.UUID | str) -> OrganizationMembership:
     """Match the token (by hash), create the OrganizationMembership.
 
     NOT wrapped in a single ``@transaction.atomic`` — the expired-
@@ -187,17 +182,13 @@ def accept_invitation(
     from .tenancy import super_admin_context
 
     with super_admin_context(reason="invitations.accept_lookup"):
-        invitation = MembershipInvitation.objects.filter(
-            token_hash=token_hash
-        ).first()
+        invitation = MembershipInvitation.objects.filter(token_hash=token_hash).first()
 
     if invitation is None:
         raise InvitationError("Invitation token is not valid.")
 
     if invitation.status != MembershipInvitation.Status.PENDING:
-        raise InvitationError(
-            f"Invitation is {invitation.status} — cannot accept."
-        )
+        raise InvitationError(f"Invitation is {invitation.status} — cannot accept.")
 
     if invitation.expires_at <= timezone.now():
         # Auto-mark expired so future accept attempts surface the
@@ -215,20 +206,14 @@ def accept_invitation(
     # do we want to allow "invite a@x.com but b@x.com accepts"? Not
     # today — tightening is conservative.)
     if user.email.lower() != invitation.email.lower():
-        raise InvitationError(
-            "This invitation was issued for a different email address."
-        )
+        raise InvitationError("This invitation was issued for a different email address.")
 
     # Now we're in the success path — wrap the actual writes in atomic
     # so the membership + invitation status flip are all-or-nothing.
-    with transaction.atomic(), super_admin_context(
-        reason="invitations.create_membership"
-    ):
+    with transaction.atomic(), super_admin_context(reason="invitations.create_membership"):
         # Re-fetch under FOR UPDATE for the race guard.
         invitation = (
-            MembershipInvitation.objects.select_for_update()
-            .filter(id=invitation.id)
-            .first()
+            MembershipInvitation.objects.select_for_update().filter(id=invitation.id).first()
         )
         if invitation is None or invitation.status != MembershipInvitation.Status.PENDING:
             raise InvitationError("Invitation is no longer pending.")
@@ -300,9 +285,7 @@ def revoke_invitation(
     invitation.status = MembershipInvitation.Status.REVOKED
     invitation.revoked_at = timezone.now()
     invitation.revoked_by_user_id = actor_user_id
-    invitation.save(
-        update_fields=["status", "revoked_at", "revoked_by_user_id", "updated_at"]
-    )
+    invitation.save(update_fields=["status", "revoked_at", "revoked_by_user_id", "updated_at"])
 
     record_event(
         action_type="identity.invitation.revoked",
@@ -319,13 +302,13 @@ def revoke_invitation(
     return invitation
 
 
-def list_pending_invitations(
-    *, organization_id: uuid.UUID | str
-) -> list[dict[str, Any]]:
+def list_pending_invitations(*, organization_id: uuid.UUID | str) -> list[dict[str, Any]]:
     """List rows visible in Settings → Members → Pending invites."""
-    qs = MembershipInvitation.objects.filter(
-        organization_id=organization_id
-    ).select_related("role", "invited_by").order_by("-created_at")
+    qs = (
+        MembershipInvitation.objects.filter(organization_id=organization_id)
+        .select_related("role", "invited_by")
+        .order_by("-created_at")
+    )
     return [_invitation_dict(r) for r in qs]
 
 

@@ -45,11 +45,7 @@ type EditProps = ReadProps & {
   pendingAdds: PendingAdd[];
   removed: number[];
   onChangeCell: (lineNumber: number, field: string, value: string) => void;
-  onChangePendingAdd: (
-    pendingNumber: number,
-    field: string,
-    value: string,
-  ) => void;
+  onChangePendingAdd: (pendingNumber: number, field: string, value: string) => void;
   onAddLine: () => void;
   onRemoveLine: (lineNumber: number) => void;
   onUndoRemove: (lineNumber: number) => void;
@@ -113,11 +109,8 @@ export function LineItemsTable(props: ReadProps | EditProps) {
               const lineIssues = issuesForLine(line.line_number, issues);
               const hasError = lineIssues.some((i) => i.severity === "error");
               const hasWarning = lineIssues.some((i) => i.severity === "warning");
-              const lineDraft = isEdit
-                ? props.drafts[line.line_number] ?? {}
-                : {};
-              const markedForRemoval =
-                isEdit && props.removed.includes(line.line_number);
+              const lineDraft = isEdit ? (props.drafts[line.line_number] ?? {}) : {};
+              const markedForRemoval = isEdit && props.removed.includes(line.line_number);
 
               const cellValue = (field: keyof LineItem): string => {
                 if (field in lineDraft) return lineDraft[field as string] ?? "";
@@ -144,8 +137,7 @@ export function LineItemsTable(props: ReadProps | EditProps) {
                       dirty={cellDirty("description")}
                       onChange={
                         isEdit && !markedForRemoval
-                          ? (v) =>
-                              props.onChangeCell(line.line_number, "description", v)
+                          ? (v) => props.onChangeCell(line.line_number, "description", v)
                           : undefined
                       }
                     />
@@ -158,8 +150,7 @@ export function LineItemsTable(props: ReadProps | EditProps) {
                       placeholder="—"
                       onChange={
                         isEdit && !markedForRemoval
-                          ? (v) =>
-                              props.onChangeCell(line.line_number, "quantity", v)
+                          ? (v) => props.onChangeCell(line.line_number, "quantity", v)
                           : undefined
                       }
                     />
@@ -173,12 +164,7 @@ export function LineItemsTable(props: ReadProps | EditProps) {
                       placeholder="—"
                       onChange={
                         isEdit && !markedForRemoval
-                          ? (v) =>
-                              props.onChangeCell(
-                                line.line_number,
-                                "unit_price_excl_tax",
-                                v,
-                              )
+                          ? (v) => props.onChangeCell(line.line_number, "unit_price_excl_tax", v)
                           : undefined
                       }
                     />
@@ -192,8 +178,7 @@ export function LineItemsTable(props: ReadProps | EditProps) {
                       placeholder="—"
                       onChange={
                         isEdit && !markedForRemoval
-                          ? (v) =>
-                              props.onChangeCell(line.line_number, "tax_amount", v)
+                          ? (v) => props.onChangeCell(line.line_number, "tax_amount", v)
                           : undefined
                       }
                     />
@@ -207,12 +192,7 @@ export function LineItemsTable(props: ReadProps | EditProps) {
                       placeholder="—"
                       onChange={
                         isEdit && !markedForRemoval
-                          ? (v) =>
-                              props.onChangeCell(
-                                line.line_number,
-                                "line_total_incl_tax",
-                                v,
-                              )
+                          ? (v) => props.onChangeCell(line.line_number, "line_total_incl_tax", v)
                           : undefined
                       }
                     />
@@ -247,11 +227,7 @@ export function LineItemsTable(props: ReadProps | EditProps) {
                       <td colSpan={isEdit ? 6 : 5} className="px-3 pb-2">
                         <div className="flex flex-wrap gap-1.5">
                           {lineIssues.map((issue) => (
-                            <IssuePill
-                              key={issue.code + issue.field_path}
-                              issue={issue}
-                              compact
-                            />
+                            <IssuePill key={issue.code + issue.field_path} issue={issue} compact />
                           ))}
                         </div>
                       </td>
@@ -269,9 +245,7 @@ export function LineItemsTable(props: ReadProps | EditProps) {
                   onChange={(field, value) =>
                     props.onChangePendingAdd(pending.pendingNumber, field, value)
                   }
-                  onDiscard={() =>
-                    props.onDiscardPendingAdd(pending.pendingNumber)
-                  }
+                  onDiscard={() => props.onDiscardPendingAdd(pending.pendingNumber)}
                 />
               ))}
           </tbody>
@@ -376,16 +350,7 @@ type CellProps = {
   onChange?: (value: string) => void;
 };
 
-function Cell({
-  isEdit,
-  align,
-  value,
-  dirty,
-  prefix,
-  placeholder,
-  mono,
-  onChange,
-}: CellProps) {
+function Cell({ isEdit, align, value, dirty, prefix, placeholder, mono, onChange }: CellProps) {
   const tdClass = cn(
     "px-3 py-2 transition-colors",
     align === "right" ? "text-right" : "text-left",
@@ -395,15 +360,9 @@ function Cell({
 
   if (!isEdit) {
     if (!value) {
-      return (
-        <td className={cn(tdClass, "text-slate-400")}>{placeholder ?? "—"}</td>
-      );
+      return <td className={cn(tdClass, "text-slate-400")}>{placeholder ?? "—"}</td>;
     }
-    return (
-      <td className={tdClass}>
-        {prefix ? `${prefix} ${value}` : value}
-      </td>
-    );
+    return <td className={tdClass}>{prefix ? `${prefix} ${value}` : value}</td>;
   }
 
   return (
@@ -414,7 +373,7 @@ function Cell({
         placeholder={placeholder}
         onChange={(e) => onChange?.(e.target.value)}
         className={cn(
-          "w-full bg-transparent outline-none focus:ring-0 border-0 p-0",
+          "w-full border-0 bg-transparent p-0 outline-none focus:ring-0",
           align === "right" ? "text-right" : "text-left",
           mono && "font-mono",
           !value && "text-slate-400",

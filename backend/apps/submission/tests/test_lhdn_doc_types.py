@@ -9,9 +9,7 @@ import pytest
 
 from apps.identity.models import (
     Organization,
-    OrganizationMembership,
     Role,
-    User,
 )
 from apps.submission import lhdn_json
 from apps.submission.lhdn_json import (
@@ -39,9 +37,7 @@ def org(seeded) -> Organization:
 def _make_invoice(org: Organization, *, invoice_type: str, **overrides) -> Invoice:
     inv = Invoice.objects.create(
         organization=org,
-        ingestion_job_id=overrides.pop(
-            "ingestion_job_id", "11111111-1111-1111-1111-111111111111"
-        ),
+        ingestion_job_id=overrides.pop("ingestion_job_id", "11111111-1111-1111-1111-111111111111"),
         invoice_number=overrides.pop("invoice_number", "INV-001"),
         issue_date=date(2026, 4, 29),
         currency_code="MYR",
@@ -169,9 +165,7 @@ class TestRefundNote:
 @pytest.mark.django_db
 class TestSelfBilled:
     def test_self_billed_invoice_type_11(self, org) -> None:
-        inv = _make_invoice(
-            org, invoice_type=Invoice.InvoiceType.SELF_BILLED_INVOICE
-        )
+        inv = _make_invoice(org, invoice_type=Invoice.InvoiceType.SELF_BILLED_INVOICE)
         doc = lhdn_json.build_invoice_json(inv)
         assert doc["Invoice"][0]["InvoiceTypeCode"][0]["_"] == "11"
         # Self-Billed Invoice (not CN) → no billing reference required.

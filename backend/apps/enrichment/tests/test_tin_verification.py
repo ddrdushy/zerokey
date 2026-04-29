@@ -31,9 +31,7 @@ def org(seeded) -> Organization:
 
 @pytest.fixture
 def org_with_lhdn_creds(org) -> Organization:
-    user = User.objects.create_user(
-        email="o@verifytest.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="o@verifytest.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -132,30 +130,20 @@ class TestNeedsVerification:
 class TestVerifyMasterTin:
     def test_recognized_tin_marks_verified(self, org_with_lhdn_creds) -> None:
         master = _make_master(org=org_with_lhdn_creds)
-        with patch(
-            "apps.submission.lhdn_client.validate_tin", return_value=True
-        ):
+        with patch("apps.submission.lhdn_client.validate_tin", return_value=True):
             result = tin_verification.verify_master_tin(master.id)
         assert result["state"] == CustomerMaster.TinVerificationState.VERIFIED
         master.refresh_from_db()
-        assert (
-            master.tin_verification_state
-            == CustomerMaster.TinVerificationState.VERIFIED
-        )
+        assert master.tin_verification_state == CustomerMaster.TinVerificationState.VERIFIED
         assert master.tin_last_verified_at is not None
 
     def test_unrecognized_tin_marks_failed(self, org_with_lhdn_creds) -> None:
         master = _make_master(org=org_with_lhdn_creds)
-        with patch(
-            "apps.submission.lhdn_client.validate_tin", return_value=False
-        ):
+        with patch("apps.submission.lhdn_client.validate_tin", return_value=False):
             result = tin_verification.verify_master_tin(master.id)
         assert result["state"] == CustomerMaster.TinVerificationState.FAILED
         master.refresh_from_db()
-        assert (
-            master.tin_verification_state
-            == CustomerMaster.TinVerificationState.FAILED
-        )
+        assert master.tin_verification_state == CustomerMaster.TinVerificationState.FAILED
 
     def test_no_creds_leaves_unverified(self, org) -> None:
         # Org has no LHDN integration row. Master stays unverified.
@@ -163,10 +151,7 @@ class TestVerifyMasterTin:
         result = tin_verification.verify_master_tin(master.id)
         assert result == {"state": "skipped", "reason": "no_creds"}
         master.refresh_from_db()
-        assert (
-            master.tin_verification_state
-            == CustomerMaster.TinVerificationState.UNVERIFIED
-        )
+        assert master.tin_verification_state == CustomerMaster.TinVerificationState.UNVERIFIED
 
     def test_no_tin_skipped(self, org_with_lhdn_creds) -> None:
         master = _make_master(org=org_with_lhdn_creds, tin="")
@@ -177,18 +162,13 @@ class TestVerifyMasterTin:
         master = _make_master(org=org_with_lhdn_creds)
         with patch(
             "apps.submission.lhdn_client.validate_tin",
-            side_effect=lhdn_client.LHDNRateLimitError(
-                "rate limited", retry_after_seconds=60
-            ),
+            side_effect=lhdn_client.LHDNRateLimitError("rate limited", retry_after_seconds=60),
         ):
             result = tin_verification.verify_master_tin(master.id)
         assert result == {"state": "skipped", "reason": "lhdn_rate_limit"}
         master.refresh_from_db()
         # Transient — state must NOT flip to failed.
-        assert (
-            master.tin_verification_state
-            == CustomerMaster.TinVerificationState.UNVERIFIED
-        )
+        assert master.tin_verification_state == CustomerMaster.TinVerificationState.UNVERIFIED
 
     def test_lhdn_transient_keeps_state(self, org_with_lhdn_creds) -> None:
         master = _make_master(
@@ -204,22 +184,15 @@ class TestVerifyMasterTin:
         assert result["reason"] == "lhdn_transient"
         master.refresh_from_db()
         # Don't flip a previously-verified row to failed on transient.
-        assert (
-            master.tin_verification_state
-            == CustomerMaster.TinVerificationState.VERIFIED
-        )
+        assert master.tin_verification_state == CustomerMaster.TinVerificationState.VERIFIED
 
     def test_audit_omits_tin_value(self, org_with_lhdn_creds) -> None:
         from apps.audit.models import AuditEvent
 
         master = _make_master(org=org_with_lhdn_creds, tin="C-VERY-SECRET")
-        with patch(
-            "apps.submission.lhdn_client.validate_tin", return_value=True
-        ):
+        with patch("apps.submission.lhdn_client.validate_tin", return_value=True):
             tin_verification.verify_master_tin(master.id)
-        ev = AuditEvent.objects.filter(
-            action_type="enrichment.tin_verified"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="enrichment.tin_verified").first()
         assert ev is not None
         # The TIN string itself must NOT appear in payload.
         assert "C-VERY-SECRET" not in str(ev.payload)

@@ -279,9 +279,7 @@ class TestUpdateService:
         validate_invoice(invoice.id)
 
         before = set(
-            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list(
-                "code", flat=True
-            )
+            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list("code", flat=True)
         )
         assert "buyer.tin.format" in before
 
@@ -293,9 +291,7 @@ class TestUpdateService:
         )
 
         after = set(
-            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list(
-                "code", flat=True
-            )
+            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list("code", flat=True)
         )
         assert "buyer.tin.format" not in after
 
@@ -311,9 +307,7 @@ class TestUpdateService:
 
         # Baseline is clean for arithmetic.
         codes_before = set(
-            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list(
-                "code", flat=True
-            )
+            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list("code", flat=True)
         )
         assert "totals.grand_total.mismatch" not in codes_before
 
@@ -325,9 +319,7 @@ class TestUpdateService:
         )
 
         codes_after = set(
-            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list(
-                "code", flat=True
-            )
+            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list("code", flat=True)
         )
         assert "totals.grand_total.mismatch" in codes_after
 
@@ -564,9 +556,7 @@ class TestLineItemUpdates:
         from apps.enrichment.services import enrich_invoice
 
         enrich_invoice(invoice.id)
-        master = ItemMaster.objects.get(
-            organization=org, canonical_name="Widget"
-        )
+        master = ItemMaster.objects.get(organization=org, canonical_name="Widget")
         # Imagine the master picked up a wrong code from a previous LLM pass.
         master.default_classification_code = "999"
         master.save()

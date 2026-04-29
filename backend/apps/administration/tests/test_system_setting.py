@@ -74,9 +74,7 @@ class TestSystemSettingResolver:
     def test_require_raises_when_not_configured_anywhere(self, monkeypatch) -> None:
         monkeypatch.delenv("LHDN_CLIENT_ID", raising=False)
         with pytest.raises(SettingNotConfigured, match=r"lhdn\.client_id"):
-            require_system_setting(
-                namespace="lhdn", key="client_id", env_fallback="LHDN_CLIENT_ID"
-            )
+            require_system_setting(namespace="lhdn", key="client_id", env_fallback="LHDN_CLIENT_ID")
 
 
 @pytest.mark.django_db

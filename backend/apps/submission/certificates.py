@@ -92,9 +92,7 @@ def ensure_certificate(*, organization_id) -> LoadedCertificate:
     with super_admin_context(reason="submission.cert.load"):
         org = Organization.objects.filter(id=organization_id).first()
         if org is None:
-            raise CertificateError(
-                f"Organization {organization_id} not found."
-            )
+            raise CertificateError(f"Organization {organization_id} not found.")
 
         if not org.certificate_uploaded or not org.certificate_pem:
             _generate_and_store_self_signed(org)
@@ -105,9 +103,7 @@ def ensure_certificate(*, organization_id) -> LoadedCertificate:
 
 def _generate_and_store_self_signed(org) -> None:
     """Mint an RSA-2048 self-signed cert for the org + persist it."""
-    private_key = rsa.generate_private_key(
-        public_exponent=65537, key_size=RSA_KEY_SIZE_BITS
-    )
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=RSA_KEY_SIZE_BITS)
 
     common_name = (
         org.legal_name[:60] + " (ZeroKey dev cert)"
@@ -137,9 +133,7 @@ def _generate_and_store_self_signed(org) -> None:
         .serial_number(serial)
         .not_valid_before(now)
         .not_valid_after(not_after)
-        .add_extension(
-            x509.BasicConstraints(ca=False, path_length=None), critical=True
-        )
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(
             x509.KeyUsage(
                 digital_signature=True,
@@ -220,30 +214,21 @@ def _load(org) -> LoadedCertificate:
     if not org.certificate_pem:
         raise CertificateError("Organization has no certificate stored.")
 
-    key_pem_plain = decrypt_value(
-        org.certificate_private_key_pem_encrypted or ""
-    )
+    key_pem_plain = decrypt_value(org.certificate_private_key_pem_encrypted or "")
     if not key_pem_plain:
-        raise CertificateError(
-            "Certificate private key is empty or could not be decrypted."
-        )
+        raise CertificateError("Certificate private key is empty or could not be decrypted.")
 
     try:
-        cert = x509.load_pem_x509_certificate(
-            org.certificate_pem.encode("ascii")
-        )
+        cert = x509.load_pem_x509_certificate(org.certificate_pem.encode("ascii"))
         private_key = serialization.load_pem_private_key(
             key_pem_plain.encode("ascii"), password=None
         )
     except (ValueError, TypeError) as exc:
-        raise CertificateError(
-            f"Failed to parse stored certificate: {type(exc).__name__}"
-        ) from exc
+        raise CertificateError(f"Failed to parse stored certificate: {type(exc).__name__}") from exc
 
     if not isinstance(private_key, rsa.RSAPrivateKey):
         raise CertificateError(
-            "Stored private key is not an RSA key. "
-            "LHDN signing requires RSA-2048 or larger."
+            "Stored private key is not an RSA key. LHDN signing requires RSA-2048 or larger."
         )
 
     return LoadedCertificate(
@@ -274,9 +259,7 @@ def upload_certificate(
 
     try:
         cert = x509.load_pem_x509_certificate(cert_pem.encode("ascii"))
-        key = serialization.load_pem_private_key(
-            private_key_pem.encode("ascii"), password=None
-        )
+        key = serialization.load_pem_private_key(private_key_pem.encode("ascii"), password=None)
     except (ValueError, TypeError) as exc:
         raise CertificateError(
             f"Could not parse certificate or private key: {type(exc).__name__}"
@@ -292,9 +275,7 @@ def upload_certificate(
     cert_pubkey_numbers = cert.public_key().public_numbers()
     key_pubkey_numbers = key.public_key().public_numbers()
     if cert_pubkey_numbers != key_pubkey_numbers:
-        raise CertificateError(
-            "Certificate and private key are not a matched pair."
-        )
+        raise CertificateError("Certificate and private key are not a matched pair.")
 
     common_name = ""
     for attr in cert.subject:
@@ -306,13 +287,9 @@ def upload_certificate(
     with super_admin_context(reason="submission.cert.upload"):
         org = Organization.objects.filter(id=organization_id).first()
         if org is None:
-            raise CertificateError(
-                f"Organization {organization_id} not found."
-            )
+            raise CertificateError(f"Organization {organization_id} not found.")
         org.certificate_pem = cert_pem
-        org.certificate_private_key_pem_encrypted = encrypt_value(
-            private_key_pem
-        )
+        org.certificate_private_key_pem_encrypted = encrypt_value(private_key_pem)
         org.certificate_kind = "uploaded"
         org.certificate_uploaded = True
         org.certificate_expiry_date = cert.not_valid_after_utc.date()
@@ -381,17 +358,11 @@ def pfx_to_pem(*, pfx_bytes: bytes, password: str) -> tuple[str, str]:
         ) from exc
 
     if cert is None:
-        raise CertificateError(
-            "PFX/P12 bundle did not contain a certificate."
-        )
+        raise CertificateError("PFX/P12 bundle did not contain a certificate.")
     if key is None:
-        raise CertificateError(
-            "PFX/P12 bundle did not contain a private key."
-        )
+        raise CertificateError("PFX/P12 bundle did not contain a private key.")
     if not isinstance(key, rsa.RSAPrivateKey):
-        raise CertificateError(
-            "Only RSA private keys are supported (LHDN requirement)."
-        )
+        raise CertificateError("Only RSA private keys are supported (LHDN requirement).")
 
     cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
     key_pem = key.private_bytes(

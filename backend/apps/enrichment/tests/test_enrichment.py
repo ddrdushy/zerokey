@@ -106,14 +106,10 @@ class TestCustomerMaster:
         assert m.usage_count == 1
 
     def test_repeat_buyer_by_tin_increments_usage(self, org) -> None:
-        first = _make_invoice(
-            org, ingestion_job_id="22222222-2222-4222-8222-222222222222"
-        )
+        first = _make_invoice(org, ingestion_job_id="22222222-2222-4222-8222-222222222222")
         enrich_invoice(first.id)
 
-        second = _make_invoice(
-            org, ingestion_job_id="33333333-3333-4333-8333-333333333333"
-        )
+        second = _make_invoice(org, ingestion_job_id="33333333-3333-4333-8333-333333333333")
         result = enrich_invoice(second.id)
 
         assert result.customer_matched is True

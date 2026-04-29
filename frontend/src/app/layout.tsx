@@ -20,11 +20,7 @@ export const metadata: Metadata = {
     "Enterprise-grade, SME-friendly e-invoicing for Malaysia. Connect to LHDN MyInvois without lifting a keystroke.",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body>{children}</body>

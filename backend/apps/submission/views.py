@@ -172,9 +172,7 @@ def submit_invoice_to_lhdn_view(request: Request, invoice_id: str) -> Response:
         )
 
     try:
-        invoice = Invoice.objects.get(
-            id=invoice_id, organization_id=organization_id
-        )
+        invoice = Invoice.objects.get(id=invoice_id, organization_id=organization_id)
     except Invoice.DoesNotExist:
         return Response(
             {"detail": "Invoice not found."},
@@ -186,11 +184,7 @@ def submit_invoice_to_lhdn_view(request: Request, invoice_id: str) -> Response:
     # raise + audit a generic failure).
     if not invoice.invoice_number:
         return Response(
-            {
-                "detail": (
-                    "Invoice number is required before LHDN submission."
-                )
-            },
+            {"detail": ("Invoice number is required before LHDN submission.")},
             status=status.HTTP_400_BAD_REQUEST,
         )
     if invoice.status in {
@@ -199,11 +193,7 @@ def submit_invoice_to_lhdn_view(request: Request, invoice_id: str) -> Response:
         Invoice.Status.CANCELLED,
     }:
         return Response(
-            {
-                "detail": (
-                    f"Invoice is already in {invoice.status} state."
-                )
-            },
+            {"detail": (f"Invoice is already in {invoice.status} state.")},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -242,9 +232,7 @@ def cancel_invoice_lhdn_view(request: Request, invoice_id: str) -> Response:
         )
 
     try:
-        invoice = Invoice.objects.get(
-            id=invoice_id, organization_id=organization_id
-        )
+        invoice = Invoice.objects.get(id=invoice_id, organization_id=organization_id)
     except Invoice.DoesNotExist:
         return Response(
             {"detail": "Invoice not found."},
@@ -288,9 +276,7 @@ def poll_invoice_lhdn_view(request: Request, invoice_id: str) -> Response:
             status=status.HTTP_400_BAD_REQUEST,
         )
     try:
-        invoice = Invoice.objects.get(
-            id=invoice_id, organization_id=organization_id
-        )
+        invoice = Invoice.objects.get(id=invoice_id, organization_id=organization_id)
     except Invoice.DoesNotExist:
         return Response(
             {"detail": "Invoice not found."},
@@ -341,9 +327,7 @@ def _issue_amendment_view(
             status=status.HTTP_403_FORBIDDEN,
         )
     try:
-        source = Invoice.objects.get(
-            id=invoice_id, organization_id=organization_id
-        )
+        source = Invoice.objects.get(id=invoice_id, organization_id=organization_id)
     except Invoice.DoesNotExist:
         return Response(
             {"detail": "Invoice not found."},
@@ -369,9 +353,7 @@ def _issue_amendment_view(
             line_adjustments=line_adjustments,
         )
     except amendments.AmendmentError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     number_key = response_id_key.replace("_id", "_number")
     return Response(

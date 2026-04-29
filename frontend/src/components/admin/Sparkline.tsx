@@ -20,12 +20,7 @@ type Props = {
   height?: number;
 };
 
-export function Sparkline({
-  points,
-  barClass = "fill-slate-400",
-  max,
-  height = 28,
-}: Props) {
+export function Sparkline({ points, barClass = "fill-slate-400", max, height = 28 }: Props) {
   if (!points || points.length === 0) return null;
   const maxValue = max ?? Math.max(1, ...points.map((p) => p.count));
   const width = points.length * 6 - 2; // 4px bar + 2px gap, no trailing gap
@@ -41,19 +36,11 @@ export function Sparkline({
       className="block"
     >
       {points.map((p, i) => {
-        const barHeight =
-          maxValue > 0 ? Math.max(1, Math.round((p.count / maxValue) * height)) : 1;
+        const barHeight = maxValue > 0 ? Math.max(1, Math.round((p.count / maxValue) * height)) : 1;
         const x = i * 6;
         const y = height - barHeight;
         return (
-          <rect
-            key={p.date}
-            x={x}
-            y={y}
-            width={4}
-            height={barHeight}
-            className={barClass}
-          >
+          <rect key={p.date} x={x} y={y} width={4} height={barHeight} className={barClass}>
             <title>
               {p.date}: {p.count}
             </title>

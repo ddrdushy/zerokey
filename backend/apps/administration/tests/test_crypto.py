@@ -94,7 +94,7 @@ class TestDictValues:
 class TestSystemSettingsResolver:
     def test_upsert_stores_ciphertext_at_rest(self) -> None:
         from apps.administration.models import SystemSetting
-        from apps.administration.services import upsert_system_setting, system_setting
+        from apps.administration.services import system_setting, upsert_system_setting
 
         upsert_system_setting(
             namespace="testns",
@@ -135,7 +135,9 @@ class TestEngineCredentialResolver:
             credentials={"api_key": encrypt_value("real-engine-key")},
         )
         try:
-            assert engine_credential(engine_name="test-engine-x", key="api_key") == "real-engine-key"
+            assert (
+                engine_credential(engine_name="test-engine-x", key="api_key") == "real-engine-key"
+            )
         finally:
             engine.delete()
 

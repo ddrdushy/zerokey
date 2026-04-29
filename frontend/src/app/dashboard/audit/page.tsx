@@ -22,12 +22,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, ShieldAlert, ShieldCheck } from "lucide-react";
 
-import {
-  api,
-  ApiError,
-  type AuditEvent,
-  type LatestVerification,
-} from "@/lib/api";
+import { api, ApiError, type AuditEvent, type LatestVerification } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -52,8 +47,7 @@ export default function AuditLogPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
-  const [latestVerification, setLatestVerification] =
-    useState<LatestVerification | null>(null);
+  const [latestVerification, setLatestVerification] = useState<LatestVerification | null>(null);
 
   // Load initial page + action-type filter list.
   useEffect(() => {
@@ -145,7 +139,10 @@ export default function AuditLogPage() {
       setTotal(fresh.total);
       // Manual run also writes a ChainVerificationRun row — refresh the
       // "last verified" footer so it reflects the just-completed run.
-      api.latestAuditVerification().then(setLatestVerification).catch(() => {});
+      api
+        .latestAuditVerification()
+        .then(setLatestVerification)
+        .catch(() => {});
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed.");
     } finally {
@@ -164,9 +161,7 @@ export default function AuditLogPage() {
       <div className="flex flex-col gap-6">
         <header className="flex items-end justify-between">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight">
-              Audit log
-            </h1>
+            <h1 className="font-display text-2xl font-bold tracking-tight">Audit log</h1>
             <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
               Every business action, hash-chained, append-only
             </p>
@@ -189,11 +184,7 @@ export default function AuditLogPage() {
           </div>
         )}
 
-        <FilterBar
-          actionTypes={actionTypes}
-          value={filterAction}
-          onChange={setFilterAction}
-        />
+        <FilterBar actionTypes={actionTypes} value={filterAction} onChange={setFilterAction} />
 
         {events === null ? (
           <Empty>Loading…</Empty>
@@ -201,19 +192,10 @@ export default function AuditLogPage() {
           <EmptyState filtered={!!filterAction} />
         ) : (
           <>
-            <EventTable
-              events={events}
-              expanded={expanded}
-              onToggle={toggleExpanded}
-            />
+            <EventTable events={events} expanded={expanded} onToggle={toggleExpanded} />
             {hasMore && (
               <div className="flex justify-center">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onLoadMore}
-                  disabled={loadingMore}
-                >
+                <Button variant="ghost" size="sm" onClick={onLoadMore} disabled={loadingMore}>
                   {loadingMore ? "Loading…" : "Load more"}
                 </Button>
               </div>
@@ -362,21 +344,11 @@ function EventTable({
         <thead className="bg-slate-50 text-slate-400">
           <tr>
             <th className="w-10 px-3 py-2" />
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              #
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              When
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Action
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Actor
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Affected
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">#</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">When</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Action</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Actor</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Affected</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -416,17 +388,11 @@ function EventRow({
             aria-label={isOpen ? "Collapse details" : "Expand details"}
             className="text-slate-400 hover:text-ink"
           >
-            {isOpen ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
+            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </button>
         </td>
         <td className="px-3 py-3 font-mono text-slate-400">{event.sequence}</td>
-        <td className="px-3 py-3 text-slate-600">
-          {new Date(event.timestamp).toLocaleString()}
-        </td>
+        <td className="px-3 py-3 text-slate-600">{new Date(event.timestamp).toLocaleString()}</td>
         <td className="px-3 py-3">
           <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">
             {event.action_type}
@@ -435,9 +401,7 @@ function EventRow({
         <td className="px-3 py-3 text-slate-600">
           <span className="text-slate-400">{event.actor_type}</span>
           {event.actor_id && (
-            <span className="ml-1 font-mono text-[11px]">
-              {truncate(event.actor_id, 16)}
-            </span>
+            <span className="ml-1 font-mono text-[11px]">{truncate(event.actor_id, 16)}</span>
           )}
         </td>
         <td className="px-3 py-3 text-slate-600">
@@ -498,13 +462,7 @@ function ExpandedDetails({ event }: { event: AuditEvent }) {
   );
 }
 
-function DetailField({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
       <div className="mb-1 text-2xs font-medium uppercase tracking-wider text-slate-400">
@@ -515,13 +473,7 @@ function DetailField({
   );
 }
 
-function DetailRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-2">
       <dt className="text-slate-400">{label}:</dt>
@@ -532,11 +484,7 @@ function DetailRow({
 
 function EmptyState({ filtered }: { filtered: boolean }) {
   return (
-    <div
-      className={cn(
-        "rounded-xl border border-slate-100 bg-white p-12 text-center",
-      )}
-    >
+    <div className={cn("rounded-xl border border-slate-100 bg-white p-12 text-center")}>
       <ShieldCheck className="mx-auto h-8 w-8 text-slate-300" aria-hidden />
       <h2 className="mt-4 font-display text-xl font-semibold">
         {filtered ? "No events for this action" : "No events yet"}

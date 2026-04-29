@@ -46,9 +46,7 @@ def admin_me(request: Request) -> Response:
 @permission_classes([IsPlatformStaff])
 def platform_overview(request: Request) -> Response:
     """Cross-tenant KPI snapshot for the admin landing page."""
-    return Response(
-        services.platform_overview(actor_user_id=request.user.id)
-    )
+    return Response(services.platform_overview(actor_user_id=request.user.id))
 
 
 @api_view(["GET"])
@@ -252,9 +250,7 @@ def platform_tenant_detail(request: Request, organization_id: str) -> Response:
 
 @api_view(["POST"])
 @permission_classes([IsPlatformStaff])
-def admin_start_impersonation(
-    request: Request, organization_id: str
-) -> Response:
+def admin_start_impersonation(request: Request, organization_id: str) -> Response:
     """Begin a 30-minute impersonation of one tenant.
 
     Body: { "reason": "support ticket #4421" }   (REQUIRED)
@@ -351,9 +347,7 @@ def admin_update_engine(request: Request, engine_id: str) -> Response:
     field_updates = body.get("fields") or {}
     credential_updates = body.get("credentials") or {}
 
-    if not isinstance(field_updates, dict) or not isinstance(
-        credential_updates, dict
-    ):
+    if not isinstance(field_updates, dict) or not isinstance(credential_updates, dict):
         return Response(
             {"detail": "fields and credentials must be objects."},
             status=status.HTTP_400_BAD_REQUEST,

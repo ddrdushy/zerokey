@@ -173,11 +173,7 @@ def api_upload(request: Request) -> Response:
 
     if not filename or not mime_type or not body_b64:
         return Response(
-            {
-                "detail": (
-                    "filename, mime_type, and body_b64 are all required."
-                )
-            },
+            {"detail": ("filename, mime_type, and body_b64 are all required.")},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -217,9 +213,7 @@ def api_upload(request: Request) -> Response:
             source_identifier=source_identifier,
         )
     except services.IngestionError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(
         IngestionJobSerializer(result.job, context={"request": request}).data,
@@ -247,9 +241,7 @@ def inbox_address_view(request: Request) -> Response:
         )
     from apps.identity import services as identity_services
 
-    if not identity_services.can_user_act_for_organization(
-        request.user, organization_id
-    ):
+    if not identity_services.can_user_act_for_organization(request.user, organization_id):
         return Response(
             {"detail": "You are not a member of that organization."},
             status=status.HTTP_403_FORBIDDEN,
@@ -338,11 +330,7 @@ def email_forward_webhook_view(request: Request) -> Response:
     except email_forward.InboxNotFoundError as exc:
         # 404 so the provider can mark the bounce / dead-letter the
         # forward — it'll never resolve by retrying.
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
     except email_forward.EmailForwardError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(result)

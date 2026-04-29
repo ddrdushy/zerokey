@@ -8,8 +8,6 @@ directly at which rule changed.
 
 from __future__ import annotations
 
-import pytest
-
 from apps.connectors.merge_classifier import (
     ClassifyInputs,
     Verdict,
@@ -30,9 +28,7 @@ def _inputs(
     field it's exercising rather than restating every default."""
     return ClassifyInputs(
         existing_value=existing,
-        existing_provenance=(
-            {"source": existing_source} if existing_source is not None else None
-        ),
+        existing_provenance=({"source": existing_source} if existing_source is not None else None),
         incoming_value=incoming,
         incoming_source=incoming_source,
         is_locked=is_locked,
@@ -123,9 +119,7 @@ class TestAuthorityVerified:
 
 class TestEmptyExisting:
     def test_empty_existing_with_incoming_auto_populates(self) -> None:
-        out = classify_merge(
-            _inputs(existing="", incoming="ACME SDN BHD")
-        )
+        out = classify_merge(_inputs(existing="", incoming="ACME SDN BHD"))
         assert out is Verdict.AUTO_POPULATE
 
     def test_both_empty_is_noop(self) -> None:
@@ -137,9 +131,7 @@ class TestEmptyExisting:
         # different non-empty value. Otherwise a connector that
         # sends a real value would route to conflict instead of
         # auto-populate.
-        out = classify_merge(
-            _inputs(existing="   ", incoming="ACME")
-        )
+        out = classify_merge(_inputs(existing="   ", incoming="ACME"))
         assert out is Verdict.AUTO_POPULATE
 
 

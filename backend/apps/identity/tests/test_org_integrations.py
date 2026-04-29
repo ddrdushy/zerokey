@@ -40,9 +40,7 @@ def org_owner(seeded) -> tuple[Organization, User]:
         tin="C10000000001",
         contact_email="o@acme.example",
     )
-    user = User.objects.create_user(
-        email="owner@acme.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="owner@acme.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -114,9 +112,7 @@ class TestUpsertCredentials:
         assert result["sandbox"]["credential_present"]["client_secret"] is True
         # Default sandbox base_url seeded — it's a config field so the
         # plaintext value is visible on the readout.
-        assert result["sandbox"]["values"]["base_url"].startswith(
-            "https://preprod-api.myinvois"
-        )
+        assert result["sandbox"]["values"]["base_url"].startswith("https://preprod-api.myinvois")
 
     def test_credentials_encrypted_at_rest(self, org_owner) -> None:
         org, user = org_owner
@@ -145,9 +141,7 @@ class TestUpsertCredentials:
             actor_user_id=user.id,
         )
         event = (
-            AuditEvent.objects.filter(
-                action_type="identity.integration.credentials_updated"
-            )
+            AuditEvent.objects.filter(action_type="identity.integration.credentials_updated")
             .order_by("-sequence")
             .first()
         )
@@ -253,9 +247,7 @@ class TestSetActiveEnvironment:
             reason="going live",
         )
         event = (
-            AuditEvent.objects.filter(
-                action_type="identity.integration.environment_switched"
-            )
+            AuditEvent.objects.filter(action_type="identity.integration.environment_switched")
             .order_by("-sequence")
             .first()
         )
@@ -305,16 +297,11 @@ def _mock_head(status_code: int = 200) -> MagicMock:
     return resp
 
 
-def _mock_oauth_response(
-    status_code: int = 200, body: dict | None = None
-) -> MagicMock:
+def _mock_oauth_response(status_code: int = 200, body: dict | None = None) -> MagicMock:
     """Slice 58: tester now hits /connect/token via httpx.post."""
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
-    resp.json = MagicMock(
-        return_value=body
-        or {"access_token": "test-token", "expires_in": 3600}
-    )
+    resp.json = MagicMock(return_value=body or {"access_token": "test-token", "expires_in": 3600})
     return resp
 
 
@@ -400,9 +387,7 @@ class TestTestConnection:
         org, user = org_owner
         with patch(
             "apps.identity.integrations.httpx.post",
-            return_value=_mock_oauth_response(
-                401, {"error": "invalid_client"}
-            ),
+            return_value=_mock_oauth_response(401, {"error": "invalid_client"}),
         ):
             outcome = run_test_connection(
                 organization_id=org.id,
@@ -421,14 +406,10 @@ class TestTestConnection:
             organization_id=org.id,
             integration_key="lhdn_myinvois",
             environment="sandbox",
-            field_updates={
-                "base_url": "https://preprod-api.myinvois.hasil.gov.my"
-            },
+            field_updates={"base_url": "https://preprod-api.myinvois.hasil.gov.my"},
             actor_user_id=user.id,
         )
-        with patch(
-            "apps.identity.integrations.httpx.post"
-        ) as posted:
+        with patch("apps.identity.integrations.httpx.post") as posted:
             outcome = run_test_connection(
                 organization_id=org.id,
                 integration_key="lhdn_myinvois",
@@ -454,12 +435,8 @@ class TestEndpoints:
         assert any(r["integration_key"] == "lhdn_myinvois" for r in results)
 
     def test_non_admin_cannot_patch(self, seeded) -> None:
-        org = Organization.objects.create(
-            legal_name="X", tin="C10000000002", contact_email="o@x"
-        )
-        viewer = User.objects.create_user(
-            email="viewer@x", password="long-enough-password"
-        )
+        org = Organization.objects.create(legal_name="X", tin="C10000000002", contact_email="o@x")
+        viewer = User.objects.create_user(email="viewer@x", password="long-enough-password")
         OrganizationMembership.objects.create(
             user=viewer, organization=org, role=Role.objects.get(name="viewer")
         )
@@ -470,9 +447,7 @@ class TestEndpoints:
         session.save()
         response = client.patch(
             "/api/v1/identity/organization/integrations/lhdn_myinvois/credentials/",
-            data=json.dumps(
-                {"environment": "sandbox", "fields": {"client_id": "x"}}
-            ),
+            data=json.dumps({"environment": "sandbox", "fields": {"client_id": "x"}}),
             content_type="application/json",
         )
         assert response.status_code == 403
@@ -500,9 +475,7 @@ class TestEndpoints:
         client, _, _ = authed_owner
         response = client.patch(
             "/api/v1/identity/organization/integrations/lhdn_myinvois/active-environment/",
-            data=json.dumps(
-                {"environment": "production", "reason": "going live"}
-            ),
+            data=json.dumps({"environment": "production", "reason": "going live"}),
             content_type="application/json",
         )
         assert response.status_code == 200

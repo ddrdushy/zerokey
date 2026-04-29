@@ -20,9 +20,7 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def staff_user(seeded) -> User:
-    return User.objects.create_user(
-        email="staff@symprio.com", password="x", is_staff=True
-    )
+    return User.objects.create_user(email="staff@symprio.com", password="x", is_staff=True)
 
 
 @pytest.fixture
@@ -83,9 +81,7 @@ class TestPlatformOverview:
         response = client.get("/api/v1/admin/overview/")
         assert response.status_code == 403
 
-    def test_staff_returns_full_kpi_block(
-        self, staff_user, populated_platform
-    ) -> None:
+    def test_staff_returns_full_kpi_block(self, staff_user, populated_platform) -> None:
         client = Client()
         client.force_login(staff_user)
         response = client.get("/api/v1/admin/overview/")
@@ -118,9 +114,7 @@ class TestPlatformOverview:
         assert "active" in body["engines"]
         assert isinstance(body["engines"]["calls_last_7d"], list)
 
-    def test_overview_includes_14_day_sparklines(
-        self, staff_user, populated_platform
-    ) -> None:
+    def test_overview_includes_14_day_sparklines(self, staff_user, populated_platform) -> None:
         """KPIs the operator wants to eyeball trends on each carry a 14-day series."""
         client = Client()
         client.force_login(staff_user)
@@ -139,18 +133,12 @@ class TestPlatformOverview:
             dates = [entry["date"] for entry in spark]
             assert dates == sorted(dates)
 
-    def test_overview_load_emits_audit_event(
-        self, staff_user, populated_platform
-    ) -> None:
+    def test_overview_load_emits_audit_event(self, staff_user, populated_platform) -> None:
         client = Client()
         client.force_login(staff_user)
-        before = AuditEvent.objects.filter(
-            action_type="admin.platform_overview_viewed"
-        ).count()
+        before = AuditEvent.objects.filter(action_type="admin.platform_overview_viewed").count()
         client.get("/api/v1/admin/overview/")
-        after = AuditEvent.objects.filter(
-            action_type="admin.platform_overview_viewed"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="admin.platform_overview_viewed").count()
         assert after == before + 1
 
         event = (

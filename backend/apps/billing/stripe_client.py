@@ -70,9 +70,7 @@ class StripeCredentials:
 
 def credentials() -> StripeCredentials:
     """Load Stripe creds from SystemSetting (encrypted at rest)."""
-    secret = system_setting(
-        namespace="stripe", key="secret_key", env_fallback="STRIPE_SECRET_KEY"
-    )
+    secret = system_setting(namespace="stripe", key="secret_key", env_fallback="STRIPE_SECRET_KEY")
     if not secret:
         raise StripeError(
             "Stripe is not configured. Set the secret_key in admin "
@@ -80,18 +78,9 @@ def credentials() -> StripeCredentials:
         )
     return StripeCredentials(
         secret_key=secret,
-        publishable_key=system_setting(
-            namespace="stripe", key="publishable_key"
-        )
-        or "",
-        webhook_secret=system_setting(
-            namespace="stripe", key="webhook_secret"
-        )
-        or "",
-        default_currency=(
-            system_setting(namespace="stripe", key="default_currency")
-            or "MYR"
-        ),
+        publishable_key=system_setting(namespace="stripe", key="publishable_key") or "",
+        webhook_secret=system_setting(namespace="stripe", key="webhook_secret") or "",
+        default_currency=(system_setting(namespace="stripe", key="default_currency") or "MYR"),
     )
 
 
@@ -116,9 +105,7 @@ def _post(
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as exc:
-        raise StripeError(
-            f"Stripe request failed: {type(exc).__name__}"
-        ) from exc
+        raise StripeError(f"Stripe request failed: {type(exc).__name__}") from exc
 
     if response.status_code in (401, 403):
         raise StripeAuthError("Stripe rejected the secret key.")
@@ -135,9 +122,7 @@ def _post(
     return body
 
 
-def _get(
-    *, creds: StripeCredentials, path: str
-) -> dict[str, Any]:
+def _get(*, creds: StripeCredentials, path: str) -> dict[str, Any]:
     try:
         response = httpx.get(
             f"{STRIPE_API_BASE}{path}",
@@ -145,9 +130,7 @@ def _get(
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as exc:
-        raise StripeError(
-            f"Stripe request failed: {type(exc).__name__}"
-        ) from exc
+        raise StripeError(f"Stripe request failed: {type(exc).__name__}") from exc
 
     if response.status_code in (401, 403):
         raise StripeAuthError("Stripe rejected the secret key.")
@@ -260,17 +243,13 @@ def create_checkout_session(
 
 def get_subscription(*, subscription_id: str) -> dict[str, Any]:
     """Fetch subscription state + period dates."""
-    return _get(
-        creds=credentials(), path=f"/subscriptions/{subscription_id}"
-    )
+    return _get(creds=credentials(), path=f"/subscriptions/{subscription_id}")
 
 
 # --- Webhook signature verification -----------------------------------------
 
 
-def verify_webhook_signature(
-    *, payload: bytes, signature_header: str
-) -> dict[str, Any]:
+def verify_webhook_signature(*, payload: bytes, signature_header: str) -> dict[str, Any]:
     """Verify a Stripe-Signature header + return the parsed event.
 
     Header format: ``t=<unix>,v1=<hex-hmac>``. The signed payload is
@@ -285,9 +264,7 @@ def verify_webhook_signature(
     """
     creds = credentials()
     if not creds.webhook_secret:
-        raise StripeWebhookError(
-            "Stripe webhook_secret is not configured."
-        )
+        raise StripeWebhookError("Stripe webhook_secret is not configured.")
 
     if not signature_header:
         raise StripeWebhookError("Missing Stripe-Signature header.")
@@ -311,9 +288,7 @@ def verify_webhook_signature(
 
     age = abs(int(time.time()) - timestamp)
     if age > WEBHOOK_TOLERANCE_SECONDS:
-        raise StripeWebhookError(
-            f"Stripe webhook event is too old ({age}s)."
-        )
+        raise StripeWebhookError(f"Stripe webhook event is too old ({age}s).")
 
     signed_payload = f"{timestamp_raw}.".encode() + payload
     expected = hmac.new(
@@ -331,6 +306,4 @@ def verify_webhook_signature(
     try:
         return _json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, _json.JSONDecodeError) as exc:
-        raise StripeWebhookError(
-            "Stripe webhook body is not valid JSON."
-        ) from exc
+        raise StripeWebhookError("Stripe webhook body is not valid JSON.") from exc

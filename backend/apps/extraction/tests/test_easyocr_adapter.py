@@ -174,16 +174,10 @@ class TestPDFPath:
             def close(self):
                 pass
 
-        fake_pdfium = type(
-            "fake_pdfium_module", (), {"PdfDocument": _FakePdf}
-        )
+        fake_pdfium = type("fake_pdfium_module", (), {"PdfDocument": _FakePdf})
 
-        with patch.dict(
-            "sys.modules", {"easyocr": fake_easyocr, "pypdfium2": fake_pdfium}
-        ):
-            result = adapter.extract_text(
-                body=b"%PDF-fake", mime_type="application/pdf"
-            )
+        with patch.dict("sys.modules", {"easyocr": fake_easyocr, "pypdfium2": fake_pdfium}):
+            result = adapter.extract_text(body=b"%PDF-fake", mime_type="application/pdf")
 
         assert "PAGE ONE" in result.text
         assert "PAGE TWO" in result.text

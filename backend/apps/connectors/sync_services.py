@@ -176,10 +176,7 @@ def propose_sync(
     config = _load_integration_config(integration_config_id)
     incoming_source = CONNECTOR_SOURCE_MAP.get(config.connector_type, "")
     if not incoming_source:
-        raise SyncError(
-            f"Unknown connector type for source mapping: "
-            f"{config.connector_type}"
-        )
+        raise SyncError(f"Unknown connector type for source mapping: {config.connector_type}")
 
     customer_bucket = _classify_master_batch(
         organization_id=config.organization_id,
@@ -206,8 +203,7 @@ def propose_sync(
             organization_id=config.organization_id,
             integration_config=config,
             actor_user_id=actor_user_id,
-            expires_at=timezone.now()
-            + timedelta(days=SyncProposal.REVERT_WINDOW_DAYS),
+            expires_at=timezone.now() + timedelta(days=SyncProposal.REVERT_WINDOW_DAYS),
             diff=diff,
         )
         # Materialise conflict rows so the conflict-queue UI has
@@ -388,19 +384,13 @@ def _classify_master_batch(
     return bucket
 
 
-def _list_masters(
-    organization_id: uuid.UUID, master_type: str
-) -> list[Any]:
+def _list_masters(organization_id: uuid.UUID, master_type: str) -> list[Any]:
     if master_type == MasterType.CUSTOMER:
-        return list(
-            CustomerMaster.objects.filter(organization_id=organization_id)
-        )
+        return list(CustomerMaster.objects.filter(organization_id=organization_id))
     return list(ItemMaster.objects.filter(organization_id=organization_id))
 
 
-def _list_locks_by_master(
-    organization_id: uuid.UUID, master_type: str
-) -> dict[str, set[str]]:
+def _list_locks_by_master(organization_id: uuid.UUID, master_type: str) -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     qs = MasterFieldLock.objects.filter(
         organization_id=organization_id, master_type=master_type
@@ -469,10 +459,7 @@ def apply_sync_proposal(
     """
     proposal = _load_proposal_for_write(proposal_id)
     if proposal.status != SyncProposal.Status.PROPOSED:
-        raise SyncError(
-            f"Cannot apply: proposal is in state '{proposal.status}', "
-            "not 'proposed'."
-        )
+        raise SyncError(f"Cannot apply: proposal is in state '{proposal.status}', not 'proposed'.")
 
     config = proposal.integration_config
     source = CONNECTOR_SOURCE_MAP.get(config.connector_type, "")
@@ -610,13 +597,9 @@ def _apply_would_add(
                 organization_id=organization_id,
                 canonical_name=fields.get("canonical_name") or "(no name)",
                 default_msic_code=fields.get("default_msic_code", ""),
-                default_classification_code=fields.get(
-                    "default_classification_code", ""
-                ),
+                default_classification_code=fields.get("default_classification_code", ""),
                 default_tax_type_code=fields.get("default_tax_type_code", ""),
-                default_unit_of_measurement=fields.get(
-                    "default_unit_of_measurement", ""
-                ),
+                default_unit_of_measurement=fields.get("default_unit_of_measurement", ""),
                 field_provenance=provenance,
             )
             created.append({"id": str(row.id)})
@@ -657,7 +640,7 @@ def _apply_would_update(
         provenance = dict(row.field_provenance or {})
         prior_field_state: dict[str, dict[str, str]] = {}
         for fname, change in (entry.get("changes") or {}).items():
-            prior = (getattr(row, fname, "") or "")
+            prior = getattr(row, fname, "") or ""
             prior_provenance = provenance.get(fname, {}) or {}
             prior_field_state[fname] = {
                 "value": prior,
@@ -673,9 +656,7 @@ def _apply_would_update(
             }
         row.field_provenance = provenance
         row.save()
-        updated.append(
-            {"id": str(row.id), "prior": prior_field_state}
-        )
+        updated.append({"id": str(row.id), "prior": prior_field_state})
     return updated
 
 
@@ -691,10 +672,7 @@ def revert_sync_proposal(
     """Walk applied_changes in reverse + restore prior state."""
     proposal = _load_proposal_for_write(proposal_id)
     if proposal.status != SyncProposal.Status.APPLIED:
-        raise SyncError(
-            f"Cannot revert: proposal is in state '{proposal.status}', "
-            "not 'applied'."
-        )
+        raise SyncError(f"Cannot revert: proposal is in state '{proposal.status}', not 'applied'.")
     if timezone.now() > proposal.expires_at:
         proposal.status = SyncProposal.Status.EXPIRED
         proposal.save(update_fields=["status"])
@@ -783,27 +761,17 @@ def resolve_field_conflict(
     if resolution == MasterFieldConflict.Resolution.ENTER_CUSTOM_VALUE and (
         custom_value is None or not str(custom_value).strip()
     ):
-        raise SyncError(
-            "enter_custom_value requires a non-empty custom_value."
-        )
+        raise SyncError("enter_custom_value requires a non-empty custom_value.")
 
-    conflict = MasterFieldConflict.objects.select_related(
-        "sync_proposal"
-    ).get(id=conflict_id)
+    conflict = MasterFieldConflict.objects.select_related("sync_proposal").get(id=conflict_id)
     if not conflict.is_open:
         raise SyncError("Conflict is already resolved.")
 
-    Model = (
-        CustomerMaster
-        if conflict.master_type == MasterType.CUSTOMER
-        else ItemMaster
-    )
+    Model = CustomerMaster if conflict.master_type == MasterType.CUSTOMER else ItemMaster
     try:
         row = Model.objects.get(id=conflict.master_id)
     except Model.DoesNotExist:
-        raise SyncError(
-            f"Master record {conflict.master_id} no longer exists."
-        )
+        raise SyncError(f"Master record {conflict.master_id} no longer exists.")
 
     now_iso = timezone.now().isoformat()
     fname = conflict.field_name
@@ -830,13 +798,9 @@ def resolve_field_conflict(
         # master. Append the incoming value to aliases; canonical
         # name stays as-is.
         if conflict.master_type == MasterType.CUSTOMER and fname != "legal_name":
-            raise SyncError(
-                "keep_both_as_aliases only applies to legal_name on customer masters."
-            )
+            raise SyncError("keep_both_as_aliases only applies to legal_name on customer masters.")
         if conflict.master_type == MasterType.ITEM and fname != "canonical_name":
-            raise SyncError(
-                "keep_both_as_aliases only applies to canonical_name on item masters."
-            )
+            raise SyncError("keep_both_as_aliases only applies to canonical_name on item masters.")
         aliases = list(getattr(row, "aliases", []) or [])
         if conflict.incoming_value and conflict.incoming_value not in aliases:
             aliases.append(conflict.incoming_value)
@@ -863,9 +827,7 @@ def resolve_field_conflict(
         and fname == "tin"
         and isinstance(row, CustomerMaster)
     ):
-        row.tin_verification_state = (
-            CustomerMaster.TinVerificationState.MANUALLY_RESOLVED
-        )
+        row.tin_verification_state = CustomerMaster.TinVerificationState.MANUALLY_RESOLVED
         row.tin_last_verified_at = timezone.now()
 
     row.field_provenance = provenance
@@ -1003,9 +965,7 @@ def _load_integration_config(
     except IntegrationConfig.DoesNotExist:
         raise SyncError(f"IntegrationConfig {config_id} not found.")
     if config.deleted_at is not None:
-        raise SyncError(
-            f"IntegrationConfig {config_id} is soft-deleted."
-        )
+        raise SyncError(f"IntegrationConfig {config_id} is soft-deleted.")
     return config
 
 
@@ -1033,9 +993,7 @@ def _trigger_rematch_after_apply(
     """
     from apps.enrichment.rematch import rematch_pending_invoices
 
-    result = rematch_pending_invoices(
-        organization_id=organization_id, triggered_by=triggered_by
-    )
+    result = rematch_pending_invoices(organization_id=organization_id, triggered_by=triggered_by)
     if result.lifted:
         record_event(
             action_type="connectors.rematch_completed",

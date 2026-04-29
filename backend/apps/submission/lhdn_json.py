@@ -39,7 +39,6 @@ from typing import Any
 
 from .models import Invoice, LineItem
 
-
 # LHDN-required namespace identifiers (per their published JSON
 # samples).
 NS_INVOICE = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
@@ -51,14 +50,14 @@ INVOICE_TYPE_VERSION = "1.0"  # v1.0 = signing-optional
 # Maps our internal ``Invoice.InvoiceType`` enum values to LHDN's
 # document-type codes (per LHDN MyInvois SDK § Document Types).
 LHDN_TYPE_CODES: dict[str, str] = {
-    "standard": "01",                    # Invoice
-    "credit_note": "02",                 # Credit Note
-    "debit_note": "03",                  # Debit Note
-    "refund_note": "04",                 # Refund Note
-    "self_billed_invoice": "11",         # Self-Billed Invoice
-    "self_billed_credit_note": "12",     # Self-Billed Credit Note
-    "self_billed_debit_note": "13",      # Self-Billed Debit Note
-    "self_billed_refund_note": "14",     # Self-Billed Refund Note
+    "standard": "01",  # Invoice
+    "credit_note": "02",  # Credit Note
+    "debit_note": "03",  # Debit Note
+    "refund_note": "04",  # Refund Note
+    "self_billed_invoice": "11",  # Self-Billed Invoice
+    "self_billed_credit_note": "12",  # Self-Billed Credit Note
+    "self_billed_debit_note": "13",  # Self-Billed Debit Note
+    "self_billed_refund_note": "14",  # Self-Billed Refund Note
     # Legacy alias from before the split — treat as Self-Billed Invoice.
     "self_billed": "11",
 }
@@ -66,9 +65,7 @@ LHDN_TYPE_CODES: dict[str, str] = {
 # Type codes that REQUIRE a BillingReference to the original
 # Invoice's UUID. CN/DN/RN are amendment documents — LHDN refuses
 # them without a link to what they're amending.
-TYPES_REQUIRING_BILLING_REFERENCE: frozenset[str] = frozenset(
-    {"02", "03", "04", "12", "13", "14"}
-)
+TYPES_REQUIRING_BILLING_REFERENCE: frozenset[str] = frozenset({"02", "03", "04", "12", "13", "14"})
 
 
 def _v(value: Any) -> dict[str, Any]:
@@ -89,9 +86,7 @@ def _amount(value: Decimal | float | int | None, currency: str) -> dict:
 
 def _identifier(scheme: str, value: str) -> dict:
     return {
-        "ID": [
-            {"_": value, "schemeID": scheme}
-        ],
+        "ID": [{"_": value, "schemeID": scheme}],
     }
 
 
@@ -168,9 +163,7 @@ def _build_party(
                 ],
             }
         ],
-        "PartyLegalEntity": [
-            {"RegistrationName": [_v(legal_name)]}
-        ],
+        "PartyLegalEntity": [{"RegistrationName": [_v(legal_name)]}],
     }
     if msic_code:
         party["IndustryClassificationCode"] = [
@@ -208,13 +201,9 @@ def build_invoice_json(invoice: Invoice) -> dict:
     # Header.
     inv_body: dict[str, Any] = {
         "ID": [_v(invoice.invoice_number or str(invoice.id))],
-        "IssueDate": [
-            _v(invoice.issue_date.isoformat() if invoice.issue_date else "")
-        ],
+        "IssueDate": [_v(invoice.issue_date.isoformat() if invoice.issue_date else "")],
         "IssueTime": [_v("00:00:00Z")],
-        "InvoiceTypeCode": [
-            {"_": type_code, "listVersionID": INVOICE_TYPE_VERSION}
-        ],
+        "InvoiceTypeCode": [{"_": type_code, "listVersionID": INVOICE_TYPE_VERSION}],
         "DocumentCurrencyCode": [_v(currency)],
         "TaxCurrencyCode": [_v(currency)],
     }
@@ -226,9 +215,7 @@ def build_invoice_json(invoice: Invoice) -> dict:
     # level + carries the original invoice's UUID + internal-id.
     if type_code in TYPES_REQUIRING_BILLING_REFERENCE:
         original_uuid = (invoice.original_invoice_uuid or "").strip()
-        original_id = (
-            invoice.original_invoice_internal_id or invoice.invoice_number or ""
-        ).strip()
+        original_id = (invoice.original_invoice_internal_id or invoice.invoice_number or "").strip()
         inv_body["BillingReference"] = [
             {
                 "InvoiceDocumentReference": [
@@ -255,9 +242,7 @@ def build_invoice_json(invoice: Invoice) -> dict:
             industry_classification_name="Computer programming activities",
             address=invoice.supplier_address or "Unknown address",
             contact_phone=invoice.supplier_phone,
-            contact_email=getattr(
-                invoice.organization, "contact_email", ""
-            ) or "",
+            contact_email=getattr(invoice.organization, "contact_email", "") or "",
             id_type=invoice.supplier_id_type,
             id_value=invoice.supplier_id_value,
         )
@@ -288,9 +273,7 @@ def build_invoice_json(invoice: Invoice) -> dict:
                 "TaxAmount": [_amount(invoice.total_tax, currency)],
                 "TaxSubtotal": [
                     {
-                        "TaxableAmount": [
-                            _amount(invoice.subtotal or Decimal("0"), currency)
-                        ],
+                        "TaxableAmount": [_amount(invoice.subtotal or Decimal("0"), currency)],
                         "TaxAmount": [_amount(invoice.total_tax, currency)],
                         "TaxCategory": [
                             {
@@ -316,18 +299,10 @@ def build_invoice_json(invoice: Invoice) -> dict:
     # Monetary totals.
     inv_body["LegalMonetaryTotal"] = [
         {
-            "LineExtensionAmount": [
-                _amount(invoice.subtotal or Decimal("0"), currency)
-            ],
-            "TaxExclusiveAmount": [
-                _amount(invoice.subtotal or Decimal("0"), currency)
-            ],
-            "TaxInclusiveAmount": [
-                _amount(invoice.grand_total or Decimal("0"), currency)
-            ],
-            "PayableAmount": [
-                _amount(invoice.grand_total or Decimal("0"), currency)
-            ],
+            "LineExtensionAmount": [_amount(invoice.subtotal or Decimal("0"), currency)],
+            "TaxExclusiveAmount": [_amount(invoice.subtotal or Decimal("0"), currency)],
+            "TaxInclusiveAmount": [_amount(invoice.grand_total or Decimal("0"), currency)],
+            "PayableAmount": [_amount(invoice.grand_total or Decimal("0"), currency)],
         }
     ]
 
@@ -351,11 +326,7 @@ def _build_invoice_line(line: LineItem, currency: str) -> dict:
     }
     if line.classification_code:
         item["CommodityClassification"] = [
-            {
-                "ItemClassificationCode": [
-                    {"_": line.classification_code, "listID": "CLASS"}
-                ]
-            }
+            {"ItemClassificationCode": [{"_": line.classification_code, "listID": "CLASS"}]}
         ]
     line_obj: dict[str, Any] = {
         "ID": [_v(str(line.line_number))],
@@ -365,23 +336,11 @@ def _build_invoice_line(line: LineItem, currency: str) -> dict:
                 "unitCode": line.unit_of_measurement or "C62",
             }
         ],
-        "LineExtensionAmount": [
-            _amount(line.line_subtotal_excl_tax or Decimal("0"), currency)
-        ],
+        "LineExtensionAmount": [_amount(line.line_subtotal_excl_tax or Decimal("0"), currency)],
         "Item": [item],
-        "Price": [
-            {
-                "PriceAmount": [
-                    _amount(line.unit_price_excl_tax or Decimal("0"), currency)
-                ]
-            }
-        ],
+        "Price": [{"PriceAmount": [_amount(line.unit_price_excl_tax or Decimal("0"), currency)]}],
         "ItemPriceExtension": [
-            {
-                "Amount": [
-                    _amount(line.line_subtotal_excl_tax or Decimal("0"), currency)
-                ]
-            }
+            {"Amount": [_amount(line.line_subtotal_excl_tax or Decimal("0"), currency)]}
         ],
     }
     if line.tax_amount is not None:

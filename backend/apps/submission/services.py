@@ -176,7 +176,9 @@ def structure_invoice(invoice_id: UUID | str) -> StructuringResult:
             confidence=None,
             diagnostics={"detail": str(exc)[:500]},
         )
-        return finalize_invoice_without_structuring(invoice=invoice, reason=f"{type(exc).__name__}: {exc}")
+        return finalize_invoice_without_structuring(
+            invoice=invoice, reason=f"{type(exc).__name__}: {exc}"
+        )
 
     EngineCall.objects.create(
         engine=decision.engine,
@@ -380,9 +382,7 @@ def _structure_via_regex_floor(*, invoice: Invoice) -> StructuringResult:
     )
 
 
-def finalize_invoice_without_structuring(
-    *, invoice: Invoice, reason: str
-) -> StructuringResult:
+def finalize_invoice_without_structuring(*, invoice: Invoice, reason: str) -> StructuringResult:
     """Mark an Invoice ready-for-review without structured fields, then validate.
 
     Used when structuring can't run — adapter unavailable, no API key, or
@@ -479,9 +479,7 @@ EDITABLE_HEADER_FIELDS: frozenset[str] = frozenset(
 # Allowlist for the secondary-ID scheme. Anything outside trips
 # 400 in the update path so a typo on the FE side surfaces
 # immediately instead of failing silently at LHDN submit time.
-PARTY_ID_TYPES: frozenset[str] = frozenset(
-    {"", "NRIC", "PASSPORT", "BRN", "ARMY"}
-)
+PARTY_ID_TYPES: frozenset[str] = frozenset({"", "NRIC", "PASSPORT", "BRN", "ARMY"})
 
 # Buyer fields whose corrections propagate to the matched CustomerMaster.
 # Map: invoice attribute -> master attribute. A user correction here is
@@ -658,12 +656,7 @@ def update_invoice(
         invoice, line_items_payload, correction_rows=correction_rows, actor_user_id=actor_user_id
     )
 
-    if not (
-        changed_header
-        or changed_lines
-        or removed_numbers
-        or added_numbers
-    ):
+    if not (changed_header or changed_lines or removed_numbers or added_numbers):
         return InvoiceUpdateResult(
             invoice=invoice,
             changed_fields=[],
@@ -779,9 +772,7 @@ def _coerce_field(invoice: Invoice, field_name: str, raw_value: Any) -> Any:
             return None
         parsed = _parse_decimal(str(raw_value))
         if parsed is None:
-            raise InvoiceUpdateError(
-                f"{field_name!r} must be a decimal value (got {raw_value!r})."
-            )
+            raise InvoiceUpdateError(f"{field_name!r} must be a decimal value (got {raw_value!r}).")
         return parsed
     # Dates.
     if field_name in {"issue_date", "due_date"}:
@@ -801,9 +792,7 @@ def _coerce_field(invoice: Invoice, field_name: str, raw_value: Any) -> Any:
     field = invoice._meta.get_field(field_name)
     max_length = getattr(field, "max_length", None)
     if max_length is not None and len(value) > max_length:
-        raise InvoiceUpdateError(
-            f"{field_name!r} exceeds max length of {max_length} characters."
-        )
+        raise InvoiceUpdateError(f"{field_name!r} exceeds max length of {max_length} characters.")
     return value
 
 
@@ -837,20 +826,14 @@ def _propagate_corrections_to_master(invoice: Invoice, changed: list[str]) -> No
     # just corrected one of those.
     master = None
     if invoice.buyer_tin:
-        master = (
-            CustomerMaster.objects.filter(
-                organization_id=invoice.organization_id, tin=invoice.buyer_tin
-            )
-            .first()
-        )
+        master = CustomerMaster.objects.filter(
+            organization_id=invoice.organization_id, tin=invoice.buyer_tin
+        ).first()
     if master is None and invoice.buyer_legal_name:
-        master = (
-            CustomerMaster.objects.filter(
-                organization_id=invoice.organization_id,
-                legal_name__iexact=invoice.buyer_legal_name,
-            )
-            .first()
-        )
+        master = CustomerMaster.objects.filter(
+            organization_id=invoice.organization_id,
+            legal_name__iexact=invoice.buyer_legal_name,
+        ).first()
     if master is None:
         return  # The next enrich pass creates one.
 
@@ -896,29 +879,19 @@ def _apply_line_item_updates(
     if payload is None:
         return []
     if not isinstance(payload, list):
-        raise InvoiceUpdateError(
-            "'line_items' must be an array of {line_number, ...} objects."
-        )
+        raise InvoiceUpdateError("'line_items' must be an array of {line_number, ...} objects.")
 
-    by_number: dict[int, LineItem] = {
-        line.line_number: line for line in invoice.line_items.all()
-    }
+    by_number: dict[int, LineItem] = {line.line_number: line for line in invoice.line_items.all()}
     changed_summaries: list[dict[str, Any]] = []
 
     for entry in payload:
         if not isinstance(entry, dict):
-            raise InvoiceUpdateError(
-                "Each line_items entry must be an object with a line_number."
-            )
+            raise InvoiceUpdateError("Each line_items entry must be an object with a line_number.")
         line_number = entry.get("line_number")
         if not isinstance(line_number, int):
-            raise InvoiceUpdateError(
-                f"line_items entry missing integer line_number: {entry!r}"
-            )
+            raise InvoiceUpdateError(f"line_items entry missing integer line_number: {entry!r}")
         if line_number not in by_number:
-            raise InvoiceUpdateError(
-                f"line_items[{line_number}] does not exist on this invoice."
-            )
+            raise InvoiceUpdateError(f"line_items[{line_number}] does not exist on this invoice.")
 
         unknown_keys = set(entry.keys()) - {"line_number"} - EDITABLE_LINE_FIELDS
         if unknown_keys:
@@ -992,23 +965,15 @@ def _apply_line_item_removes(
     if payload is None:
         return []
     if not isinstance(payload, list):
-        raise InvoiceUpdateError(
-            "'remove_line_items' must be an array of line_number integers."
-        )
+        raise InvoiceUpdateError("'remove_line_items' must be an array of line_number integers.")
 
-    by_number: dict[int, LineItem] = {
-        line.line_number: line for line in invoice.line_items.all()
-    }
+    by_number: dict[int, LineItem] = {line.line_number: line for line in invoice.line_items.all()}
     removed: list[int] = []
     for entry in payload:
         if not isinstance(entry, int):
-            raise InvoiceUpdateError(
-                f"remove_line_items entries must be integers; got {entry!r}"
-            )
+            raise InvoiceUpdateError(f"remove_line_items entries must be integers; got {entry!r}")
         if entry not in by_number:
-            raise InvoiceUpdateError(
-                f"remove_line_items[{entry}] does not exist on this invoice."
-            )
+            raise InvoiceUpdateError(f"remove_line_items[{entry}] does not exist on this invoice.")
         line_to_remove = by_number[entry]
         if correction_rows is not None:
             correction_rows.append(
@@ -1065,21 +1030,16 @@ def _apply_line_item_adds(
     if payload is None:
         return []
     if not isinstance(payload, list):
-        raise InvoiceUpdateError(
-            "'add_line_items' must be an array of {description, ...} objects."
-        )
+        raise InvoiceUpdateError("'add_line_items' must be an array of {description, ...} objects.")
 
-    existing_numbers = list(
-        invoice.line_items.values_list("line_number", flat=True)
-    )
+    existing_numbers = list(invoice.line_items.values_list("line_number", flat=True))
     next_number = (max(existing_numbers) + 1) if existing_numbers else 1
     assigned: list[int] = []
 
     for entry in payload:
         if not isinstance(entry, dict):
             raise InvoiceUpdateError(
-                "Each add_line_items entry must be an object with at "
-                "minimum a 'description' field."
+                "Each add_line_items entry must be an object with at minimum a 'description' field."
             )
         unknown = set(entry.keys()) - EDITABLE_LINE_FIELDS
         if unknown:
@@ -1090,9 +1050,7 @@ def _apply_line_item_adds(
 
         description = (entry.get("description") or "").strip()
         if not description:
-            raise InvoiceUpdateError(
-                "add_line_items entries require a non-empty description."
-            )
+            raise InvoiceUpdateError("add_line_items entries require a non-empty description.")
 
         # Coerce + populate every field on the new row. Unset fields
         # default to the model defaults (None for decimals, "" for
@@ -1182,9 +1140,7 @@ def _propagate_line_corrections_to_item_master(
 
     from apps.enrichment.models import ItemMaster
 
-    by_number: dict[int, LineItem] = {
-        line.line_number: line for line in invoice.line_items.all()
-    }
+    by_number: dict[int, LineItem] = {line.line_number: line for line in invoice.line_items.all()}
 
     for summary in changed_lines:
         changed_fields = set(summary["changed_fields"])
@@ -1202,13 +1158,10 @@ def _propagate_line_corrections_to_item_master(
         if line is None or not (line.description or "").strip():
             continue
 
-        master = (
-            ItemMaster.objects.filter(
-                organization_id=invoice.organization_id,
-                canonical_name__iexact=line.description.strip(),
-            )
-            .first()
-        )
+        master = ItemMaster.objects.filter(
+            organization_id=invoice.organization_id,
+            canonical_name__iexact=line.description.strip(),
+        ).first()
         if master is None:
             # No existing master for this description — the next
             # enrich_invoice pass will create one with the corrected
@@ -1278,11 +1231,10 @@ def _sync_validation_inbox(
         # so the operator's preferred channels know.
         if was_open or actor_user_id is None:
             try:
-                from apps.notifications.services import deliver_for_event
-
                 # Use ingestion job filename as a friendly handle when
                 # the invoice number isn't yet populated.
                 from apps.ingestion.models import IngestionJob
+                from apps.notifications.services import deliver_for_event
 
                 filename = ""
                 try:
@@ -1292,7 +1244,7 @@ def _sync_validation_inbox(
                         .first()
                         or ""
                     )
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
                 deliver_for_event(
                     organization_id=invoice.organization_id,
@@ -1300,12 +1252,10 @@ def _sync_validation_inbox(
                     context={
                         "invoice_number": invoice.invoice_number or "(no number)",
                         "filename": filename,
-                        "invoice_url": (
-                            f"/dashboard/jobs/{invoice.ingestion_job_id}"
-                        ),
+                        "invoice_url": (f"/dashboard/jobs/{invoice.ingestion_job_id}"),
                     },
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 # Notification failures must never break the
                 # validation path; the audit chain already records
                 # the inbox-clear event regardless.
@@ -1329,7 +1279,7 @@ def _sync_validation_inbox(
                         "validated_at": timezone.now().isoformat(),
                     },
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
 

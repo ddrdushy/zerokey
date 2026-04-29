@@ -34,7 +34,6 @@ from apps.extraction.capabilities import (
     StructuredExtractResult,
 )
 
-
 # Field-level regex patterns. Each entry is (lhdn_field_code, [patterns]).
 # The first pattern that matches wins. Patterns are intentionally
 # conservative — false negatives (no field) are recoverable in
@@ -157,9 +156,7 @@ class RegexFloorStructurer(FieldStructureEngine):
 
     name = "regex-floor-structurer"
 
-    def structure_fields(
-        self, *, text: str, target_schema: list[str]
-    ) -> StructuredExtractResult:
+    def structure_fields(self, *, text: str, target_schema: list[str]) -> StructuredExtractResult:
         fields, per_field_confidence = _extract_header(text)
         line_items = _extract_line_items(text)
         if line_items:

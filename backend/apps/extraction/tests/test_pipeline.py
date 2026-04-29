@@ -441,9 +441,7 @@ class TestVisionEscalation:
         org, _ = org_and_user
         job = _make_job(org)
 
-        text_adapter = _FakeAdapter(
-            TextExtractResult(text="", confidence=0.10, page_count=1)
-        )
+        text_adapter = _FakeAdapter(TextExtractResult(text="", confidence=0.10, page_count=1))
         vision_adapter = _FakeVisionAdapter(raises=EngineUnavailable("no api key"))
 
         with (
@@ -461,9 +459,7 @@ class TestVisionEscalation:
         from apps.validation.models import ValidationIssue
 
         codes = set(
-            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list(
-                "code", flat=True
-            )
+            ValidationIssue.objects.filter(invoice_id=invoice.id).values_list("code", flat=True)
         )
         assert "required.invoice_number" in codes
         assert "required.supplier_legal_name" in codes

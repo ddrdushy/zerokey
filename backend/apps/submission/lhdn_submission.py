@@ -52,9 +52,7 @@ def sign_invoice(invoice_id: uuid.UUID | str) -> dict:
     invoice = _get_invoice(invoice_id)
 
     try:
-        cert = certificates.ensure_certificate(
-            organization_id=invoice.organization_id
-        )
+        cert = certificates.ensure_certificate(organization_id=invoice.organization_id)
     except certificates.CertificateError as exc:
         _audit_failure(
             invoice,
@@ -65,10 +63,8 @@ def sign_invoice(invoice_id: uuid.UUID | str) -> dict:
 
     try:
         unsigned = ubl_xml.build_invoice_xml(invoice)
-        signed = xml_signature.sign_invoice_xml(
-            xml_bytes=unsigned, certificate=cert
-        )
-    except Exception as exc:  # noqa: BLE001
+        signed = xml_signature.sign_invoice_xml(xml_bytes=unsigned, certificate=cert)
+    except Exception as exc:
         _audit_failure(
             invoice,
             action="submission.sign_invoice.failed",
@@ -104,9 +100,7 @@ def sign_invoice(invoice_id: uuid.UUID | str) -> dict:
     }
 
 
-def submit_invoice_to_lhdn(
-    invoice_id: uuid.UUID | str, *, format: str = "json"
-) -> dict:
+def submit_invoice_to_lhdn(invoice_id: uuid.UUID | str, *, format: str = "json") -> dict:
     """Sign-then-submit. Persists ``submission_uid`` on the Invoice.
 
     ``format``:
@@ -129,9 +123,7 @@ def submit_invoice_to_lhdn(
     invoice = _get_invoice(invoice_id)
 
     try:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=invoice.organization_id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=invoice.organization_id)
     except lhdn_client.LHDNError as exc:
         _audit_failure(
             invoice,
@@ -156,7 +148,7 @@ def submit_invoice_to_lhdn(
         try:
             doc = lhdn_json.build_invoice_json(invoice)
             doc_bytes = _json.dumps(doc, separators=(",", ":")).encode("utf-8")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _audit_failure(
                 invoice,
                 action="submission.build.failed",
@@ -187,9 +179,7 @@ def submit_invoice_to_lhdn(
         sign_result = sign_invoice(invoice_id)
         if not sign_result["ok"]:
             invoice.status = Invoice.Status.ERROR
-            invoice.error_message = (
-                f"Signing failed: {sign_result['reason']}"[:8000]
-            )
+            invoice.error_message = f"Signing failed: {sign_result['reason']}"[:8000]
             invoice.save(update_fields=["status", "error_message", "updated_at"])
             return {"ok": False, "reason": sign_result["reason"]}
         envelope = lhdn_client.encode_for_submission(
@@ -198,9 +188,7 @@ def submit_invoice_to_lhdn(
         )
 
     try:
-        response = lhdn_client.submit_documents(
-            creds=creds, signed_xml_documents=[envelope]
-        )
+        response = lhdn_client.submit_documents(creds=creds, signed_xml_documents=[envelope])
     except lhdn_client.LHDNValidationError as exc:
         invoice.status = Invoice.Status.REJECTED
         invoice.error_message = f"LHDN rejected: {exc!s}"[:8000]
@@ -292,23 +280,15 @@ def poll_invoice_status(invoice_id: uuid.UUID | str) -> dict:
         # still polls correctly. The 0009 backfill migration handles
         # the data path; this is the runtime safety net for any row
         # that snuck in between migration apply + cache invalidation.
-        legacy = (
-            (invoice.signed_xml_s3_key or "")
-            .removeprefix("submission_uid=")
-            .strip()
-        )
+        legacy = (invoice.signed_xml_s3_key or "").removeprefix("submission_uid=").strip()
         if legacy:
             submission_uid = legacy
     if not submission_uid:
         return {"ok": False, "reason": "invoice not yet submitted"}
 
     try:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=invoice.organization_id
-        )
-        body = lhdn_client.get_submission_status(
-            creds=creds, submission_uid=submission_uid
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=invoice.organization_id)
+        body = lhdn_client.get_submission_status(creds=creds, submission_uid=submission_uid)
     except lhdn_client.LHDNError as exc:
         _audit_failure(
             invoice,
@@ -351,15 +331,10 @@ def poll_invoice_status(invoice_id: uuid.UUID | str) -> dict:
             # with the QR-encoded URL can verify the invoice on
             # LHDN's web UI without auth.
             try:
-                qr_body = lhdn_client.get_document_qr(
-                    creds=creds, document_uuid=document_uuid
-                )
+                qr_body = lhdn_client.get_document_qr(creds=creds, document_uuid=document_uuid)
                 long_id = qr_body.get("longId")
                 if long_id and creds.portal_url:
-                    qr_url = (
-                        f"{creds.portal_url.rstrip('/')}"
-                        f"/{document_uuid}/share/{long_id}"
-                    )
+                    qr_url = f"{creds.portal_url.rstrip('/')}/{document_uuid}/share/{long_id}"
                     invoice.lhdn_qr_code_url = qr_url[:200]
                     invoice.save(update_fields=["lhdn_qr_code_url", "updated_at"])
             except lhdn_client.LHDNError:
@@ -371,9 +346,7 @@ def poll_invoice_status(invoice_id: uuid.UUID | str) -> dict:
             invoice.error_message = (
                 f"LHDN rejected at validation: {first.get('errorMessage', '')}"
             )[:8000]
-            invoice.save(
-                update_fields=["status", "error_message", "updated_at"]
-            )
+            invoice.save(update_fields=["status", "error_message", "updated_at"])
             record_event(
                 action_type="submission.poll.rejected",
                 actor_type=AuditEvent.ActorType.SERVICE,
@@ -448,17 +421,12 @@ def cancel_invoice(
         if elapsed > timedelta(hours=72):
             return {
                 "ok": False,
-                "reason": (
-                    "Cancellation window expired (72 hours). "
-                    "Issue a credit note instead."
-                ),
+                "reason": ("Cancellation window expired (72 hours). Issue a credit note instead."),
                 "code": "operation_period_over_local",
             }
 
     try:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=invoice.organization_id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=invoice.organization_id)
     except lhdn_client.LHDNError as exc:
         return {"ok": False, "reason": str(exc)}
 
@@ -472,8 +440,7 @@ def cancel_invoice(
         return {
             "ok": False,
             "reason": (
-                "LHDN reports the cancellation window has expired. "
-                "Issue a credit note instead."
+                "LHDN reports the cancellation window has expired. Issue a credit note instead."
             ),
             "code": "operation_period_over",
         }
@@ -492,9 +459,7 @@ def cancel_invoice(
 
     invoice.status = Invoice.Status.CANCELLED
     invoice.cancellation_timestamp = timezone.now()
-    invoice.save(
-        update_fields=["status", "cancellation_timestamp", "updated_at"]
-    )
+    invoice.save(update_fields=["status", "cancellation_timestamp", "updated_at"])
 
     record_event(
         action_type="submission.cancel.accepted",
@@ -524,9 +489,7 @@ def _get_invoice(invoice_id) -> Invoice:
         try:
             return Invoice.objects.get(id=invoice_id)
         except Invoice.DoesNotExist as exc:
-            raise SubmissionError(
-                f"Invoice {invoice_id} not found."
-            ) from exc
+            raise SubmissionError(f"Invoice {invoice_id} not found.") from exc
 
 
 def _audit_failure(invoice: Invoice, *, action: str, reason: str) -> None:

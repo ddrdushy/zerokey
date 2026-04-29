@@ -199,7 +199,10 @@ class TestLatestVerificationService:
         assert latest["ok"] is False
         # Generic message; the offending sequence stays in error_detail
         # which is excluded from this surface entirely.
-        assert "support" in latest["support_message"].lower() or "alert" in latest["support_message"].lower()
+        assert (
+            "support" in latest["support_message"].lower()
+            or "alert" in latest["support_message"].lower()
+        )
         for value in latest.values():
             if isinstance(value, str):
                 assert "sequence=" not in value
@@ -235,9 +238,7 @@ class TestLatestVerificationEndpoint:
         assert response.status_code in (401, 403)
 
     def test_no_active_org_returns_400(self, seeded) -> None:
-        user = User.objects.create_user(
-            email="solo@example.com", password="long-enough-password"
-        )
+        user = User.objects.create_user(email="solo@example.com", password="long-enough-password")
         client = Client()
         client.force_login(user)
         response = client.get("/api/v1/audit/verify/last/")

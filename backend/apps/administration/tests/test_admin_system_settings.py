@@ -20,9 +20,7 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def staff_user(seeded) -> User:
-    return User.objects.create_user(
-        email="staff@symprio.com", password="x", is_staff=True
-    )
+    return User.objects.create_user(email="staff@symprio.com", password="x", is_staff=True)
 
 
 @pytest.fixture
@@ -110,9 +108,7 @@ class TestAdminUpdateSystemSetting:
         assert event.payload["fields_changed"] == ["secret_key"]
         assert "sk_live_rotated" not in json.dumps(event.payload)
 
-    def test_clear_credential_with_empty_string(
-        self, staff_user, stripe_setting
-    ) -> None:
+    def test_clear_credential_with_empty_string(self, staff_user, stripe_setting) -> None:
         client = Client()
         client.force_login(staff_user)
         response = self._patch(
@@ -126,10 +122,7 @@ class TestAdminUpdateSystemSetting:
         # Other fields untouched. (Slice 55: stored ciphertext.)
         from apps.administration.crypto import decrypt_value
 
-        assert (
-            decrypt_value(stripe_setting.values["publishable_key"])
-            == "pk_live_existing"
-        )
+        assert decrypt_value(stripe_setting.values["publishable_key"]) == "pk_live_existing"
 
     def test_set_non_credential_value(self, staff_user) -> None:
         client = Client()
@@ -146,17 +139,12 @@ class TestAdminUpdateSystemSetting:
         setting = SystemSetting.objects.get(namespace="lhdn")
         from apps.administration.crypto import decrypt_value
 
-        assert (
-            decrypt_value(setting.values["base_url"])
-            == "https://api.myinvois.hasil.gov.my"
-        )
+        assert decrypt_value(setting.values["base_url"]) == "https://api.myinvois.hasil.gov.my"
 
     def test_unknown_namespace_400(self, staff_user) -> None:
         client = Client()
         client.force_login(staff_user)
-        response = self._patch(
-            client, "supervillain", {"fields": {}, "reason": "x"}
-        )
+        response = self._patch(client, "supervillain", {"fields": {}, "reason": "x"})
         assert response.status_code == 400
 
     def test_unknown_field_in_known_namespace_400(self, staff_user) -> None:
@@ -173,26 +161,20 @@ class TestAdminUpdateSystemSetting:
     def test_reason_required(self, staff_user) -> None:
         client = Client()
         client.force_login(staff_user)
-        response = self._patch(
-            client, "stripe", {"fields": {"default_currency": "MYR"}}
-        )
+        response = self._patch(client, "stripe", {"fields": {"default_currency": "MYR"}})
         assert response.status_code == 400
 
     def test_no_op_skips_audit(self, staff_user, stripe_setting) -> None:
         client = Client()
         client.force_login(staff_user)
-        before = AuditEvent.objects.filter(
-            action_type="admin.system_setting_updated"
-        ).count()
+        before = AuditEvent.objects.filter(action_type="admin.system_setting_updated").count()
         response = self._patch(
             client,
             "stripe",
             {"fields": {"default_currency": "MYR"}, "reason": "no-op"},
         )
         assert response.status_code == 200
-        after = AuditEvent.objects.filter(
-            action_type="admin.system_setting_updated"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="admin.system_setting_updated").count()
         assert before == after
 
     def test_email_smtp_namespace(self, staff_user) -> None:

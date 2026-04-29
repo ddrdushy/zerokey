@@ -70,12 +70,8 @@ const HEURISTICS_ITEM: Array<{ patterns: string[]; field: string }> = [
   { patterns: ["row id", "record id", "sku"], field: "source_record_id" },
 ];
 
-function suggestMapping(
-  headers: string[],
-  target: Target,
-): Record<string, string> {
-  const heuristics =
-    target === "customers" ? HEURISTICS_CUSTOMER : HEURISTICS_ITEM;
+function suggestMapping(headers: string[], target: Target): Record<string, string> {
+  const heuristics = target === "customers" ? HEURISTICS_CUSTOMER : HEURISTICS_ITEM;
   const out: Record<string, string> = {};
   // First pass — exact-substring matches per heuristic, first
   // header that matches wins for each ZeroKey field.
@@ -127,14 +123,10 @@ export default function UploadCsvPage() {
       const parsedHeaders = parseCsvLine(lines[0]);
       setHeaders(parsedHeaders);
       // First 3 data rows for preview.
-      setPreviewRows(
-        lines.slice(1, 4).map((l) => parseCsvLine(l)),
-      );
+      setPreviewRows(lines.slice(1, 4).map((l) => parseCsvLine(l)));
       setMapping(suggestMapping(parsedHeaders, target));
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Couldn't read the file.",
-      );
+      setError(err instanceof Error ? err.message : "Couldn't read the file.");
     }
   }
 
@@ -192,10 +184,7 @@ export default function UploadCsvPage() {
     }
   }
 
-  const mappedFieldCount = useMemo(
-    () => new Set(Object.values(mapping)).size,
-    [mapping],
-  );
+  const mappedFieldCount = useMemo(() => new Set(Object.values(mapping)).size, [mapping]);
 
   return (
     <AppShell>
@@ -208,9 +197,7 @@ export default function UploadCsvPage() {
             <ArrowLeft className="h-3.5 w-3.5" />
             Back to connectors
           </Link>
-          <h1 className="mt-2 font-display text-2xl font-bold tracking-tight">
-            Upload a CSV
-          </h1>
+          <h1 className="mt-2 font-display text-2xl font-bold tracking-tight">Upload a CSV</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Two-phase sync — review what will change before any of it lands
           </p>
@@ -227,16 +214,10 @@ export default function UploadCsvPage() {
 
         <Section title="What are you importing?">
           <div className="flex gap-2">
-            <TargetButton
-              active={target === "customers"}
-              onClick={() => setTarget("customers")}
-            >
+            <TargetButton active={target === "customers"} onClick={() => setTarget("customers")}>
               Customers / debtors
             </TargetButton>
-            <TargetButton
-              active={target === "items"}
-              onClick={() => setTarget("items")}
-            >
+            <TargetButton active={target === "items"} onClick={() => setTarget("items")}>
               Items / products
             </TargetButton>
           </div>
@@ -262,8 +243,7 @@ export default function UploadCsvPage() {
             <Section title="Map columns">
               <p className="text-2xs text-slate-500">
                 {mappedFieldCount} of your CSV column
-                {mappedFieldCount === 1 ? "" : "s"} mapped. Unmapped columns
-                are dropped silently.
+                {mappedFieldCount === 1 ? "" : "s"} mapped. Unmapped columns are dropped silently.
               </p>
               <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
                 <table className="w-full text-2xs">
@@ -290,15 +270,11 @@ export default function UploadCsvPage() {
                       const current = mapping[header] ?? "";
                       return (
                         <tr key={header}>
-                          <td className="px-3 py-3 font-medium text-ink">
-                            {header}
-                          </td>
+                          <td className="px-3 py-3 font-medium text-ink">{header}</td>
                           <td className="px-3 py-3">
                             <select
                               value={current}
-                              onChange={(e) =>
-                                setMappingFor(header, e.target.value)
-                              }
+                              onChange={(e) => setMappingFor(header, e.target.value)}
                               className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-2xs focus:outline-none focus:ring-1 focus:ring-ink"
                             >
                               <option value="">— Don&apos;t import —</option>
@@ -307,8 +283,7 @@ export default function UploadCsvPage() {
                                   key={f.key}
                                   value={f.key}
                                   disabled={
-                                    Object.values(mapping).includes(f.key) &&
-                                    current !== f.key
+                                    Object.values(mapping).includes(f.key) && current !== f.key
                                   }
                                 >
                                   {f.label}
@@ -316,9 +291,7 @@ export default function UploadCsvPage() {
                               ))}
                             </select>
                           </td>
-                          <td className="px-3 py-3 text-slate-500">
-                            {sample || "—"}
-                          </td>
+                          <td className="px-3 py-3 text-slate-500">{sample || "—"}</td>
                         </tr>
                       );
                     })}
@@ -364,11 +337,7 @@ export default function UploadCsvPage() {
               >
                 Cancel
               </Link>
-              <Button
-                size="sm"
-                onClick={onSubmit}
-                disabled={submitting || mappedFieldCount === 0}
-              >
+              <Button size="sm" onClick={onSubmit} disabled={submitting || mappedFieldCount === 0}>
                 {submitting ? (
                   <>
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -415,13 +384,7 @@ function TargetButton({
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-base font-semibold">{title}</h2>

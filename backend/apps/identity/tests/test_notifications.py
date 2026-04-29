@@ -49,16 +49,12 @@ def _client(org_user) -> Client:
 @pytest.mark.django_db
 class TestGetPreferences:
     def test_unauthenticated_rejected(self) -> None:
-        response = Client().get(
-            "/api/v1/identity/organization/notification-preferences/"
-        )
+        response = Client().get("/api/v1/identity/organization/notification-preferences/")
         assert response.status_code in (401, 403)
 
     def test_returns_full_event_schema_with_defaults(self, org_user) -> None:
         client = _client(org_user)
-        response = client.get(
-            "/api/v1/identity/organization/notification-preferences/"
-        )
+        response = client.get("/api/v1/identity/organization/notification-preferences/")
         assert response.status_code == 200
         body = response.json()
         keys_in_response = {e["key"] for e in body["events"]}
@@ -71,20 +67,10 @@ class TestGetPreferences:
 
     def test_first_get_materialises_row(self, org_user) -> None:
         org, user = org_user
-        assert (
-            NotificationPreference.objects.filter(
-                user=user, organization_id=org.id
-            ).count()
-            == 0
-        )
+        assert NotificationPreference.objects.filter(user=user, organization_id=org.id).count() == 0
         client = _client(org_user)
         client.get("/api/v1/identity/organization/notification-preferences/")
-        assert (
-            NotificationPreference.objects.filter(
-                user=user, organization_id=org.id
-            ).count()
-            == 1
-        )
+        assert NotificationPreference.objects.filter(user=user, organization_id=org.id).count() == 1
 
 
 @pytest.mark.django_db
@@ -104,15 +90,11 @@ class TestSetPreferences:
         )
         assert response.status_code == 200
         body = response.json()
-        inbox_pref = next(
-            e for e in body["events"] if e["key"] == "inbox.item_opened"
-        )
+        inbox_pref = next(e for e in body["events"] if e["key"] == "inbox.item_opened")
         assert inbox_pref["in_app"] is True
         assert inbox_pref["email"] is False
         # Other events untouched (defaults — both channels on).
-        validated = next(
-            e for e in body["events"] if e["key"] == "invoice.validated"
-        )
+        validated = next(e for e in body["events"] if e["key"] == "invoice.validated")
         assert validated["email"] is True
 
     def test_unknown_event_key_rejected(self, org_user) -> None:
@@ -140,9 +122,7 @@ class TestSetPreferences:
         )
         assert response.status_code == 200
         body = response.json()
-        inbox = next(
-            e for e in body["events"] if e["key"] == "inbox.item_opened"
-        )
+        inbox = next(e for e in body["events"] if e["key"] == "inbox.item_opened")
         assert inbox["in_app"] is False
         assert inbox["email"] is True
 
@@ -153,9 +133,7 @@ class TestSetPreferences:
             {"audit.chain_verified": {"in_app": True, "email": False}},
         )
         event = (
-            AuditEvent.objects.filter(
-                action_type="identity.notification_preferences.updated"
-            )
+            AuditEvent.objects.filter(action_type="identity.notification_preferences.updated")
             .order_by("-sequence")
             .first()
         )
@@ -186,12 +164,8 @@ class TestSetPreferences:
     def test_per_user_per_org_isolation(self, seeded) -> None:
         """Same user belonging to two orgs has separate preferences rows."""
         u = User.objects.create_user(email="dual@x", password="x")
-        org_a = Organization.objects.create(
-            legal_name="A", tin="C10000000001", contact_email="a"
-        )
-        org_b = Organization.objects.create(
-            legal_name="B", tin="C99999999999", contact_email="b"
-        )
+        org_a = Organization.objects.create(legal_name="A", tin="C10000000001", contact_email="a")
+        org_b = Organization.objects.create(legal_name="B", tin="C99999999999", contact_email="b")
         OrganizationMembership.objects.create(
             user=u, organization=org_a, role=Role.objects.get(name="owner")
         )
@@ -207,9 +181,7 @@ class TestSetPreferences:
         session.save()
         client.patch(
             "/api/v1/identity/organization/notification-preferences/",
-            data=json.dumps(
-                {"inbox.item_opened": {"in_app": True, "email": False}}
-            ),
+            data=json.dumps({"inbox.item_opened": {"in_app": True, "email": False}}),
             content_type="application/json",
         )
 
@@ -217,12 +189,8 @@ class TestSetPreferences:
         session = client.session
         session["organization_id"] = str(org_b.id)
         session.save()
-        response = client.get(
-            "/api/v1/identity/organization/notification-preferences/"
-        )
+        response = client.get("/api/v1/identity/organization/notification-preferences/")
         body = response.json()
-        inbox = next(
-            e for e in body["events"] if e["key"] == "inbox.item_opened"
-        )
+        inbox = next(e for e in body["events"] if e["key"] == "inbox.item_opened")
         # Org B still has defaults — email on.
         assert inbox["email"] is True

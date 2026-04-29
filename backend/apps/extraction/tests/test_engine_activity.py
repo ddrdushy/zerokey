@@ -27,9 +27,7 @@ def org_user(seeded) -> tuple[Organization, User]:
     org = Organization.objects.create(
         legal_name="Acme Sdn Bhd", tin="C10000000001", contact_email="ops@acme.example"
     )
-    user = User.objects.create_user(
-        email="o@acme.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="o@acme.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -89,9 +87,7 @@ class TestEngineSummary:
             _make_call(org, engine=pdfplumber, duration_ms=200)
         _make_call(org, engine=pdfplumber, outcome=EngineCall.Outcome.FAILURE, duration_ms=400)
         for _ in range(2):
-            _make_call(
-                org, engine=claude, outcome=EngineCall.Outcome.UNAVAILABLE, duration_ms=10
-            )
+            _make_call(org, engine=claude, outcome=EngineCall.Outcome.UNAVAILABLE, duration_ms=10)
 
         rollup = engine_summary_for_organization(organization_id=org.id)
         # Two engines, sorted by total_calls desc — pdfplumber 6, claude 2.
@@ -153,9 +149,7 @@ class TestEngineCallsList:
         pdfplumber, _ = engines
         now = timezone.now()
         for i in range(5):
-            _make_call(
-                org, engine=pdfplumber, started_at=now - timedelta(minutes=i)
-            )
+            _make_call(org, engine=pdfplumber, started_at=now - timedelta(minutes=i))
 
         page1 = list_engine_calls_for_organization(organization_id=org.id, limit=2)
         cursor = page1[-1].started_at
@@ -218,9 +212,7 @@ class TestEngineActivityEndpoints:
 
     def test_invalid_before_started_at_rejected(self, authed) -> None:
         client, _ = authed
-        response = client.get(
-            "/api/v1/engines/calls/?before_started_at=not-a-date"
-        )
+        response = client.get("/api/v1/engines/calls/?before_started_at=not-a-date")
         assert response.status_code == 400
 
     def test_unauthenticated_rejected(self) -> None:

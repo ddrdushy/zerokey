@@ -19,10 +19,7 @@ import { ChevronDown, ChevronRight, ScrollText } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 
-import {
-  api,
-  type PlatformAuditEvent,
-} from "@/lib/api";
+import { api, type PlatformAuditEvent } from "@/lib/api";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -116,8 +113,7 @@ function PlatformAuditPageInner() {
 
   const hasMore = useMemo(() => {
     if (!events) return false;
-    if (filterAction || filterOrgId)
-      return events.length > 0 && events.length % PAGE_SIZE === 0;
+    if (filterAction || filterOrgId) return events.length > 0 && events.length % PAGE_SIZE === 0;
     return events.length < total;
   }, [events, total, filterAction, filterOrgId]);
 
@@ -126,9 +122,7 @@ function PlatformAuditPageInner() {
       <div className="flex flex-col gap-6">
         <header className="flex items-end justify-between">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight">
-              Platform audit log
-            </h1>
+            <h1 className="font-display text-2xl font-bold tracking-tight">Platform audit log</h1>
             <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
               Every tenant · cross-tenant · hash-chained
             </p>
@@ -139,9 +133,7 @@ function PlatformAuditPageInner() {
               <span className="font-medium">{total.toLocaleString()}</span>
               <span>event{total === 1 ? "" : "s"} on the chain</span>
             </span>
-            <span className="text-[10px] opacity-80">
-              Listing this page is itself audited.
-            </span>
+            <span className="text-[10px] opacity-80">Listing this page is itself audited.</span>
           </div>
         </header>
 
@@ -176,12 +168,7 @@ function PlatformAuditPageInner() {
             />
             {hasMore && (
               <div className="flex justify-center">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onLoadMore}
-                  disabled={loadingMore}
-                >
+                <Button variant="ghost" size="sm" onClick={onLoadMore} disabled={loadingMore}>
                   {loadingMore ? "Loading…" : "Load more"}
                 </Button>
               </div>
@@ -208,9 +195,7 @@ function FilterBar({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <label className="text-2xs font-medium uppercase tracking-wider text-slate-400">
-        Action
-      </label>
+      <label className="text-2xs font-medium uppercase tracking-wider text-slate-400">Action</label>
       <select
         value={filterAction}
         onChange={(e) => onFilterAction(e.target.value)}
@@ -223,9 +208,7 @@ function FilterBar({
           </option>
         ))}
       </select>
-      <label className="text-2xs font-medium uppercase tracking-wider text-slate-400">
-        Tenant
-      </label>
+      <label className="text-2xs font-medium uppercase tracking-wider text-slate-400">Tenant</label>
       <input
         type="text"
         placeholder="Organization UUID…"
@@ -267,21 +250,11 @@ function EventTable({
         <thead className="bg-slate-50 text-slate-400">
           <tr>
             <th className="w-10 px-3 py-2" />
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              #
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              When
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Tenant
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Action
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Actor
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">#</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">When</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Tenant</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Action</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Actor</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -293,9 +266,7 @@ function EventTable({
                 event={event}
                 isOpen={isOpen}
                 onToggle={() => onToggle(event.id)}
-                onPickOrg={() =>
-                  event.organization_id && onPickOrg(event.organization_id)
-                }
+                onPickOrg={() => event.organization_id && onPickOrg(event.organization_id)}
               />
             );
           })}
@@ -326,17 +297,11 @@ function EventRow({
             aria-label={isOpen ? "Collapse details" : "Expand details"}
             className="text-slate-400 hover:text-ink"
           >
-            {isOpen ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
+            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </button>
         </td>
         <td className="px-3 py-3 font-mono text-slate-400">{event.sequence}</td>
-        <td className="px-3 py-3 text-slate-600">
-          {new Date(event.timestamp).toLocaleString()}
-        </td>
+        <td className="px-3 py-3 text-slate-600">{new Date(event.timestamp).toLocaleString()}</td>
         <td className="px-3 py-3">
           {event.organization_id ? (
             <button
@@ -361,9 +326,7 @@ function EventRow({
         <td className="px-3 py-3 text-slate-600">
           <span className="text-slate-400">{event.actor_type}</span>
           {event.actor_id && (
-            <span className="ml-1 font-mono text-[11px]">
-              {truncate(event.actor_id, 16)}
-            </span>
+            <span className="ml-1 font-mono text-[11px]">{truncate(event.actor_id, 16)}</span>
           )}
         </td>
       </tr>
@@ -392,9 +355,7 @@ function ExpandedDetails({ event }: { event: PlatformAuditEvent }) {
           Technical details · hash chain
         </summary>
         <dl className="mt-2 grid gap-1 text-[11px]">
-          <DetailRow label="Schema version">
-            {event.payload_schema_version}
-          </DetailRow>
+          <DetailRow label="Schema version">{event.payload_schema_version}</DetailRow>
           <DetailRow label="Sequence">{event.sequence}</DetailRow>
           <DetailRow label="Organization">
             <code className="break-all font-mono text-[10px] text-slate-700">
@@ -431,13 +392,7 @@ function ExpandedDetails({ event }: { event: PlatformAuditEvent }) {
   );
 }
 
-function DetailField({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
       <div className="mb-1 text-2xs font-medium uppercase tracking-wider text-slate-400">
@@ -448,13 +403,7 @@ function DetailField({
   );
 }
 
-function DetailRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-2">
       <dt className="text-slate-400">{label}:</dt>
@@ -465,11 +414,7 @@ function DetailRow({
 
 function EmptyState({ filtered }: { filtered: boolean }) {
   return (
-    <div
-      className={cn(
-        "rounded-xl border border-slate-100 bg-white p-12 text-center",
-      )}
-    >
+    <div className={cn("rounded-xl border border-slate-100 bg-white p-12 text-center")}>
       <ScrollText className="mx-auto h-8 w-8 text-slate-300" aria-hidden />
       <h2 className="mt-4 font-display text-xl font-semibold">
         {filtered ? "No events for these filters" : "Nothing on the chain yet"}

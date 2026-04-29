@@ -51,9 +51,7 @@ export default function SignUpPage() {
       <h1 className="font-display text-3xl font-bold tracking-tight">
         Start your <em className="text-slate-600">free trial</em>
       </h1>
-      <p className="text-base text-slate-600">
-        14 days. 20 invoices. No credit card.
-      </p>
+      <p className="text-base text-slate-600">14 days. 20 invoices. No credit card.</p>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <Field label="Your email" type="email" value={email} onChange={setEmail} required />
@@ -65,12 +63,7 @@ export default function SignUpPage() {
           required
           hint="At least 12 characters."
         />
-        <Field
-          label="Company legal name"
-          value={legalName}
-          onChange={setLegalName}
-          required
-        />
+        <Field label="Company legal name" value={legalName} onChange={setLegalName} required />
         <Field
           label="Tax Identification Number (TIN)"
           value={tin}

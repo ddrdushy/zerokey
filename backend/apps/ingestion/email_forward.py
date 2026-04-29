@@ -33,7 +33,6 @@ working immediately + emails to the old address bounce with a
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import logging
@@ -42,7 +41,6 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from io import BytesIO
-from typing import IO
 
 from django.conf import settings
 
@@ -108,9 +106,7 @@ class InboundEmail:
 # --- Tenant resolution -----------------------------------------------------
 
 
-_TOKEN_RE = re.compile(
-    r"^invoices\+([A-Za-z0-9_-]{8,32})@", re.IGNORECASE
-)
+_TOKEN_RE = re.compile(r"^invoices\+([A-Za-z0-9_-]{8,32})@", re.IGNORECASE)
 
 
 def resolve_tenant_from_address(address: str) -> uuid.UUID:
@@ -123,16 +119,12 @@ def resolve_tenant_from_address(address: str) -> uuid.UUID:
         raise InboxNotFoundError("No recipient address.")
     match = _TOKEN_RE.match(address.strip())
     if not match:
-        raise InboxNotFoundError(
-            f"Recipient {address!r} doesn't match the inbox-address pattern."
-        )
+        raise InboxNotFoundError(f"Recipient {address!r} doesn't match the inbox-address pattern.")
     token = match.group(1)
     with super_admin_context(reason="ingestion.email_forward.resolve"):
         org = Organization.objects.filter(inbox_token=token).first()
     if org is None:
-        raise InboxNotFoundError(
-            f"No organization registered for inbox token {token!r}."
-        )
+        raise InboxNotFoundError(f"No organization registered for inbox token {token!r}.")
     return org.id
 
 
@@ -184,9 +176,7 @@ def process_inbound_email(email: InboundEmail) -> dict:
 
     for attachment in email.attachments:
         if len(attachment.body) > MAX_INBOUND_ATTACHMENT_BYTES:
-            skipped.append(
-                {"filename": attachment.filename, "reason": "too_large"}
-            )
+            skipped.append({"filename": attachment.filename, "reason": "too_large"})
             continue
         if attachment.mime_type not in ALLOWED_INBOUND_MIMES:
             skipped.append(
@@ -200,10 +190,7 @@ def process_inbound_email(email: InboundEmail) -> dict:
         # Some accounting software sends PDFs without the proper
         # Content-Type header; we don't want to lose those.
         mime = attachment.mime_type
-        if (
-            mime == "application/octet-stream"
-            and attachment.body[:4] == b"%PDF"
-        ):
+        if mime == "application/octet-stream" and attachment.body[:4] == b"%PDF":
             mime = "application/pdf"
         try:
             job = _create_email_forward_job(
@@ -213,7 +200,7 @@ def process_inbound_email(email: InboundEmail) -> dict:
                 email=email,
             )
             jobs_created.append(job.id)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception(
                 "ingestion.email_forward.attachment_failed",
                 extra={
@@ -342,9 +329,7 @@ def ensure_inbox_token(organization_id: uuid.UUID | str) -> str:
     with super_admin_context(reason="ingestion.email_forward.token"):
         org = Organization.objects.filter(id=organization_id).first()
         if org is None:
-            raise EmailForwardError(
-                f"Organization {organization_id} not found."
-            )
+            raise EmailForwardError(f"Organization {organization_id} not found.")
         if not org.inbox_token:
             org.inbox_token = generate_inbox_token()
             org.save(update_fields=["inbox_token", "updated_at"])
@@ -370,9 +355,7 @@ def _redact_email(address: str) -> str:
     return f"{local[0]}{'*' * max(len(local) - 1, 1)}@{domain}"
 
 
-def verify_provider_signature(
-    *, secret: str, body: bytes, signature_hex: str
-) -> bool:
+def verify_provider_signature(*, secret: str, body: bytes, signature_hex: str) -> bool:
     """Verify an inbound webhook signature.
 
     Generic HMAC-SHA256 check — works for Mailgun (``signature``
@@ -382,7 +365,5 @@ def verify_provider_signature(
     """
     if not secret or not signature_hex:
         return False
-    expected = hmac.new(
-        secret.encode("utf-8"), body, hashlib.sha256
-    ).hexdigest()
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature_hex)

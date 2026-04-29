@@ -7,13 +7,7 @@
 // reason gate (the audit chain still records the actor).
 
 import { useEffect, useState } from "react";
-import {
-  AlertTriangle,
-  Copy,
-  KeyRound,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { AlertTriangle, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
 
 import { api, ApiError, type APIKeyRow } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
@@ -77,9 +71,7 @@ export default function ApiKeysSettingsPage() {
     <AppShell>
       <div className="flex flex-col gap-6">
         <header>
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            Settings
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Settings</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Organization, members, and platform integrations
           </p>
@@ -96,10 +88,7 @@ export default function ApiKeysSettingsPage() {
         )}
 
         {newPlaintext && (
-          <NewKeyAlert
-            plaintext={newPlaintext}
-            onDismiss={() => setNewPlaintext(null)}
-          />
+          <NewKeyAlert plaintext={newPlaintext} onDismiss={() => setNewPlaintext(null)} />
         )}
 
         <section className="rounded-xl border border-slate-100 bg-white">
@@ -110,11 +99,7 @@ export default function ApiKeysSettingsPage() {
                 API keys ({keys?.filter((k) => k.is_active).length ?? 0} active)
               </h2>
             </div>
-            <Button
-              size="sm"
-              onClick={() => setCreating(!creating)}
-              disabled={!!newPlaintext}
-            >
+            <Button size="sm" onClick={() => setCreating(!creating)} disabled={!!newPlaintext}>
               <Plus className="mr-1.5 h-3.5 w-3.5" />
               {creating ? "Cancel" : "New key"}
             </Button>
@@ -125,9 +110,8 @@ export default function ApiKeysSettingsPage() {
               <p className="mb-2 text-2xs text-slate-500">
                 Pick a label that helps you identify the key later (e.g.
                 <span className="font-mono"> ci-pipeline</span>,
-                <span className="font-mono"> zapier-prod</span>). The
-                plaintext key is shown once after creation — copy it
-                somewhere safe before you close the dialog.
+                <span className="font-mono"> zapier-prod</span>). The plaintext key is shown once
+                after creation — copy it somewhere safe before you close the dialog.
               </p>
               <div className="flex flex-wrap gap-2">
                 <input
@@ -135,13 +119,9 @@ export default function ApiKeysSettingsPage() {
                   value={newLabel}
                   onChange={(e) => setNewLabel(e.target.value)}
                   placeholder="ci-pipeline"
-                  className="flex-1 min-w-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
+                  className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-2xs text-ink focus:outline-none focus:ring-1 focus:ring-ink"
                 />
-                <Button
-                  size="sm"
-                  onClick={onCreate}
-                  disabled={!newLabel.trim()}
-                >
+                <Button size="sm" onClick={onCreate} disabled={!newLabel.trim()}>
                   Create key
                 </Button>
               </div>
@@ -163,10 +143,8 @@ export default function ApiKeysSettingsPage() {
                   )}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex flex-1 items-center gap-3 min-w-0">
-                      <span className="font-medium text-ink truncate">
-                        {k.label}
-                      </span>
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <span className="truncate font-medium text-ink">{k.label}</span>
                       <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">
                         {k.key_prefix}…
                       </code>
@@ -177,10 +155,7 @@ export default function ApiKeysSettingsPage() {
                       )}
                     </div>
                     <span className="text-[10px] text-slate-400">
-                      Created{" "}
-                      {k.created_at
-                        ? new Date(k.created_at).toLocaleDateString()
-                        : "—"}
+                      Created {k.created_at ? new Date(k.created_at).toLocaleDateString() : "—"}
                     </span>
                     {k.is_active && (
                       <button
@@ -197,8 +172,7 @@ export default function ApiKeysSettingsPage() {
                     {k.last_used_at
                       ? `Last used ${new Date(k.last_used_at).toLocaleString()}`
                       : "Never used"}
-                    {k.revoked_at &&
-                      ` · Revoked ${new Date(k.revoked_at).toLocaleDateString()}`}
+                    {k.revoked_at && ` · Revoked ${new Date(k.revoked_at).toLocaleDateString()}`}
                   </div>
                 </li>
               ))}
@@ -210,13 +184,7 @@ export default function ApiKeysSettingsPage() {
   );
 }
 
-function NewKeyAlert({
-  plaintext,
-  onDismiss,
-}: {
-  plaintext: string;
-  onDismiss: () => void;
-}) {
+function NewKeyAlert({ plaintext, onDismiss }: { plaintext: string; onDismiss: () => void }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -228,10 +196,7 @@ function NewKeyAlert({
     }
   }
   return (
-    <div
-      role="alert"
-      className="rounded-xl border border-warning/40 bg-warning/5 p-4"
-    >
+    <div role="alert" className="rounded-xl border border-warning/40 bg-warning/5 p-4">
       <div className="flex items-start gap-2">
         <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-warning" />
         <div className="flex-1">
@@ -239,8 +204,7 @@ function NewKeyAlert({
             Save this key now — you won&apos;t see it again.
           </h3>
           <p className="mt-1 text-2xs text-slate-600">
-            We only store a hash of the key. If you lose it, revoke and
-            create a new one.
+            We only store a hash of the key. If you lose it, revoke and create a new one.
           </p>
           <div className="mt-3 flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2">
             <code className="flex-1 truncate font-mono text-[11px] text-slate-700">
@@ -279,9 +243,8 @@ function EmptyState() {
     <div className="grid place-items-center px-5 py-12 text-center">
       <KeyRound className="h-6 w-6 text-slate-300" aria-hidden />
       <p className="mt-2 max-w-md text-2xs text-slate-500">
-        No API keys yet. Click <span className="font-medium">New key</span>{" "}
-        above to create one for your CI pipeline, Zapier, or any other
-        integration that needs programmatic access.
+        No API keys yet. Click <span className="font-medium">New key</span> above to create one for
+        your CI pipeline, Zapier, or any other integration that needs programmatic access.
       </p>
     </div>
   );

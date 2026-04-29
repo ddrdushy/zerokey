@@ -117,9 +117,7 @@ def _create_amendment(
 
     source = Invoice.objects.filter(id=source_invoice_id).first()
     if source is None:
-        raise AmendmentError(
-            f"Source invoice {source_invoice_id} not found."
-        )
+        raise AmendmentError(f"Source invoice {source_invoice_id} not found.")
 
     if source.status != Invoice.Status.VALIDATED:
         raise AmendmentError(
@@ -141,9 +139,7 @@ def _create_amendment(
         original_invoice_uuid=source.lhdn_uuid,
         invoice_type=target_type,
     ).count()
-    new_number = (
-        f"{source.invoice_number}-{config['suffix']}-{sibling_count + 1:02d}"
-    )
+    new_number = f"{source.invoice_number}-{config['suffix']}-{sibling_count + 1:02d}"
 
     # Build the new Invoice row by copying the source's header
     # fields. Fresh UUID + ingestion_job_id (amendments aren't
@@ -187,9 +183,7 @@ def _create_amendment(
     # Copy / adjust line items.
     source_lines = list(source.line_items.all().order_by("line_number"))
     adjustments_by_line = (
-        {a["line_number"]: a for a in (line_adjustments or [])}
-        if line_adjustments
-        else None
+        {a["line_number"]: a for a in (line_adjustments or [])} if line_adjustments else None
     )
 
     new_subtotal = Decimal("0.00")
@@ -197,11 +191,7 @@ def _create_amendment(
     new_total = Decimal("0.00")
 
     for line in source_lines:
-        adj = (
-            adjustments_by_line.get(line.line_number)
-            if adjustments_by_line is not None
-            else None
-        )
+        adj = adjustments_by_line.get(line.line_number) if adjustments_by_line is not None else None
         if adjustments_by_line is not None and adj is None:
             continue
 
@@ -243,11 +233,7 @@ def _create_amendment(
         new_inv.subtotal = new_subtotal
         new_inv.total_tax = new_tax
         new_inv.grand_total = new_total
-        new_inv.save(
-            update_fields=[
-                "subtotal", "total_tax", "grand_total", "updated_at"
-            ]
-        )
+        new_inv.save(update_fields=["subtotal", "total_tax", "grand_total", "updated_at"])
 
     record_event(
         action_type=config["audit"],

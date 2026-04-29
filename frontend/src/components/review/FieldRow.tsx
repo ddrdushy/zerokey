@@ -63,11 +63,7 @@ export function FieldRow(props: ReadProps | EditProps) {
         <span className="text-2xs font-medium uppercase tracking-wider text-slate-400">
           {label}
         </span>
-        {dirty ? (
-          <DirtyMarker />
-        ) : confidence != null ? (
-          <ConfidenceDot value={confidence} />
-        ) : null}
+        {dirty ? <DirtyMarker /> : confidence != null ? <ConfidenceDot value={confidence} /> : null}
       </div>
 
       {isEdit ? (
@@ -136,8 +132,7 @@ function ConfidenceDot({ value }: { value: number }) {
   // Three-band threshold: high >= 0.8, medium >= 0.5, low otherwise.
   // The thresholds match the vision-escalation cutoff (0.5) so a
   // reviewer's mental model lines up with the engine's behaviour.
-  const tone =
-    value >= 0.8 ? "bg-success" : value >= 0.5 ? "bg-warning" : "bg-error";
+  const tone = value >= 0.8 ? "bg-success" : value >= 0.5 ? "bg-warning" : "bg-error";
   const pct = Math.round(value * 100);
   return (
     <span

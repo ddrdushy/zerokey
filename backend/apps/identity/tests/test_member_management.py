@@ -68,9 +68,7 @@ class TestListMembers:
         response = client.get("/api/v1/identity/organization/members/")
         assert response.status_code == 400
 
-    def test_member_can_list(
-        self, owner_membership, admin_membership, viewer_membership
-    ) -> None:
+    def test_member_can_list(self, owner_membership, admin_membership, viewer_membership) -> None:
         client = _client_for(viewer_membership)
         response = client.get("/api/v1/identity/organization/members/")
         assert response.status_code == 200
@@ -88,24 +86,16 @@ class TestPatchMember:
             content_type="application/json",
         )
 
-    def test_owner_can_change_admin_role(
-        self, owner_membership, admin_membership
-    ) -> None:
+    def test_owner_can_change_admin_role(self, owner_membership, admin_membership) -> None:
         client = _client_for(owner_membership)
-        response = self._patch(
-            client, admin_membership.id, {"role_name": "viewer"}
-        )
+        response = self._patch(client, admin_membership.id, {"role_name": "viewer"})
         assert response.status_code == 200
         admin_membership.refresh_from_db()
         assert admin_membership.role.name == "viewer"
 
-    def test_owner_can_deactivate_member(
-        self, owner_membership, viewer_membership
-    ) -> None:
+    def test_owner_can_deactivate_member(self, owner_membership, viewer_membership) -> None:
         client = _client_for(owner_membership)
-        response = self._patch(
-            client, viewer_membership.id, {"is_active": False}
-        )
+        response = self._patch(client, viewer_membership.id, {"is_active": False})
         assert response.status_code == 200
         viewer_membership.refresh_from_db()
         assert viewer_membership.is_active is False
@@ -120,49 +110,31 @@ class TestPatchMember:
         assert event.affected_entity_id == str(viewer_membership.id)
         assert event.payload["fields_changed"] == ["is_active"]
 
-    def test_admin_cannot_change_owner(
-        self, owner_membership, admin_membership
-    ) -> None:
+    def test_admin_cannot_change_owner(self, owner_membership, admin_membership) -> None:
         client = _client_for(admin_membership)
-        response = self._patch(
-            client, owner_membership.id, {"role_name": "viewer"}
-        )
+        response = self._patch(client, owner_membership.id, {"role_name": "viewer"})
         assert response.status_code == 403
 
-    def test_admin_cannot_promote_to_owner(
-        self, admin_membership, viewer_membership
-    ) -> None:
+    def test_admin_cannot_promote_to_owner(self, admin_membership, viewer_membership) -> None:
         client = _client_for(admin_membership)
-        response = self._patch(
-            client, viewer_membership.id, {"role_name": "owner"}
-        )
+        response = self._patch(client, viewer_membership.id, {"role_name": "owner"})
         assert response.status_code == 403
         assert "owner" in response.json()["detail"].lower()
 
-    def test_owner_can_promote_to_owner(
-        self, owner_membership, viewer_membership
-    ) -> None:
+    def test_owner_can_promote_to_owner(self, owner_membership, viewer_membership) -> None:
         client = _client_for(owner_membership)
-        response = self._patch(
-            client, viewer_membership.id, {"role_name": "owner"}
-        )
+        response = self._patch(client, viewer_membership.id, {"role_name": "owner"})
         assert response.status_code == 200
 
-    def test_viewer_cannot_change_anyone(
-        self, viewer_membership, admin_membership
-    ) -> None:
+    def test_viewer_cannot_change_anyone(self, viewer_membership, admin_membership) -> None:
         client = _client_for(viewer_membership)
-        response = self._patch(
-            client, admin_membership.id, {"role_name": "viewer"}
-        )
+        response = self._patch(client, admin_membership.id, {"role_name": "viewer"})
         assert response.status_code == 403
 
     def test_self_change_rejected(self, owner_membership) -> None:
         """Owners cannot demote / deactivate themselves through this route."""
         client = _client_for(owner_membership)
-        response = self._patch(
-            client, owner_membership.id, {"role_name": "viewer"}
-        )
+        response = self._patch(client, owner_membership.id, {"role_name": "viewer"})
         assert response.status_code == 403
         assert "your own" in response.json()["detail"].lower()
 
@@ -175,48 +147,32 @@ class TestPatchMember:
         )
         assert response.status_code == 404
 
-    def test_unknown_role_400(
-        self, owner_membership, viewer_membership
-    ) -> None:
+    def test_unknown_role_400(self, owner_membership, viewer_membership) -> None:
         client = _client_for(owner_membership)
-        response = self._patch(
-            client, viewer_membership.id, {"role_name": "supervillain"}
-        )
+        response = self._patch(client, viewer_membership.id, {"role_name": "supervillain"})
         assert response.status_code == 400
 
-    def test_at_least_one_field_required(
-        self, owner_membership, viewer_membership
-    ) -> None:
+    def test_at_least_one_field_required(self, owner_membership, viewer_membership) -> None:
         client = _client_for(owner_membership)
         response = self._patch(client, viewer_membership.id, {})
         assert response.status_code == 400
 
-    def test_no_op_does_not_audit(
-        self, owner_membership, viewer_membership
-    ) -> None:
+    def test_no_op_does_not_audit(self, owner_membership, viewer_membership) -> None:
         client = _client_for(owner_membership)
-        before = AuditEvent.objects.filter(
-            action_type="organization.membership.updated"
-        ).count()
+        before = AuditEvent.objects.filter(action_type="organization.membership.updated").count()
         response = self._patch(
             client, viewer_membership.id, {"role_name": "viewer", "is_active": True}
         )
         assert response.status_code == 200
-        after = AuditEvent.objects.filter(
-            action_type="organization.membership.updated"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="organization.membership.updated").count()
         assert before == after
 
-    def test_cross_org_membership_404(
-        self, owner_membership, seeded
-    ) -> None:
+    def test_cross_org_membership_404(self, owner_membership, seeded) -> None:
         """Membership in a different org is not visible here."""
         other_org = Organization.objects.create(
             legal_name="Beta", tin="C99999999999", contact_email="b@b"
         )
         other = _membership(other_org, "x@b.test", "viewer")
         client = _client_for(owner_membership)
-        response = self._patch(
-            client, other.id, {"role_name": "admin"}
-        )
+        response = self._patch(client, other.id, {"role_name": "admin"})
         assert response.status_code == 404

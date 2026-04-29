@@ -55,9 +55,7 @@ export default function AdminOverviewPage() {
     <AdminShell>
       <div className="flex flex-col gap-8">
         <header>
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            Platform overview
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Platform overview</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Cross-tenant snapshot · live from the audit chain
           </p>
@@ -187,11 +185,7 @@ function KPICard({
         ? "border-success/30 bg-success/5"
         : "border-slate-100 bg-white";
   const iconTone =
-    tone === "warning"
-      ? "text-warning"
-      : tone === "success"
-        ? "text-success"
-        : "text-slate-400";
+    tone === "warning" ? "text-warning" : tone === "success" ? "text-success" : "text-slate-400";
   return (
     <Link
       href={href}
@@ -201,9 +195,7 @@ function KPICard({
       )}
     >
       <div className="flex items-center justify-between">
-        <div className="text-2xs font-medium uppercase tracking-wider text-slate-500">
-          {label}
-        </div>
+        <div className="text-2xs font-medium uppercase tracking-wider text-slate-500">{label}</div>
         <Icon className={cn("h-4 w-4", iconTone)} />
       </div>
       <div className="font-display text-3xl font-bold tracking-tight text-ink">
@@ -227,11 +219,7 @@ function KPICard({
   );
 }
 
-function EngineHealthTable({
-  rows,
-}: {
-  rows: PlatformOverview["engines"]["calls_last_7d"];
-}) {
+function EngineHealthTable({ rows }: { rows: PlatformOverview["engines"]["calls_last_7d"] }) {
   if (rows.length === 0) {
     return (
       <div className="mt-3 rounded-xl border border-slate-100 bg-white p-6 text-center text-2xs text-slate-400">
@@ -244,44 +232,36 @@ function EngineHealthTable({
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Engine
-            </th>
-            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-              Calls
-            </th>
-            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-              Success
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Engine</th>
+            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Calls</th>
+            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Success</th>
             <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
               Fail / unavailable
             </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Health
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Health</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.map((row) => {
             const issues = row.failure + row.unavailable;
-            const successRate =
-              row.total > 0 ? Math.round((row.success / row.total) * 100) : 0;
-            const healthIcon = issues === 0 ? (
-              <span className="inline-flex items-center gap-1 text-success">
-                <Activity className="h-3 w-3" />
-                {successRate}%
-              </span>
-            ) : successRate >= 80 ? (
-              <span className="inline-flex items-center gap-1 text-warning">
-                <ShieldAlert className="h-3 w-3" />
-                {successRate}%
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 text-error">
-                <AlertTriangle className="h-3 w-3" />
-                {successRate}%
-              </span>
-            );
+            const successRate = row.total > 0 ? Math.round((row.success / row.total) * 100) : 0;
+            const healthIcon =
+              issues === 0 ? (
+                <span className="inline-flex items-center gap-1 text-success">
+                  <Activity className="h-3 w-3" />
+                  {successRate}%
+                </span>
+              ) : successRate >= 80 ? (
+                <span className="inline-flex items-center gap-1 text-warning">
+                  <ShieldAlert className="h-3 w-3" />
+                  {successRate}%
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-error">
+                  <AlertTriangle className="h-3 w-3" />
+                  {successRate}%
+                </span>
+              );
             return (
               <tr key={row.engine} className="hover:bg-slate-50">
                 <td className="px-3 py-3">
@@ -289,18 +269,10 @@ function EngineHealthTable({
                     {row.engine}
                   </code>
                 </td>
-                <td className="px-3 py-3 text-right text-slate-600">
-                  {row.total}
-                </td>
-                <td className="px-3 py-3 text-right text-success">
-                  {row.success}
-                </td>
+                <td className="px-3 py-3 text-right text-slate-600">{row.total}</td>
+                <td className="px-3 py-3 text-right text-success">{row.success}</td>
                 <td className="px-3 py-3 text-right">
-                  <span
-                    className={
-                      issues > 0 ? "font-medium text-error" : "text-slate-400"
-                    }
-                  >
+                  <span className={issues > 0 ? "font-medium text-error" : "text-slate-400"}>
                     {issues}
                   </span>
                 </td>

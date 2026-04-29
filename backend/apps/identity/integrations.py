@@ -43,8 +43,9 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -59,7 +60,6 @@ from apps.audit.models import AuditEvent
 from apps.audit.services import record_event
 
 from .models import OrganizationIntegration
-
 
 # --- Schema registry ---------------------------------------------------------
 
@@ -143,9 +143,7 @@ class IntegrationConfigError(Exception):
 # --- Service functions -------------------------------------------------------
 
 
-def list_integrations_for_org(
-    *, organization_id: uuid.UUID | str
-) -> list[dict[str, Any]]:
+def list_integrations_for_org(*, organization_id: uuid.UUID | str) -> list[dict[str, Any]]:
     """Settings → Integrations readout.
 
     Returns one card per registered integration. Existing rows are
@@ -154,9 +152,7 @@ def list_integrations_for_org(
     """
     rows = {
         r.integration_key: r
-        for r in OrganizationIntegration.objects.filter(
-            organization_id=organization_id
-        )
+        for r in OrganizationIntegration.objects.filter(organization_id=organization_id)
     }
     out: list[dict[str, Any]] = []
     for schema in INTEGRATION_SCHEMAS:
@@ -181,13 +177,9 @@ def upsert_credentials(
     """
     schema = _schema_for(integration_key)
     if schema is None:
-        raise IntegrationConfigError(
-            f"Unknown integration {integration_key!r}."
-        )
+        raise IntegrationConfigError(f"Unknown integration {integration_key!r}.")
     if environment not in {"sandbox", "production"}:
-        raise IntegrationConfigError(
-            "environment must be 'sandbox' or 'production'."
-        )
+        raise IntegrationConfigError("environment must be 'sandbox' or 'production'.")
 
     allowed_keys = {f["key"] for f in schema["fields"]}
     invalid = set(field_updates) - allowed_keys
@@ -207,12 +199,8 @@ def upsert_credentials(
                 # Seed defaults (e.g. preset base_url for sandbox)
                 # so first-time configurators don't have to copy
                 # the URL out of LHDN docs.
-                "sandbox_credentials": encrypt_dict_values(
-                    schema.get("default_sandbox", {})
-                ),
-                "production_credentials": encrypt_dict_values(
-                    schema.get("default_production", {})
-                ),
+                "sandbox_credentials": encrypt_dict_values(schema.get("default_sandbox", {})),
+                "production_credentials": encrypt_dict_values(schema.get("default_production", {})),
             },
         )
 
@@ -276,13 +264,9 @@ def set_active_environment(
     """
     schema = _schema_for(integration_key)
     if schema is None:
-        raise IntegrationConfigError(
-            f"Unknown integration {integration_key!r}."
-        )
+        raise IntegrationConfigError(f"Unknown integration {integration_key!r}.")
     if environment not in {"sandbox", "production"}:
-        raise IntegrationConfigError(
-            "environment must be 'sandbox' or 'production'."
-        )
+        raise IntegrationConfigError("environment must be 'sandbox' or 'production'.")
 
     with transaction.atomic():
         row, _ = OrganizationIntegration.objects.select_for_update().get_or_create(
@@ -299,9 +283,7 @@ def set_active_environment(
         previous = row.active_environment
         row.active_environment = environment
         row.updated_by_user_id = actor_user_id
-        row.save(
-            update_fields=["active_environment", "updated_by_user_id", "updated_at"]
-        )
+        row.save(update_fields=["active_environment", "updated_by_user_id", "updated_at"])
 
         record_event(
             action_type="identity.integration.environment_switched",
@@ -345,31 +327,21 @@ def test_connection(
     """
     schema = _schema_for(integration_key)
     if schema is None:
-        raise IntegrationConfigError(
-            f"Unknown integration {integration_key!r}."
-        )
+        raise IntegrationConfigError(f"Unknown integration {integration_key!r}.")
     if environment not in {"sandbox", "production"}:
-        raise IntegrationConfigError(
-            "environment must be 'sandbox' or 'production'."
-        )
+        raise IntegrationConfigError("environment must be 'sandbox' or 'production'.")
 
     row = OrganizationIntegration.objects.filter(
         organization_id=organization_id, integration_key=integration_key
     ).first()
     if row is None:
-        raise IntegrationConfigError(
-            "No credentials configured yet. Save credentials first."
-        )
+        raise IntegrationConfigError("No credentials configured yet. Save credentials first.")
 
-    plain = decrypt_dict_values(
-        getattr(row, f"{environment}_credentials") or {}
-    )
+    plain = decrypt_dict_values(getattr(row, f"{environment}_credentials") or {})
 
     tester = _INTEGRATION_TESTERS.get(integration_key)
     if tester is None:
-        raise IntegrationConfigError(
-            f"No test-connection wired for {integration_key}."
-        )
+        raise IntegrationConfigError(f"No test-connection wired for {integration_key}.")
 
     outcome = tester(plain)
 
@@ -444,9 +416,7 @@ def _test_lhdn_myinvois(plain: dict[str, Any]) -> TestOutcome:
             duration_ms=int((time.perf_counter() - started) * 1000),
         )
 
-    missing = [
-        k for k in ("client_id", "client_secret", "tin") if not plain.get(k)
-    ]
+    missing = [k for k in ("client_id", "client_secret", "tin") if not plain.get(k)]
     if missing:
         return TestOutcome(
             ok=False,

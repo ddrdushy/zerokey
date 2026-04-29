@@ -87,7 +87,6 @@ def require_engine_credential(
         if env_fallback:
             sources.append(f"env {env_fallback}")
         raise EngineUnavailable(
-            f"Credential {engine_name}.{key} not configured "
-            f"(looked in {', '.join(sources)})"
+            f"Credential {engine_name}.{key} not configured (looked in {', '.join(sources)})"
         )
     return value

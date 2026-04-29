@@ -26,7 +26,6 @@ from rest_framework import authentication, exceptions
 
 from .models import APIKey, User
 
-
 _BEARER_PREFIX = "Bearer "
 _KEY_PREFIX_LEN = 12
 
@@ -55,7 +54,7 @@ class APIKeyAuthentication(authentication.BaseAuthentication):
         if not header.startswith(_BEARER_PREFIX):
             return None  # Not our auth scheme — let other classes try.
 
-        plaintext = header[len(_BEARER_PREFIX):].strip()
+        plaintext = header[len(_BEARER_PREFIX) :].strip()
         if not plaintext:
             return None  # Empty bearer — let session auth handle.
 
@@ -70,9 +69,7 @@ class APIKeyAuthentication(authentication.BaseAuthentication):
 
         # Prefix lookup is indexed; small candidate set (typically 1
         # row). Constant-time hash compare avoids timing leaks.
-        candidates = APIKey.objects.filter(
-            key_prefix=prefix, is_active=True
-        ).select_related()
+        candidates = APIKey.objects.filter(key_prefix=prefix, is_active=True).select_related()
 
         # Need to bypass tenant RLS here — we don't know the org yet.
         # Wrap in super-admin elevation; the elevation reason is
@@ -112,10 +109,8 @@ class APIKeyAuthentication(authentication.BaseAuthentication):
         # Best-effort last_used_at update. Failures here don't 401.
         try:
             with super_admin_context(reason="api_key_auth:touch"):
-                APIKey.objects.filter(id=match.id).update(
-                    last_used_at=timezone.now()
-                )
-        except Exception:  # noqa: BLE001
+                APIKey.objects.filter(id=match.id).update(last_used_at=timezone.now())
+        except Exception:
             pass
 
         return (user, match)

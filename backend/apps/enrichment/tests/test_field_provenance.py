@@ -66,9 +66,7 @@ def _make_invoice(
 
 @pytest.mark.django_db
 class TestEnrichmentWritesProvenance:
-    def test_create_path_marks_every_populated_field_extracted(
-        self, org
-    ) -> None:
+    def test_create_path_marks_every_populated_field_extracted(self, org) -> None:
         invoice = _make_invoice(
             org=org,
             buyer_tin="C9999999999",
@@ -86,9 +84,7 @@ class TestEnrichmentWritesProvenance:
         # Phone was blank on the invoice → no provenance entry.
         assert "phone" not in prov
 
-    def test_match_path_only_writes_for_newly_filled_fields(
-        self, org
-    ) -> None:
+    def test_match_path_only_writes_for_newly_filled_fields(self, org) -> None:
         # Pre-existing master with TIN + legal_name + address.
         master = CustomerMaster.objects.create(
             organization=org,
@@ -176,8 +172,7 @@ class TestNeedsVerificationExtendedStates:
         stale = self._make(
             org=org,
             state=CustomerMaster.TinVerificationState.MANUALLY_RESOLVED,
-            last_at=timezone.now()
-            - timedelta(days=tin_verification.VERIFY_REFRESH_DAYS + 1),
+            last_at=timezone.now() - timedelta(days=tin_verification.VERIFY_REFRESH_DAYS + 1),
             tin="C8888888888",
         )
         assert tin_verification.needs_verification(stale) is True
@@ -207,9 +202,7 @@ class TestBackfillHelper:
         # against the live ORM.
         from importlib import import_module
 
-        mod = import_module(
-            "apps.enrichment.migrations.0003_field_provenance_and_states"
-        )
+        mod = import_module("apps.enrichment.migrations.0003_field_provenance_and_states")
         from django.apps import apps as live_apps
 
         mod.backfill_provenance(live_apps, None)
@@ -223,7 +216,5 @@ class TestBackfillHelper:
         assert "registration_number" not in prov
 
     def test_provenance_default_empty_dict(self, org) -> None:
-        master = CustomerMaster.objects.create(
-            organization=org, legal_name="X", tin=""
-        )
+        master = CustomerMaster.objects.create(organization=org, legal_name="X", tin="")
         assert master.field_provenance == {}

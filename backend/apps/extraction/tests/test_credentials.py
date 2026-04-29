@@ -27,9 +27,7 @@ def vision_engine(db) -> Engine:
 
 @pytest.mark.django_db
 class TestEngineCredentialResolver:
-    def test_db_value_takes_precedence_over_env(
-        self, vision_engine, monkeypatch
-    ) -> None:
+    def test_db_value_takes_precedence_over_env(self, vision_engine, monkeypatch) -> None:
         vision_engine.credentials = {"api_key": "from-db"}
         vision_engine.save(update_fields=["credentials"])
         monkeypatch.setenv("ANTHROPIC_API_KEY", "from-env")
@@ -123,15 +121,11 @@ class TestEngineCredentialResolver:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
         assert (
-            engine_credential(
-                engine_name="anthropic-claude-sonnet-vision", key="api_key"
-            )
+            engine_credential(engine_name="anthropic-claude-sonnet-vision", key="api_key")
             == "vision-key"
         )
         assert (
-            engine_credential(
-                engine_name="anthropic-claude-sonnet-structure", key="api_key"
-            )
+            engine_credential(engine_name="anthropic-claude-sonnet-structure", key="api_key")
             == "structure-key"
         )
 
@@ -167,9 +161,7 @@ class TestClaudeAdapterReadsResolver:
         # The adapter uses a deferred import; patch that path too.
         import sys
 
-        sys.modules.setdefault(
-            "anthropic", type(sys)("anthropic")
-        ).Anthropic = _StubAnthropic  # type: ignore[attr-defined]
+        sys.modules.setdefault("anthropic", type(sys)("anthropic")).Anthropic = _StubAnthropic  # type: ignore[attr-defined]
 
         _client(engine_name=vision_engine.name)
         assert captured["api_key"] == "from-db"

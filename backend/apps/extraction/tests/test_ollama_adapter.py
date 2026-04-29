@@ -84,9 +84,7 @@ class TestLocalPath:
             captured["url"] = url
             captured["headers"] = headers
             captured["json"] = json
-            return _ollama_response(
-                '{"invoice_number": "INV-001", "issue_date": "2025-04-28"}'
-            )
+            return _ollama_response('{"invoice_number": "INV-001", "issue_date": "2025-04-28"}')
 
         adapter = OllamaFieldStructureAdapter()
         with patch.object(httpx.Client, "post", fake_post):
@@ -136,9 +134,7 @@ class TestCloudPath:
         assert result.diagnostics["input_tokens"] == 42
         assert result.diagnostics["output_tokens"] == 17
 
-    def test_cloud_missing_api_key_raises_engine_unavailable(
-        self, engine, monkeypatch
-    ) -> None:
+    def test_cloud_missing_api_key_raises_engine_unavailable(self, engine, monkeypatch) -> None:
         monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
         engine.credentials = {"host": "https://ollama.com", "model": "gpt-oss:120b"}
         engine.save(update_fields=["credentials"])
@@ -219,9 +215,7 @@ class TestErrorPaths:
 
 @pytest.mark.django_db
 class TestCredentialResolution:
-    def test_engine_credentials_beat_env_fallback(
-        self, engine, monkeypatch
-    ) -> None:
+    def test_engine_credentials_beat_env_fallback(self, engine, monkeypatch) -> None:
         engine.credentials = {
             "host": "http://localhost:11434",
             "model": "from-db",
@@ -241,9 +235,7 @@ class TestCredentialResolution:
 
         assert captured["json"]["model"] == "from-db"
 
-    def test_env_fallback_used_when_credentials_blank(
-        self, engine, monkeypatch
-    ) -> None:
+    def test_env_fallback_used_when_credentials_blank(self, engine, monkeypatch) -> None:
         engine.credentials = {}
         engine.save(update_fields=["credentials"])
         monkeypatch.setenv("OLLAMA_HOST", "http://localhost:11434")

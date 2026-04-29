@@ -8,27 +8,19 @@
 import { useEffect, useRef, useState } from "react";
 import { Bell, CircleCheck, Mail } from "lucide-react";
 
-import {
-  api,
-  ApiError,
-  type NotificationPreferenceRow,
-} from "@/lib/api";
+import { api, ApiError, type NotificationPreferenceRow } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { SettingsTabs } from "@/components/settings/SettingsTabs";
 import { cn } from "@/lib/utils";
 
 export default function NotificationsSettingsPage() {
-  const [events, setEvents] = useState<NotificationPreferenceRow[] | null>(
-    null,
-  );
+  const [events, setEvents] = useState<NotificationPreferenceRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
 
   // Pending updates batched until the debounce timer fires. Keyed by
   // event key so multiple toggles on the same event collapse.
-  const pendingRef = useRef<
-    Record<string, { in_app?: boolean; email?: boolean }>
-  >({});
+  const pendingRef = useRef<Record<string, { in_app?: boolean; email?: boolean }>>({});
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function refresh() {
@@ -70,9 +62,7 @@ export default function NotificationsSettingsPage() {
   function onToggle(key: string, channel: "in_app" | "email", next: boolean) {
     // Optimistic update so the toggle responds instantly.
     setEvents((prev) =>
-      prev
-        ? prev.map((e) => (e.key === key ? { ...e, [channel]: next } : e))
-        : prev,
+      prev ? prev.map((e) => (e.key === key ? { ...e, [channel]: next } : e)) : prev,
     );
     // Merge into pending. We send the BOTH channels for the event so
     // the server has full context (the API replaces the per-event
@@ -94,9 +84,7 @@ export default function NotificationsSettingsPage() {
     <AppShell>
       <div className="flex flex-col gap-6">
         <header>
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            Settings
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Settings</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Organization, members, and platform integrations
           </p>
@@ -116,9 +104,7 @@ export default function NotificationsSettingsPage() {
           <header className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
             <div className="flex items-center gap-2">
               <Bell className="h-4 w-4 text-slate-400" />
-              <h2 className="text-sm font-semibold text-ink">
-                Notifications
-              </h2>
+              <h2 className="text-sm font-semibold text-ink">Notifications</h2>
             </div>
             {savedFlash && (
               <span className="inline-flex items-center gap-1 text-2xs text-success">
@@ -128,9 +114,8 @@ export default function NotificationsSettingsPage() {
             )}
           </header>
           <div className="px-5 py-3 text-2xs text-slate-500">
-            Choose which platform events reach you, and on which
-            channels. Changes save automatically. Defaults are
-            everything-on; toggle off only the events you don&apos;t
+            Choose which platform events reach you, and on which channels. Changes save
+            automatically. Defaults are everything-on; toggle off only the events you don&apos;t
             want.
           </div>
 
@@ -157,24 +142,18 @@ export default function NotificationsSettingsPage() {
                     <tr key={e.key}>
                       <td className="px-5 py-3">
                         <div className="font-medium text-ink">{e.label}</div>
-                        <div className="mt-0.5 text-[10px] text-slate-500">
-                          {e.description}
-                        </div>
+                        <div className="mt-0.5 text-[10px] text-slate-500">{e.description}</div>
                       </td>
                       <td className="px-3 py-3 text-center">
                         <Toggle
                           checked={e.in_app}
-                          onChange={(next) =>
-                            onToggle(e.key, "in_app", next)
-                          }
+                          onChange={(next) => onToggle(e.key, "in_app", next)}
                         />
                       </td>
                       <td className="px-3 py-3 text-center">
                         <Toggle
                           checked={e.email}
-                          onChange={(next) =>
-                            onToggle(e.key, "email", next)
-                          }
+                          onChange={(next) => onToggle(e.key, "email", next)}
                           icon={<Mail className="h-3 w-3" />}
                         />
                       </td>
@@ -183,10 +162,9 @@ export default function NotificationsSettingsPage() {
                 </tbody>
               </table>
               <div className="border-t border-slate-100 px-5 py-3 text-[10px] text-slate-400">
-                Email delivery requires the platform&apos;s SMTP
-                credentials to be configured by the operator. Until
-                then, email toggles capture your preference but no
-                message will be sent.
+                Email delivery requires the platform&apos;s SMTP credentials to be configured by the
+                operator. Until then, email toggles capture your preference but no message will be
+                sent.
               </div>
             </div>
           )}

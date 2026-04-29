@@ -56,9 +56,7 @@ def is_tin_valid(*, organization_id: uuid.UUID | str, tin: str) -> bool:
         return False
 
     try:
-        creds = lhdn_client.credentials_for_org(
-            organization_id=organization_id
-        )
+        creds = lhdn_client.credentials_for_org(organization_id=organization_id)
     except lhdn_client.LHDNError:
         # Org hasn't configured LHDN yet — we can't validate, so
         # don't block. Submission-time validation will surface the

@@ -36,9 +36,7 @@ def org_owner(seeded) -> tuple[Organization, User]:
         tin="C1234567890",
         contact_email="o@a",
     )
-    user = User.objects.create_user(
-        email="owner@a", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="owner@a", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -59,12 +57,8 @@ def org_owner(seeded) -> tuple[Organization, User]:
 
 @pytest.fixture
 def viewer_member(seeded) -> tuple[Organization, User]:
-    org = Organization.objects.create(
-        legal_name="X", tin="C2222222222", contact_email="o@x"
-    )
-    user = User.objects.create_user(
-        email="viewer@x", password="long-enough-password"
-    )
+    org = Organization.objects.create(legal_name="X", tin="C2222222222", contact_email="o@x")
+    user = User.objects.create_user(email="viewer@x", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="viewer")
     )
@@ -125,9 +119,7 @@ def _resp(status_code: int, body: dict | None = None, headers: dict | None = Non
 @pytest.mark.django_db
 class TestSubmitEndpoint:
     def test_unauthenticated_rejected(self, ready_invoice) -> None:
-        response = Client().post(
-            f"/api/v1/invoices/{ready_invoice.id}/submit-to-lhdn/"
-        )
+        response = Client().post(f"/api/v1/invoices/{ready_invoice.id}/submit-to-lhdn/")
         assert response.status_code in (401, 403)
 
     def test_viewer_role_blocked(self, viewer_member) -> None:
@@ -146,9 +138,7 @@ class TestSubmitEndpoint:
         response = client.post(f"/api/v1/invoices/{inv.id}/submit-to-lhdn/")
         assert response.status_code == 403
 
-    def test_pre_flight_rejects_blank_invoice_number(
-        self, authed, org_owner
-    ) -> None:
+    def test_pre_flight_rejects_blank_invoice_number(self, authed, org_owner) -> None:
         client, org, _ = authed
         inv = Invoice.objects.create(
             organization=org,
@@ -160,21 +150,15 @@ class TestSubmitEndpoint:
         assert response.status_code == 400
         assert "Invoice number" in response.json()["detail"]
 
-    def test_pre_flight_rejects_already_validated(
-        self, authed, ready_invoice
-    ) -> None:
+    def test_pre_flight_rejects_already_validated(self, authed, ready_invoice) -> None:
         ready_invoice.status = Invoice.Status.VALIDATED
         ready_invoice.lhdn_uuid = "doc-xyz"
         ready_invoice.save()
         client, _, _ = authed
-        response = client.post(
-            f"/api/v1/invoices/{ready_invoice.id}/submit-to-lhdn/"
-        )
+        response = client.post(f"/api/v1/invoices/{ready_invoice.id}/submit-to-lhdn/")
         assert response.status_code == 400
 
-    def test_happy_path_returns_invoice(
-        self, authed, ready_invoice
-    ) -> None:
+    def test_happy_path_returns_invoice(self, authed, ready_invoice) -> None:
         client, _, _ = authed
         lhdn_client._token_cache.clear()
         with patch(
@@ -185,17 +169,13 @@ class TestSubmitEndpoint:
                     202,
                     {
                         "submissionUid": "sub-1",
-                        "acceptedDocuments": [
-                            {"uuid": "u-1", "invoiceCodeNumber": "INV-2026-009"}
-                        ],
+                        "acceptedDocuments": [{"uuid": "u-1", "invoiceCodeNumber": "INV-2026-009"}],
                         "rejectedDocuments": [],
                     },
                 ),
             ],
         ):
-            response = client.post(
-                f"/api/v1/invoices/{ready_invoice.id}/submit-to-lhdn/"
-            )
+            response = client.post(f"/api/v1/invoices/{ready_invoice.id}/submit-to-lhdn/")
         assert response.status_code == 200
         body = response.json()
         assert body["ok"] is True
@@ -239,14 +219,15 @@ class TestCancelEndpoint:
     def test_happy_path(self, authed, submitted_invoice) -> None:
         client, _, _ = authed
         lhdn_client._token_cache.clear()
-        with patch(
-            "apps.submission.lhdn_client.httpx.post",
-            return_value=_resp(
-                200, {"access_token": "tok", "expires_in": 3600}
+        with (
+            patch(
+                "apps.submission.lhdn_client.httpx.post",
+                return_value=_resp(200, {"access_token": "tok", "expires_in": 3600}),
             ),
-        ), patch(
-            "apps.submission.lhdn_client.httpx.put",
-            return_value=_resp(200, {"status": "cancelled"}),
+            patch(
+                "apps.submission.lhdn_client.httpx.put",
+                return_value=_resp(200, {"status": "cancelled"}),
+            ),
         ):
             response = client.post(
                 f"/api/v1/invoices/{submitted_invoice.id}/cancel-lhdn/",
@@ -258,12 +239,8 @@ class TestCancelEndpoint:
         assert body["ok"] is True
         assert body["invoice"]["status"] == "cancelled"
 
-    def test_outside_72h_returns_credit_note_message(
-        self, authed, submitted_invoice
-    ) -> None:
-        submitted_invoice.validation_timestamp = (
-            timezone.now() - timedelta(hours=80)
-        )
+    def test_outside_72h_returns_credit_note_message(self, authed, submitted_invoice) -> None:
+        submitted_invoice.validation_timestamp = timezone.now() - timedelta(hours=80)
         submitted_invoice.save()
         client, _, _ = authed
         response = client.post(
@@ -297,34 +274,33 @@ class TestPollEndpoint:
         submitted_invoice.save()
         client, _, _ = authed
         lhdn_client._token_cache.clear()
-        with patch(
-            "apps.submission.lhdn_client.httpx.post",
-            return_value=_resp(
-                200, {"access_token": "tok", "expires_in": 3600}
+        with (
+            patch(
+                "apps.submission.lhdn_client.httpx.post",
+                return_value=_resp(200, {"access_token": "tok", "expires_in": 3600}),
             ),
-        ), patch(
-            "apps.submission.lhdn_client.httpx.get",
-            side_effect=[
-                _resp(
-                    200,
-                    {
-                        "submissionUid": "sub-xyz",
-                        "overallStatus": "Valid",
-                        "documentSummary": [
-                            {
-                                "uuid": "doc-uuid-001",
-                                "status": "Valid",
-                                "invoiceCodeNumber": "INV-CXL-001",
-                            }
-                        ],
-                    },
-                ),
-                _resp(200, {"longId": "longid-abc"}),
-            ],
+            patch(
+                "apps.submission.lhdn_client.httpx.get",
+                side_effect=[
+                    _resp(
+                        200,
+                        {
+                            "submissionUid": "sub-xyz",
+                            "overallStatus": "Valid",
+                            "documentSummary": [
+                                {
+                                    "uuid": "doc-uuid-001",
+                                    "status": "Valid",
+                                    "invoiceCodeNumber": "INV-CXL-001",
+                                }
+                            ],
+                        },
+                    ),
+                    _resp(200, {"longId": "longid-abc"}),
+                ],
+            ),
         ):
-            response = client.post(
-                f"/api/v1/invoices/{submitted_invoice.id}/poll-lhdn/"
-            )
+            response = client.post(f"/api/v1/invoices/{submitted_invoice.id}/poll-lhdn/")
         body = response.json()
         assert body["ok"] is True
         assert body["document_status"] == "Valid"
@@ -350,9 +326,7 @@ class TestCertificateEndpoint:
         client, _, _ = authed
         response = client.post(
             "/api/v1/identity/organization/certificate/",
-            data=json.dumps(
-                {"cert_pem": "not-a-pem", "private_key_pem": "also-not"}
-            ),
+            data=json.dumps({"cert_pem": "not-a-pem", "private_key_pem": "also-not"}),
             content_type="application/json",
         )
         assert response.status_code == 400
@@ -366,9 +340,7 @@ class TestCertificateEndpoint:
         # Generate two distinct RSA keys → cert from one, key from the other.
         key_a = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         key_b = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        subject = x509.Name(
-            [x509.NameAttribute(NameOID.COMMON_NAME, "test")]
-        )
+        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -390,9 +362,7 @@ class TestCertificateEndpoint:
         client, _, _ = authed
         response = client.post(
             "/api/v1/identity/organization/certificate/",
-            data=json.dumps(
-                {"cert_pem": cert_pem, "private_key_pem": wrong_key_pem}
-            ),
+            data=json.dumps({"cert_pem": cert_pem, "private_key_pem": wrong_key_pem}),
             content_type="application/json",
         )
         assert response.status_code == 400
@@ -405,9 +375,7 @@ class TestCertificateEndpoint:
         from cryptography.x509.oid import NameOID
 
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        subject = x509.Name(
-            [x509.NameAttribute(NameOID.COMMON_NAME, "Acme Sdn Bhd")]
-        )
+        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Acme Sdn Bhd")])
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -428,9 +396,7 @@ class TestCertificateEndpoint:
         client, _, _ = authed
         response = client.post(
             "/api/v1/identity/organization/certificate/",
-            data=json.dumps(
-                {"cert_pem": cert_pem, "private_key_pem": key_pem}
-            ),
+            data=json.dumps({"cert_pem": cert_pem, "private_key_pem": key_pem}),
             content_type="application/json",
         )
         assert response.status_code == 200
@@ -441,7 +407,6 @@ class TestCertificateEndpoint:
 
     def _build_pfx_bundle(self, *, password: str, common_name: str = "PFX Co") -> bytes:
         """Build a real PFX/P12 bundle for the test cases below."""
-        import base64
 
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes, serialization
@@ -450,9 +415,7 @@ class TestCertificateEndpoint:
         from cryptography.x509.oid import NameOID
 
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        subject = x509.Name(
-            [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
-        )
+        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -521,9 +484,7 @@ class TestCertificateEndpoint:
         client, _, _ = authed
         response = client.post(
             "/api/v1/identity/organization/certificate/",
-            data=json.dumps(
-                {"pfx_b64": "not!base64!", "pfx_password": "x"}
-            ),
+            data=json.dumps({"pfx_b64": "not!base64!", "pfx_password": "x"}),
             content_type="application/json",
         )
         assert response.status_code == 400

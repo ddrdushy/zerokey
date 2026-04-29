@@ -46,9 +46,7 @@ def org_user(seeded) -> tuple[Organization, User]:
         contact_phone="03-1234-0000",
         registered_address="Lot 1, Jalan Awal",
     )
-    user = User.objects.create_user(
-        email="o@acme.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="o@acme.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -92,10 +90,7 @@ class TestUpdateOrganizationService:
             actor_user_id=user.id,
         )
         # No identity.organization.updated audit event should have been written.
-        assert (
-            AuditEvent.objects.filter(action_type="identity.organization.updated").count()
-            == 0
-        )
+        assert AuditEvent.objects.filter(action_type="identity.organization.updated").count() == 0
 
     def test_audit_event_lists_field_names_no_values(self, org_user) -> None:
         org, user = org_user
@@ -199,9 +194,7 @@ class TestOrganizationDetailEndpoint:
     def test_no_active_org_returns_400(self, seeded) -> None:
         from apps.identity.models import User as _User
 
-        user = _User.objects.create_user(
-            email="solo@example.com", password="long-enough-password"
-        )
+        user = _User.objects.create_user(email="solo@example.com", password="long-enough-password")
         client = Client()
         client.force_login(user)
         response = client.get("/api/v1/identity/organization/")

@@ -77,12 +77,8 @@ def _make_invoice(
 @pytest.mark.django_db
 class TestSweepInflightPolls:
     def test_requeues_stale_submitting(self, org) -> None:
-        invoice = _make_invoice(
-            org=org, age_seconds=SWEEP_STALE_AFTER_SECONDS + 60
-        )
-        with patch(
-            "apps.submission.tasks.poll_invoice_status.delay"
-        ) as mock_delay:
+        invoice = _make_invoice(org=org, age_seconds=SWEEP_STALE_AFTER_SECONDS + 60)
+        with patch("apps.submission.tasks.poll_invoice_status.delay") as mock_delay:
             result = sweep_inflight_polls()
         assert result["requeued"] == 1
         mock_delay.assert_called_once_with(str(invoice.id))
@@ -91,9 +87,7 @@ class TestSweepInflightPolls:
         # Updated 10 seconds ago — well inside the per-invoice
         # poll's window. Sweep mustn't double-queue.
         _make_invoice(org=org, age_seconds=10)
-        with patch(
-            "apps.submission.tasks.poll_invoice_status.delay"
-        ) as mock_delay:
+        with patch("apps.submission.tasks.poll_invoice_status.delay") as mock_delay:
             result = sweep_inflight_polls()
         assert result["requeued"] == 0
         mock_delay.assert_not_called()
@@ -106,9 +100,7 @@ class TestSweepInflightPolls:
             submission_uid="",
             age_seconds=SWEEP_STALE_AFTER_SECONDS + 60,
         )
-        with patch(
-            "apps.submission.tasks.poll_invoice_status.delay"
-        ) as mock_delay:
+        with patch("apps.submission.tasks.poll_invoice_status.delay") as mock_delay:
             result = sweep_inflight_polls()
         assert result["requeued"] == 0
         mock_delay.assert_not_called()
@@ -125,9 +117,7 @@ class TestSweepInflightPolls:
                 status=terminal,
                 age_seconds=SWEEP_STALE_AFTER_SECONDS + 60,
             )
-        with patch(
-            "apps.submission.tasks.poll_invoice_status.delay"
-        ) as mock_delay:
+        with patch("apps.submission.tasks.poll_invoice_status.delay") as mock_delay:
             result = sweep_inflight_polls()
         assert result["requeued"] == 0
         mock_delay.assert_not_called()
@@ -140,9 +130,7 @@ class TestSweepInflightPolls:
                 submission_uid=f"sub-{i}",
                 age_seconds=SWEEP_STALE_AFTER_SECONDS + 60,
             )
-        with patch(
-            "apps.submission.tasks.poll_invoice_status.delay"
-        ) as mock_delay:
+        with patch("apps.submission.tasks.poll_invoice_status.delay") as mock_delay:
             result = sweep_inflight_polls()
         assert result["requeued"] == SWEEP_MAX_PER_RUN
         assert mock_delay.call_count == SWEEP_MAX_PER_RUN

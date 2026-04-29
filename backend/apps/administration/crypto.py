@@ -123,7 +123,7 @@ def decrypt_value(stored: str) -> str:
         # Legacy plaintext from before this slice landed. The migration
         # rewrites it on first opportunity; readers see it as-is.
         return stored
-    token = stored[len(_CIPHERTEXT_PREFIX):].encode("ascii")
+    token = stored[len(_CIPHERTEXT_PREFIX) :].encode("ascii")
     try:
         plain = _fernet().decrypt(token)
     except (InvalidToken, ValueError):

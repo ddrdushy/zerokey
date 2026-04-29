@@ -42,9 +42,7 @@ def org(seeded) -> Organization:
 
 @pytest.fixture
 def owner_session(org) -> tuple[Client, User]:
-    user = User.objects.create_user(
-        email="owner@endpoint.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="owner@endpoint.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -112,9 +110,7 @@ class TestConfigs:
         )
         assert response.status_code == 403
 
-    def test_create_returns_existing_when_active(
-        self, owner_session
-    ) -> None:
+    def test_create_returns_existing_when_active(self, owner_session) -> None:
         client, _ = owner_session
         first = client.post(
             "/api/v1/connectors/configs/",
@@ -159,9 +155,7 @@ class TestConfigs:
             connector_type=IntegrationConfig.ConnectorType.CSV,
         )
         client, _ = owner_session
-        response = client.delete(
-            f"/api/v1/connectors/configs/{config.id}/"
-        )
+        response = client.delete(f"/api/v1/connectors/configs/{config.id}/")
         assert response.status_code == 200
         config.refresh_from_db()
         assert config.deleted_at is not None
@@ -192,9 +186,7 @@ class TestSyncCsv:
         assert body["status"] == "proposed"
         assert len(body["diff"]["customers"]["would_add"]) == 2
 
-    def test_upload_against_non_csv_connector_400(
-        self, org, owner_session
-    ) -> None:
+    def test_upload_against_non_csv_connector_400(self, org, owner_session) -> None:
         config = IntegrationConfig.objects.create(
             organization=org,
             connector_type=IntegrationConfig.ConnectorType.XERO,
@@ -263,9 +255,7 @@ class TestApplyRevert:
     def test_apply_creates_masters(self, org, owner_session) -> None:
         proposal = self._propose(org, owner_session)
         client, _ = owner_session
-        response = client.post(
-            f"/api/v1/connectors/proposals/{proposal.id}/apply/"
-        )
+        response = client.post(f"/api/v1/connectors/proposals/{proposal.id}/apply/")
         assert response.status_code == 200
         assert response.json()["status"] == "applied"
         # Two customer masters now exist.
@@ -284,14 +274,10 @@ class TestApplyRevert:
         assert response.json()["status"] == "reverted"
         assert CustomerMaster.objects.filter(organization=org).count() == 0
 
-    def test_viewer_cannot_apply(
-        self, org, owner_session, viewer_session
-    ) -> None:
+    def test_viewer_cannot_apply(self, org, owner_session, viewer_session) -> None:
         proposal = self._propose(org, owner_session)
         client, _ = viewer_session
-        response = client.post(
-            f"/api/v1/connectors/proposals/{proposal.id}/apply/"
-        )
+        response = client.post(f"/api/v1/connectors/proposals/{proposal.id}/apply/")
         assert response.status_code == 403
 
 
@@ -361,9 +347,7 @@ class TestConflicts:
         # Filter by field_name — ``.first()`` is non-deterministic
         # when the CSV creates multiple conflicts on the same row
         # (legal_name "Acme" vs "Acme Sdn Bhd" + address).
-        conflict = MasterFieldConflict.objects.filter(
-            field_name="address"
-        ).first()
+        conflict = MasterFieldConflict.objects.filter(field_name="address").first()
         response = client.post(
             f"/api/v1/connectors/conflicts/{conflict.id}/resolve/",
             data=json.dumps({"resolution": "take_incoming"}),

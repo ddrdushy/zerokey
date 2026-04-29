@@ -201,9 +201,7 @@ class ClaudeFieldStructureAdapter(FieldStructureEngine):
             messages=[
                 {
                     "role": "user",
-                    "content": build_field_structure_prompt(
-                        text=text, target_schema=target_schema
-                    ),
+                    "content": build_field_structure_prompt(text=text, target_schema=target_schema),
                 }
             ],
         )

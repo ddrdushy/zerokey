@@ -24,7 +24,6 @@ from apps.audit.services import record_event
 
 from .models import APIKey, User
 
-
 # Customer-visible prefix that disambiguates dev / live / sandbox keys.
 # Today only "live" — sandbox lands when we have a sandbox environment
 # story.
@@ -108,13 +107,9 @@ def create_api_key(
     return row, plaintext
 
 
-def list_api_keys(
-    *, organization_id: uuid.UUID | str
-) -> list[dict[str, Any]]:
+def list_api_keys(*, organization_id: uuid.UUID | str) -> list[dict[str, Any]]:
     """List active + revoked keys for the org. Plaintext NEVER returned."""
-    qs = APIKey.objects.filter(organization_id=organization_id).order_by(
-        "-created_at"
-    )
+    qs = APIKey.objects.filter(organization_id=organization_id).order_by("-created_at")
     return [
         {
             "id": str(k.id),
@@ -122,12 +117,8 @@ def list_api_keys(
             "key_prefix": k.key_prefix,
             "is_active": bool(k.is_active),
             "created_at": k.created_at.isoformat() if k.created_at else None,
-            "created_by_user_id": str(k.created_by_user_id)
-            if k.created_by_user_id
-            else None,
-            "last_used_at": k.last_used_at.isoformat()
-            if k.last_used_at
-            else None,
+            "created_by_user_id": str(k.created_by_user_id) if k.created_by_user_id else None,
+            "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
             "revoked_at": k.revoked_at.isoformat() if k.revoked_at else None,
         }
         for k in qs
@@ -142,13 +133,9 @@ def revoke_api_key(
 ) -> dict[str, Any]:
     """Soft-revoke an API key. Idempotent on already-revoked rows."""
     try:
-        row = APIKey.objects.get(
-            id=api_key_id, organization_id=organization_id
-        )
+        row = APIKey.objects.get(id=api_key_id, organization_id=organization_id)
     except APIKey.DoesNotExist as exc:
-        raise APIKeyError(
-            f"API key {api_key_id} not found in this organization."
-        ) from exc
+        raise APIKeyError(f"API key {api_key_id} not found in this organization.") from exc
 
     if not row.is_active:
         # Already revoked — return current shape, no audit noise.

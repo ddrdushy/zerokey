@@ -294,9 +294,7 @@ class TestCustomerInvoicesEndpoint:
     def test_falls_back_to_alias_match_when_master_has_no_tin(self, authed) -> None:
         client, org = authed
         # B2C / pre-LHDN buyer with no TIN — match by name.
-        master = _make_master(
-            org, tin="", legal_name="Walk-in Customer"
-        )
+        master = _make_master(org, tin="", legal_name="Walk-in Customer")
         master.aliases = ["WALK-IN CUSTOMER", "Walk in customer"]
         master.save()
 
@@ -343,9 +341,7 @@ class TestCustomerInvoicesEndpoint:
         assert response.json()["results"] == []
 
     def test_unauthenticated_is_rejected(self) -> None:
-        response = Client().get(
-            "/api/v1/customers/00000000-0000-0000-0000-000000000000/invoices/"
-        )
+        response = Client().get("/api/v1/customers/00000000-0000-0000-0000-000000000000/invoices/")
         assert response.status_code in (401, 403)
 
     def test_serializer_returns_compact_shape(self, authed) -> None:

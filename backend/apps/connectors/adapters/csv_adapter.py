@@ -52,15 +52,12 @@ class CSVConnector(BaseConnector):
         target: str = "customers",
     ) -> None:
         if target not in {"customers", "items"}:
-            raise ConnectorError(
-                f"target must be 'customers' or 'items', got {target!r}"
-            )
+            raise ConnectorError(f"target must be 'customers' or 'items', got {target!r}")
         if not csv_bytes:
             raise ConnectorError("CSV upload is empty.")
         if not column_mapping:
             raise ConnectorError(
-                "column_mapping is empty — at least one source-to-master "
-                "field mapping is required."
+                "column_mapping is empty — at least one source-to-master field mapping is required."
             )
         self._csv_bytes = csv_bytes
         self._column_mapping = column_mapping
@@ -88,16 +85,11 @@ class CSVConnector(BaseConnector):
         text = _decode_csv(self._csv_bytes)
         reader = csv.DictReader(io.StringIO(text))
         if reader.fieldnames is None:
-            raise ConnectorError(
-                "CSV has no header row — first line must contain "
-                "column names."
-            )
+            raise ConnectorError("CSV has no header row — first line must contain column names.")
         # Normalise mapping keys to handle minor whitespace
         # variations between the wizard's preview + the actual
         # parsed header.
-        mapping = {
-            (k or "").strip(): v for k, v in self._column_mapping.items()
-        }
+        mapping = {(k or "").strip(): v for k, v in self._column_mapping.items()}
         for index, raw in enumerate(reader, start=1):
             mapped: dict[str, str] = {}
             for src_col, target_field in mapping.items():

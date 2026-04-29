@@ -95,9 +95,7 @@ def _resolve_secret_for_signing(endpoint: WebhookEndpoint) -> str | None:
 def _compute_signature(secret: str, timestamp: int, body: bytes) -> str:
     """Stripe-style ``t=<unix>,v1=<hex>`` signature header value."""
     signed_body = f"{timestamp}.".encode() + body
-    digest = hmac.new(
-        secret.encode("utf-8"), signed_body, hashlib.sha256
-    ).hexdigest()
+    digest = hmac.new(secret.encode("utf-8"), signed_body, hashlib.sha256).hexdigest()
     return f"t={timestamp},v1={digest}"
 
 
@@ -124,13 +122,9 @@ def deliver_one(delivery_id: str) -> DeliveryResult:
 
     with super_admin_context(reason="webhooks:delivery"):
         try:
-            delivery = WebhookDelivery.objects.select_related(
-                "endpoint"
-            ).get(id=delivery_id)
+            delivery = WebhookDelivery.objects.select_related("endpoint").get(id=delivery_id)
         except WebhookDelivery.DoesNotExist as exc:
-            raise RuntimeError(
-                f"WebhookDelivery {delivery_id} not found"
-            ) from exc
+            raise RuntimeError(f"WebhookDelivery {delivery_id} not found") from exc
         endpoint = delivery.endpoint
 
     if not endpoint.is_active:
@@ -171,9 +165,7 @@ def deliver_one(delivery_id: str) -> DeliveryResult:
         "X-ZeroKey-Attempt": str(delivery.attempt),
     }
     if secret:
-        headers["X-ZeroKey-Signature"] = _compute_signature(
-            secret, timestamp, body
-        )
+        headers["X-ZeroKey-Signature"] = _compute_signature(secret, timestamp, body)
 
     started = time.perf_counter()
     try:
@@ -225,9 +217,7 @@ def deliver_one(delivery_id: str) -> DeliveryResult:
     excerpt = _truncate(response.text or "")
     _record_outcome(
         delivery,
-        outcome=WebhookDelivery.Outcome.SUCCESS
-        if ok
-        else WebhookDelivery.Outcome.FAILURE,
+        outcome=WebhookDelivery.Outcome.SUCCESS if ok else WebhookDelivery.Outcome.FAILURE,
         status_code=response.status_code,
         body_excerpt=excerpt,
         error_class="" if ok else f"HTTP {response.status_code}",

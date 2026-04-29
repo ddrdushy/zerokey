@@ -22,9 +22,7 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def staff_user(seeded) -> User:
-    return User.objects.create_user(
-        email="staff@symprio.com", password="x", is_staff=True
-    )
+    return User.objects.create_user(email="staff@symprio.com", password="x", is_staff=True)
 
 
 @pytest.fixture
@@ -62,9 +60,7 @@ class TestStartImpersonation:
         user = User.objects.create_user(email="cust@x", password="x")
         client = Client()
         client.force_login(user)
-        response = self._post(
-            client, tenant.id, {"reason": "support ticket #1"}
-        )
+        response = self._post(client, tenant.id, {"reason": "support ticket #1"})
         assert response.status_code == 403
 
     def test_reason_required(self, staff_user, tenant) -> None:
@@ -83,14 +79,10 @@ class TestStartImpersonation:
         )
         assert response.status_code == 404
 
-    def test_starts_session_and_sets_django_session_keys(
-        self, staff_user, tenant
-    ) -> None:
+    def test_starts_session_and_sets_django_session_keys(self, staff_user, tenant) -> None:
         client = Client()
         client.force_login(staff_user)
-        response = self._post(
-            client, tenant.id, {"reason": "support ticket #4421"}
-        )
+        response = self._post(client, tenant.id, {"reason": "support ticket #4421"})
         assert response.status_code == 200
         body = response.json()
         assert body["organization_id"] == str(tenant.id)
@@ -105,9 +97,7 @@ class TestStartImpersonation:
         assert client.session["organization_id"] == str(tenant.id)
         # Audit start event recorded.
         event = (
-            AuditEvent.objects.filter(
-                action_type="admin.tenant_impersonation_started"
-            )
+            AuditEvent.objects.filter(action_type="admin.tenant_impersonation_started")
             .order_by("-sequence")
             .first()
         )
@@ -142,9 +132,7 @@ class TestStartImpersonation:
 
 @pytest.mark.django_db
 class TestEndImpersonation:
-    def test_end_clears_django_session_and_audits(
-        self, staff_user, tenant
-    ) -> None:
+    def test_end_clears_django_session_and_audits(self, staff_user, tenant) -> None:
         client = Client()
         client.force_login(staff_user)
         # Start one
@@ -167,9 +155,7 @@ class TestEndImpersonation:
         assert row.end_reason == "user_ended"
         # End event in the audit chain.
         event = (
-            AuditEvent.objects.filter(
-                action_type="admin.tenant_impersonation_ended"
-            )
+            AuditEvent.objects.filter(action_type="admin.tenant_impersonation_ended")
             .order_by("-sequence")
             .first()
         )
@@ -187,9 +173,7 @@ class TestEndImpersonation:
 class TestImpersonationOnMe:
     """The /me/ endpoint exposes the active impersonation context."""
 
-    def test_me_includes_impersonation_when_active(
-        self, staff_user, tenant
-    ) -> None:
+    def test_me_includes_impersonation_when_active(self, staff_user, tenant) -> None:
         client = Client()
         client.force_login(staff_user)
         client.post(

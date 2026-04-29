@@ -47,9 +47,7 @@ export default function OrganizationSettingsPage() {
           router.replace("/sign-in");
           return;
         }
-        setError(
-          err instanceof Error ? err.message : "Failed to load organization.",
-        );
+        setError(err instanceof Error ? err.message : "Failed to load organization.");
       });
   }, [router]);
 
@@ -104,9 +102,7 @@ export default function OrganizationSettingsPage() {
     <AppShell>
       <div className="flex flex-col gap-6">
         <header>
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            Settings
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Settings</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Organization, members, and platform integrations
           </p>
@@ -197,34 +193,18 @@ export default function OrganizationSettingsPage() {
           </div>
         </Section>
 
-        <Section
-          title="Extraction mode"
-          icon={<Sparkles className="h-4 w-4" />}
-        >
+        <Section title="Extraction mode" icon={<Sparkles className="h-4 w-4" />}>
           <ExtractionModeCard
-            value={
-              (valueOf("extraction_mode") as
-                | "ai_vision"
-                | "ocr_only") || "ai_vision"
-            }
+            value={(valueOf("extraction_mode") as "ai_vision" | "ocr_only") || "ai_vision"}
             dirty={isDirty("extraction_mode")}
             onChange={(value) => onChangeField("extraction_mode", value)}
           />
         </Section>
 
-        <Section
-          title="Subscription + certificate"
-          icon={<ShieldCheck className="h-4 w-4" />}
-        >
+        <Section title="Subscription + certificate" icon={<ShieldCheck className="h-4 w-4" />}>
           <div className="grid gap-3 md:grid-cols-2">
-            <ReadOnlyRow
-              label="Trial state"
-              value={org.trial_state.replace(/_/g, " ")}
-            />
-            <ReadOnlyRow
-              label="Subscription"
-              value={org.subscription_state.replace(/_/g, " ")}
-            />
+            <ReadOnlyRow label="Trial state" value={org.trial_state.replace(/_/g, " ")} />
+            <ReadOnlyRow label="Subscription" value={org.subscription_state.replace(/_/g, " ")} />
             <ReadOnlyRow
               label="Certificate uploaded"
               value={org.certificate_uploaded ? "Yes" : "Not yet"}
@@ -288,9 +268,7 @@ function ReadOnlyRow({
   const isMissing = !value;
   return (
     <div className="rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
-      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">
-        {label}
-      </div>
+      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">{label}</div>
       <div
         className={[
           "mt-1 text-base text-slate-700",
@@ -331,9 +309,7 @@ function SaveBar({
         {error ? (
           <span className="ml-3 text-error">{error}</span>
         ) : (
-          <span className="ml-3 text-slate-500">
-            Saved values are recorded in your audit log.
-          </span>
+          <span className="ml-3 text-slate-500">Saved values are recorded in your audit log.</span>
         )}
       </div>
       <div className="flex items-center gap-2">
@@ -349,9 +325,7 @@ function SaveBar({
 }
 
 function Pad({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="grid place-items-center py-24 text-slate-400">{children}</div>
-  );
+  return <div className="grid place-items-center py-24 text-slate-400">{children}</div>;
 }
 
 // Extraction-mode picker — Slice 54. Two radio cards explaining the
@@ -439,9 +413,7 @@ function ModeRadio({
           />
           <span className="text-base font-semibold">{title}</span>
         </div>
-        <span className="text-2xs uppercase tracking-wider text-slate-400">
-          {subtitle}
-        </span>
+        <span className="text-2xs uppercase tracking-wider text-slate-400">{subtitle}</span>
       </div>
       <div className="text-2xs font-medium text-slate-600">{priceLabel}</div>
       <ul className="mt-1 space-y-1.5 text-2xs text-slate-500">

@@ -28,9 +28,7 @@ def org_user(seeded) -> tuple[Organization, User]:
     org = Organization.objects.create(
         legal_name="Acme Sdn Bhd", tin="C10000000001", contact_email="ops@acme.example"
     )
-    user = User.objects.create_user(
-        email="o@acme.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="o@acme.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
     )
@@ -76,15 +74,9 @@ def _make_invoice(
 class TestListInvoicesService:
     def test_returns_org_invoices_newest_first(self, org_user) -> None:
         org, _ = org_user
-        first = _make_invoice(
-            org, ingestion_job_id="11111111-1111-4111-8111-111111111111"
-        )
-        second = _make_invoice(
-            org, ingestion_job_id="22222222-2222-4222-8222-222222222222"
-        )
-        third = _make_invoice(
-            org, ingestion_job_id="33333333-3333-4333-8333-333333333333"
-        )
+        first = _make_invoice(org, ingestion_job_id="11111111-1111-4111-8111-111111111111")
+        second = _make_invoice(org, ingestion_job_id="22222222-2222-4222-8222-222222222222")
+        third = _make_invoice(org, ingestion_job_id="33333333-3333-4333-8333-333333333333")
         rows = list_invoices_for_organization(organization_id=org.id)
         assert [r.id for r in rows] == [third.id, second.id, first.id]
 
@@ -106,9 +98,7 @@ class TestListInvoicesService:
         assert len(rows) == 1
         assert rows[0].status == Invoice.Status.VALIDATED
 
-    def test_search_matches_invoice_number_or_buyer_name_or_buyer_tin(
-        self, org_user
-    ) -> None:
+    def test_search_matches_invoice_number_or_buyer_name_or_buyer_tin(self, org_user) -> None:
         org, _ = org_user
         # Invoice number match
         _make_invoice(
@@ -155,9 +145,7 @@ class TestListInvoicesService:
                 invoice_number=f"INV-{i}",
             )
             # Backdate so the cursor pagination is unambiguous.
-            Invoice.objects.filter(pk=inv.pk).update(
-                created_at=now - timedelta(minutes=i)
-            )
+            Invoice.objects.filter(pk=inv.pk).update(created_at=now - timedelta(minutes=i))
             invs.append(inv)
 
         page1 = list_invoices_for_organization(organization_id=org.id, limit=2)

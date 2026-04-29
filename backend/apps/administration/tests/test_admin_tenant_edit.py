@@ -19,9 +19,7 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def staff_user(seeded) -> User:
-    return User.objects.create_user(
-        email="staff@symprio.com", password="x", is_staff=True
-    )
+    return User.objects.create_user(email="staff@symprio.com", password="x", is_staff=True)
 
 
 @pytest.fixture
@@ -56,9 +54,7 @@ class TestAdminUpdateTenant:
         user = User.objects.create_user(email="cust@x", password="x")
         client = Client()
         client.force_login(user)
-        response = self._patch(
-            client, org.id, {"fields": {"legal_name": "X"}, "reason": "y"}
-        )
+        response = self._patch(client, org.id, {"fields": {"legal_name": "X"}, "reason": "y"})
         assert response.status_code == 403
 
     def test_update_legal_name_and_contact(self, staff_user, org) -> None:
@@ -95,9 +91,7 @@ class TestAdminUpdateTenant:
     def test_reason_required(self, staff_user, org) -> None:
         client = Client()
         client.force_login(staff_user)
-        response = self._patch(
-            client, org.id, {"fields": {"legal_name": "Acme 2"}}
-        )
+        response = self._patch(client, org.id, {"fields": {"legal_name": "Acme 2"}})
         assert response.status_code == 400
 
     def test_reject_non_editable_field(self, staff_user, org) -> None:
@@ -124,9 +118,7 @@ class TestAdminUpdateTenant:
     def test_no_op_skips_audit(self, staff_user, org) -> None:
         client = Client()
         client.force_login(staff_user)
-        before = AuditEvent.objects.filter(
-            action_type="admin.tenant_updated"
-        ).count()
+        before = AuditEvent.objects.filter(action_type="admin.tenant_updated").count()
         # Pass the same legal_name already on the row.
         response = self._patch(
             client,
@@ -134,9 +126,7 @@ class TestAdminUpdateTenant:
             {"fields": {"legal_name": "Acme"}, "reason": "no-op"},
         )
         assert response.status_code == 200
-        after = AuditEvent.objects.filter(
-            action_type="admin.tenant_updated"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="admin.tenant_updated").count()
         assert before == after
 
     def test_subscription_state_change(self, staff_user, org) -> None:

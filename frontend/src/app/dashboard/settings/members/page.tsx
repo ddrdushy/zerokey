@@ -9,13 +9,7 @@
 import { useEffect, useState } from "react";
 import { Copy, MoreHorizontal, UserPlus, Users, X } from "lucide-react";
 
-import {
-  api,
-  ApiError,
-  type InvitationRow,
-  type Me,
-  type OrganizationMemberRow,
-} from "@/lib/api";
+import { api, ApiError, type InvitationRow, type Me, type OrganizationMemberRow } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { SettingsTabs } from "@/components/settings/SettingsTabs";
@@ -51,7 +45,10 @@ export default function MembersSettingsPage() {
   }
 
   useEffect(() => {
-    api.me().then(setMe).catch(() => {});
+    api
+      .me()
+      .then(setMe)
+      .catch(() => {});
     refresh();
   }, []);
 
@@ -61,8 +58,7 @@ export default function MembersSettingsPage() {
   // we render WITHOUT actions but also without the "read-only" hint so
   // the user doesn't see a flash of the wrong state.
   const myRole = me
-    ? (me.memberships.find((m) => m.organization.id === me.active_organization_id)
-        ?.role ?? null)
+    ? (me.memberships.find((m) => m.organization.id === me.active_organization_id)?.role ?? null)
     : null;
   const canManage = myRole === "owner" || myRole === "admin";
 
@@ -70,9 +66,7 @@ export default function MembersSettingsPage() {
     <AppShell>
       <div className="flex flex-col gap-6">
         <header>
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            Settings
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Settings</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Organization, members, and platform integrations
           </p>
@@ -92,9 +86,7 @@ export default function MembersSettingsPage() {
           <header className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4 text-slate-400" />
-              <h2 className="text-sm font-semibold text-ink">
-                Members ({members?.length ?? 0})
-              </h2>
+              <h2 className="text-sm font-semibold text-ink">Members ({members?.length ?? 0})</h2>
             </div>
             <div className="flex items-center gap-3">
               {myRole !== null && !canManage && (
@@ -103,11 +95,7 @@ export default function MembersSettingsPage() {
                 </span>
               )}
               {canManage && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setShowInviteForm((s) => !s)}
-                >
+                <Button size="sm" variant="ghost" onClick={() => setShowInviteForm((s) => !s)}>
                   <UserPlus className="mr-1.5 h-3.5 w-3.5" />
                   Invite member
                 </Button>
@@ -128,10 +116,7 @@ export default function MembersSettingsPage() {
           )}
 
           {lastIssuedLink && (
-            <InviteLinkPanel
-              url={lastIssuedLink}
-              onDismiss={() => setLastIssuedLink(null)}
-            />
+            <InviteLinkPanel url={lastIssuedLink} onDismiss={() => setLastIssuedLink(null)} />
           )}
 
           {members === null ? (
@@ -143,10 +128,7 @@ export default function MembersSettingsPage() {
               {members.map((m) => {
                 const isMe = me?.id === m.user_id;
                 const isOwnerRow = m.role === "owner";
-                const canEditThisRow =
-                  canManage &&
-                  !isMe &&
-                  !(myRole === "admin" && isOwnerRow);
+                const canEditThisRow = canManage && !isMe && !(myRole === "admin" && isOwnerRow);
                 return (
                   <li
                     key={m.id}
@@ -173,17 +155,13 @@ export default function MembersSettingsPage() {
                         {m.role}
                       </span>
                       <span className="text-[10px] text-slate-400">
-                        {m.joined_date
-                          ? new Date(m.joined_date).toLocaleDateString()
-                          : ""}
+                        {m.joined_date ? new Date(m.joined_date).toLocaleDateString() : ""}
                       </span>
                       {canEditThisRow && (
                         <button
                           type="button"
                           aria-label="Member actions"
-                          onClick={() =>
-                            setEditing(editing === m.id ? null : m.id)
-                          }
+                          onClick={() => setEditing(editing === m.id ? null : m.id)}
                           className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-ink"
                         >
                           <MoreHorizontal className="h-3.5 w-3.5" />
@@ -213,9 +191,7 @@ export default function MembersSettingsPage() {
           <section className="rounded-xl border border-slate-100 bg-white">
             <header className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
               <h2 className="text-sm font-semibold text-ink">
-                Pending invitations ({
-                  invitations.filter((i) => i.status === "pending").length
-                })
+                Pending invitations ({invitations.filter((i) => i.status === "pending").length})
               </h2>
             </header>
             <ul className="divide-y divide-slate-100">
@@ -233,9 +209,7 @@ export default function MembersSettingsPage() {
                       </span>
                       <span className="ml-2 text-[10px] text-slate-400">
                         expires{" "}
-                        {inv.expires_at
-                          ? new Date(inv.expires_at).toLocaleDateString()
-                          : ""}
+                        {inv.expires_at ? new Date(inv.expires_at).toLocaleDateString() : ""}
                       </span>
                     </div>
                     {canManage && (
@@ -246,9 +220,7 @@ export default function MembersSettingsPage() {
                             await api.revokeInvitation(inv.id);
                             refresh();
                           } catch (err) {
-                            setError(
-                              err instanceof Error ? err.message : "Revoke failed.",
-                            );
+                            setError(err instanceof Error ? err.message : "Revoke failed.");
                           }
                         }}
                         className="rounded-md p-1 text-slate-400 hover:bg-error/5 hover:text-error"
@@ -329,41 +301,27 @@ function InviteForm({
       <Button size="sm" type="submit" disabled={submitting || !email.trim()}>
         {submitting ? "Inviting…" : "Send invite"}
       </Button>
-      <Button
-        size="sm"
-        type="button"
-        variant="ghost"
-        onClick={onCancel}
-        disabled={submitting}
-      >
+      <Button size="sm" type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
         Cancel
       </Button>
       <p className="ml-auto max-w-xs text-[10px] text-slate-400">
-        We&apos;ll email the invite. The link is also shown once after issue
-        in case email isn&apos;t configured.
+        We&apos;ll email the invite. The link is also shown once after issue in case email
+        isn&apos;t configured.
       </p>
     </form>
   );
 }
 
-function InviteLinkPanel({
-  url,
-  onDismiss,
-}: {
-  url: string;
-  onDismiss: () => void;
-}) {
+function InviteLinkPanel({ url, onDismiss }: { url: string; onDismiss: () => void }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="border-b border-slate-100 bg-success/5 px-5 py-4 text-2xs">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="font-medium text-ink">
-            Invitation issued · this link is shown once
-          </p>
+          <p className="font-medium text-ink">Invitation issued · this link is shown once</p>
           <p className="mt-1 text-[10px] text-slate-500">
-            We&apos;ve emailed it to the recipient. If you need to share it via
-            another channel, copy now — it won&apos;t be displayed again.
+            We&apos;ve emailed it to the recipient. If you need to share it via another channel,
+            copy now — it won&apos;t be displayed again.
           </p>
         </div>
         <button
@@ -419,14 +377,9 @@ function MemberActions({
   // Admins can't promote anyone to owner. Restrict the dropdown
   // accordingly so the operator doesn't pick a role we'll then
   // reject server-side.
-  const eligibleRoles = ROLE_OPTIONS.filter(
-    (r) => myRole === "owner" || r !== "owner",
-  );
+  const eligibleRoles = ROLE_OPTIONS.filter((r) => myRole === "owner" || r !== "owner");
 
-  async function applyChange(changes: {
-    is_active?: boolean;
-    role_name?: string;
-  }) {
+  async function applyChange(changes: { is_active?: boolean; role_name?: string }) {
     setSaving(true);
     onError(null);
     try {
@@ -506,9 +459,8 @@ function EmptyState() {
     <div className="grid place-items-center px-5 py-12 text-center">
       <Users className="h-6 w-6 text-slate-300" aria-hidden />
       <p className="mt-2 text-2xs text-slate-500">
-        No members yet. Use{" "}
-        <span className="font-medium text-ink">Invite member</span> above to
-        add teammates.
+        No members yet. Use <span className="font-medium text-ink">Invite member</span> above to add
+        teammates.
       </p>
     </div>
   );

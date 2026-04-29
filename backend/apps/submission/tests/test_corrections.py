@@ -82,9 +82,7 @@ def invoice_with_line(org_user) -> Invoice:
 
 @pytest.mark.django_db
 class TestHeaderCorrections:
-    def test_header_change_creates_correction(
-        self, org_user, invoice_with_line
-    ) -> None:
+    def test_header_change_creates_correction(self, org_user, invoice_with_line) -> None:
         org, user = org_user
         update_invoice(
             organization_id=org.id,
@@ -93,9 +91,7 @@ class TestHeaderCorrections:
             actor_user_id=user.id,
         )
 
-        rows = list(
-            ExtractionCorrection.objects.filter(invoice=invoice_with_line)
-        )
+        rows = list(ExtractionCorrection.objects.filter(invoice=invoice_with_line))
         assert len(rows) == 1
         row = rows[0]
         assert row.field_name == "invoice_number"
@@ -105,9 +101,7 @@ class TestHeaderCorrections:
         assert row.user_id == user.id
         assert row.organization_id == org.id
 
-    def test_no_op_edit_does_not_create_correction(
-        self, org_user, invoice_with_line
-    ) -> None:
+    def test_no_op_edit_does_not_create_correction(self, org_user, invoice_with_line) -> None:
         org, user = org_user
         update_invoice(
             organization_id=org.id,
@@ -115,10 +109,7 @@ class TestHeaderCorrections:
             updates={"invoice_number": "INV-EXTRACTED"},
             actor_user_id=user.id,
         )
-        assert (
-            ExtractionCorrection.objects.filter(invoice=invoice_with_line).count()
-            == 0
-        )
+        assert ExtractionCorrection.objects.filter(invoice=invoice_with_line).count() == 0
 
     def test_multiple_header_changes_create_multiple_rows(
         self, org_user, invoice_with_line
@@ -134,9 +125,7 @@ class TestHeaderCorrections:
             actor_user_id=user.id,
         )
         rows = list(
-            ExtractionCorrection.objects.filter(invoice=invoice_with_line).order_by(
-                "field_name"
-            )
+            ExtractionCorrection.objects.filter(invoice=invoice_with_line).order_by("field_name")
         )
         assert len(rows) == 2
         assert {r.field_name for r in rows} == {"invoice_number", "supplier_legal_name"}
@@ -144,18 +133,12 @@ class TestHeaderCorrections:
 
 @pytest.mark.django_db
 class TestLineItemCorrections:
-    def test_cell_edit_uses_line_items_naming(
-        self, org_user, invoice_with_line
-    ) -> None:
+    def test_cell_edit_uses_line_items_naming(self, org_user, invoice_with_line) -> None:
         org, user = org_user
         update_invoice(
             organization_id=org.id,
             invoice_id=invoice_with_line.id,
-            updates={
-                "line_items": [
-                    {"line_number": 1, "description": "corrected desc"}
-                ]
-            },
+            updates={"line_items": [{"line_number": 1, "description": "corrected desc"}]},
             actor_user_id=user.id,
         )
         rows = list(
@@ -169,18 +152,12 @@ class TestLineItemCorrections:
         assert row.original_value == "extracted desc"
         assert row.corrected_value == "corrected desc"
 
-    def test_line_add_records_blank_original(
-        self, org_user, invoice_with_line
-    ) -> None:
+    def test_line_add_records_blank_original(self, org_user, invoice_with_line) -> None:
         org, user = org_user
         update_invoice(
             organization_id=org.id,
             invoice_id=invoice_with_line.id,
-            updates={
-                "add_line_items": [
-                    {"description": "newly added widget", "quantity": "5"}
-                ]
-            },
+            updates={"add_line_items": [{"description": "newly added widget", "quantity": "5"}]},
             actor_user_id=user.id,
         )
         # Line numbers start at max(existing) + 1 = 2.
@@ -194,9 +171,7 @@ class TestLineItemCorrections:
         assert snapshot["quantity"] == "5"
         assert snapshot["line_number"] == 2
 
-    def test_line_remove_records_blank_corrected(
-        self, org_user, invoice_with_line
-    ) -> None:
+    def test_line_remove_records_blank_corrected(self, org_user, invoice_with_line) -> None:
         org, user = org_user
         update_invoice(
             organization_id=org.id,
@@ -217,9 +192,7 @@ class TestLineItemCorrections:
 class TestCorrectionTrainingDataShape:
     """Per DATA_MODEL.md the table is the queryable training surface."""
 
-    def test_engine_attribution_populated(
-        self, org_user, invoice_with_line
-    ) -> None:
+    def test_engine_attribution_populated(self, org_user, invoice_with_line) -> None:
         """The structuring_engine on the Invoice carries through to the row.
 
         Lets a future analytics query say "ollama-structure had a 23%
@@ -233,15 +206,11 @@ class TestCorrectionTrainingDataShape:
             updates={"invoice_number": "X"},
             actor_user_id=user.id,
         )
-        row = ExtractionCorrection.objects.filter(
-            invoice=invoice_with_line
-        ).first()
+        row = ExtractionCorrection.objects.filter(invoice=invoice_with_line).first()
         assert row is not None
         assert row.extracted_by_engine == "ollama-structure"
 
-    def test_blank_to_value_is_a_correction(
-        self, org_user, invoice_with_line
-    ) -> None:
+    def test_blank_to_value_is_a_correction(self, org_user, invoice_with_line) -> None:
         """A field the extractor left empty + user filled in IS a
         correction — the training signal is "the model missed this"."""
         org, user = org_user
@@ -252,8 +221,6 @@ class TestCorrectionTrainingDataShape:
             updates={"supplier_tin": "C12345678901"},
             actor_user_id=user.id,
         )
-        row = ExtractionCorrection.objects.get(
-            invoice=invoice_with_line, field_name="supplier_tin"
-        )
+        row = ExtractionCorrection.objects.get(invoice=invoice_with_line, field_name="supplier_tin")
         assert row.original_value == ""
         assert row.corrected_value == "C12345678901"

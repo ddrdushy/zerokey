@@ -18,9 +18,7 @@ def seeded(db) -> None:
 
 @pytest.fixture
 def staff_user(seeded) -> User:
-    return User.objects.create_user(
-        email="staff@symprio.com", password="x", is_staff=True
-    )
+    return User.objects.create_user(email="staff@symprio.com", password="x", is_staff=True)
 
 
 @pytest.fixture
@@ -96,9 +94,7 @@ class TestPlatformTenantsEndpoint:
         assert beta["member_count"] == 1
         assert beta["ingestion_jobs_total"] == 0
 
-    def test_search_by_legal_name_substring(
-        self, staff_user, populated_orgs
-    ) -> None:
+    def test_search_by_legal_name_substring(self, staff_user, populated_orgs) -> None:
         client = Client()
         client.force_login(staff_user)
         response = client.get("/api/v1/admin/tenants/?search=acme")
@@ -123,13 +119,9 @@ class TestPlatformTenantsEndpoint:
     def test_listing_creates_audit_event(self, staff_user, populated_orgs) -> None:
         client = Client()
         client.force_login(staff_user)
-        before = AuditEvent.objects.filter(
-            action_type="admin.platform_tenants_listed"
-        ).count()
+        before = AuditEvent.objects.filter(action_type="admin.platform_tenants_listed").count()
         client.get("/api/v1/admin/tenants/?search=acme")
-        after = AuditEvent.objects.filter(
-            action_type="admin.platform_tenants_listed"
-        ).count()
+        after = AuditEvent.objects.filter(action_type="admin.platform_tenants_listed").count()
         assert after == before + 1
         # The event records the search filter (truncated to 64 chars).
         event = (

@@ -25,9 +25,7 @@ def customer_user(seeded) -> User:
     org = Organization.objects.create(
         legal_name="Acme", tin="C10000000001", contact_email="ops@acme"
     )
-    user = User.objects.create_user(
-        email="customer@acme.example", password="long-enough-password"
-    )
+    user = User.objects.create_user(email="customer@acme.example", password="long-enough-password")
     OrganizationMembership.objects.create(
         user=user,
         organization=org,

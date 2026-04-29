@@ -45,9 +45,7 @@ def list_customers(request: Request) -> Response:
 def customer_detail(request: Request, customer_id: str) -> Response:
     organization_id = _active_org(request)
     if not organization_id:
-        return Response(
-            {"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
 
     if request.method == "PATCH":
         return _customer_update(request, organization_id, customer_id)
@@ -66,27 +64,22 @@ def customer_invoices(request: Request, customer_id: str) -> Response:
     """Invoices on the active org whose buyer matches this CustomerMaster."""
     organization_id = _active_org(request)
     if not organization_id:
-        return Response(
-            {"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
     # 404 if the master doesn't belong to this org, even if the listing
     # would otherwise be empty — preserves cross-tenant opacity.
-    if services.get_customer_master(
-        organization_id=organization_id, customer_id=customer_id
-    ) is None:
+    if (
+        services.get_customer_master(organization_id=organization_id, customer_id=customer_id)
+        is None
+    ):
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
     invoices = services.list_invoices_for_customer_master(
         organization_id=organization_id, customer_id=customer_id
     )
-    return Response(
-        {"results": CustomerInvoiceSummarySerializer(invoices, many=True).data}
-    )
+    return Response({"results": CustomerInvoiceSummarySerializer(invoices, many=True).data})
 
 
-def _customer_update(
-    request: Request, organization_id: str, customer_id: str
-) -> Response:
+def _customer_update(request: Request, organization_id: str, customer_id: str) -> Response:
     if not isinstance(request.data, dict):
         return Response(
             {"detail": "Body must be a JSON object."}, status=status.HTTP_400_BAD_REQUEST

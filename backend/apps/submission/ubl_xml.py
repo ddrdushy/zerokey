@@ -38,7 +38,6 @@ from xml.etree import ElementTree as ET
 
 from .models import Invoice, LineItem
 
-
 # UBL namespace constants. We attach these as default xmlns
 # declarations on the root so child elements come out unprefixed
 # (matching LHDN's published example XML).
@@ -49,9 +48,7 @@ NS_CBC = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
 # UBL conformance + customization identifiers — the values LHDN
 # expects on Malaysian e-invoices. If LHDN updates these (rare;
 # usually a new MyInvois release), they're a one-line change here.
-LHDN_CUSTOMIZATION_ID = (
-    "urn:oasis:names:specification:ubl:dsig:enveloped:xades"
-)
+LHDN_CUSTOMIZATION_ID = "urn:oasis:names:specification:ubl:dsig:enveloped:xades"
 LHDN_PROFILE_ID = "urn:www.cenbii.eu:profile:bii05:ver2.0"
 
 # Document type code 01 = Standard Invoice. Other codes (02 credit
@@ -127,19 +124,11 @@ def build_invoice_xml(invoice: Invoice) -> bytes:
 
     legal_total = _cac(root, "LegalMonetaryTotal")
     if invoice.subtotal is not None:
-        _cbc_amount(
-            legal_total, "LineExtensionAmount", invoice.subtotal, invoice.currency_code
-        )
-        _cbc_amount(
-            legal_total, "TaxExclusiveAmount", invoice.subtotal, invoice.currency_code
-        )
+        _cbc_amount(legal_total, "LineExtensionAmount", invoice.subtotal, invoice.currency_code)
+        _cbc_amount(legal_total, "TaxExclusiveAmount", invoice.subtotal, invoice.currency_code)
     if invoice.grand_total is not None:
-        _cbc_amount(
-            legal_total, "TaxInclusiveAmount", invoice.grand_total, invoice.currency_code
-        )
-        _cbc_amount(
-            legal_total, "PayableAmount", invoice.grand_total, invoice.currency_code
-        )
+        _cbc_amount(legal_total, "TaxInclusiveAmount", invoice.grand_total, invoice.currency_code)
+        _cbc_amount(legal_total, "PayableAmount", invoice.grand_total, invoice.currency_code)
 
     # --- Line items ------------------------------------------------------
 
@@ -226,9 +215,7 @@ def _party_identifier(party: ET.Element, *, scheme: str, value: str) -> None:
     el.set("schemeID", scheme)
 
 
-def _build_invoice_line(
-    parent: ET.Element, line: LineItem, currency: str
-) -> None:
+def _build_invoice_line(parent: ET.Element, line: LineItem, currency: str) -> None:
     line_el = _cac(parent, "InvoiceLine")
     _cbc(line_el, "ID", str(line.line_number))
     _cbc_amount(
@@ -240,9 +227,7 @@ def _build_invoice_line(
     _cbc_amount(
         line_el,
         "LineExtensionAmount",
-        line.line_subtotal_excl_tax
-        if line.line_subtotal_excl_tax is not None
-        else Decimal("0"),
+        line.line_subtotal_excl_tax if line.line_subtotal_excl_tax is not None else Decimal("0"),
         currency,
     )
 
@@ -268,8 +253,6 @@ def _build_invoice_line(
     _cbc_amount(
         price,
         "PriceAmount",
-        line.unit_price_excl_tax
-        if line.unit_price_excl_tax is not None
-        else Decimal("0"),
+        line.unit_price_excl_tax if line.unit_price_excl_tax is not None else Decimal("0"),
         currency,
     )

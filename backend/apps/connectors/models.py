@@ -68,9 +68,7 @@ class IntegrationConfig(TenantScopedModel):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    connector_type = models.CharField(
-        max_length=32, choices=ConnectorType.choices, db_index=True
-    )
+    connector_type = models.CharField(max_length=32, choices=ConnectorType.choices, db_index=True)
 
     # KMS-encrypted JSON. Each connector defines its own credential
     # field set (e.g. CSV: {} since the upload is the auth; Xero:
@@ -202,9 +200,7 @@ class SyncProposal(TenantScopedModel):
     proposed_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 
-    status = models.CharField(
-        max_length=16, choices=Status.choices, default=Status.PROPOSED
-    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PROPOSED)
 
     applied_at = models.DateTimeField(null=True, blank=True)
     applied_by_user_id = models.UUIDField(null=True, blank=True)
@@ -253,9 +249,7 @@ class MasterFieldLock(TenantScopedModel):
 
     # Polymorphic reference: which master + which row. See the
     # MasterType note at module top.
-    master_type = models.CharField(
-        max_length=16, choices=MasterType.choices, db_index=True
-    )
+    master_type = models.CharField(max_length=16, choices=MasterType.choices, db_index=True)
     master_id = models.UUIDField(db_index=True)
 
     field_name = models.CharField(max_length=64)
@@ -329,9 +323,7 @@ class MasterFieldConflict(TenantScopedModel):
         related_name="conflicts",
     )
 
-    master_type = models.CharField(
-        max_length=16, choices=MasterType.choices, db_index=True
-    )
+    master_type = models.CharField(max_length=16, choices=MasterType.choices, db_index=True)
     master_id = models.UUIDField(db_index=True)
     field_name = models.CharField(max_length=64)
 
@@ -369,9 +361,7 @@ class MasterFieldConflict(TenantScopedModel):
         ]
 
     def __str__(self) -> str:
-        return (
-            f"Conflict({self.master_type}:{self.master_id}.{self.field_name})"
-        )
+        return f"Conflict({self.master_type}:{self.master_id}.{self.field_name})"
 
     @property
     def is_open(self) -> bool:

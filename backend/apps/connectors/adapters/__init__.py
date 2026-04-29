@@ -7,7 +7,7 @@ from apps.connectors.models import IntegrationConfig
 from .base import BaseConnector, ConnectorError
 from .csv_adapter import CSVConnector
 
-__all__ = ["BaseConnector", "ConnectorError", "CSVConnector", "get_adapter_class"]
+__all__ = ["BaseConnector", "CSVConnector", "ConnectorError", "get_adapter_class"]
 
 
 def get_adapter_class(connector_type: str) -> type[BaseConnector]:

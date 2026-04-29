@@ -22,13 +22,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, Loader2, XCircle } from "lucide-react";
 
-import {
-  api,
-  ApiError,
-  type SyncDiff,
-  type SyncDiffEntry,
-  type SyncProposalRow,
-} from "@/lib/api";
+import { api, ApiError, type SyncDiff, type SyncDiffEntry, type SyncProposalRow } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -76,9 +70,7 @@ export default function ProposalDetailPage() {
 
   async function onRevert() {
     if (!proposal) return;
-    const reason = window.prompt(
-      "Reason for reverting? (recorded in the audit log)",
-    );
+    const reason = window.prompt("Reason for reverting? (recorded in the audit log)");
     if (reason === null) return;
     setBusy("reverting");
     setError(null);
@@ -92,13 +84,21 @@ export default function ProposalDetailPage() {
     }
   }
 
+  // Compute hooks unconditionally — react-hooks/rules-of-hooks.
+  // The early return below for the loading state happens after.
+  const expiresIn = useMemo(() => {
+    if (!proposal?.applied_at) return null;
+    const ms = new Date(proposal.expires_at).getTime() - Date.now();
+    if (ms < 0) return "expired";
+    const days = Math.floor(ms / 86_400_000);
+    return days <= 0 ? "today" : `${days}d`;
+  }, [proposal?.applied_at, proposal?.expires_at]);
+
   if (!proposal) {
     return (
       <AppShell>
         {error ? (
-          <div className="grid place-items-center py-24 text-2xs text-error">
-            {error}
-          </div>
+          <div className="grid place-items-center py-24 text-2xs text-error">{error}</div>
         ) : (
           <div className="grid place-items-center py-24 text-2xs uppercase tracking-wider text-slate-400">
             Loading proposal…
@@ -112,23 +112,17 @@ export default function ProposalDetailPage() {
     {
       key: "add",
       label: "Will add",
-      count:
-        proposal.diff.customers.would_add.length +
-        proposal.diff.items.would_add.length,
+      count: proposal.diff.customers.would_add.length + proposal.diff.items.would_add.length,
     },
     {
       key: "update",
       label: "Will update",
-      count:
-        proposal.diff.customers.would_update.length +
-        proposal.diff.items.would_update.length,
+      count: proposal.diff.customers.would_update.length + proposal.diff.items.would_update.length,
     },
     {
       key: "conflicts",
       label: "Conflicts",
-      count:
-        proposal.diff.customers.conflicts.length +
-        proposal.diff.items.conflicts.length,
+      count: proposal.diff.customers.conflicts.length + proposal.diff.items.conflicts.length,
     },
     {
       key: "skipped",
@@ -143,13 +137,6 @@ export default function ProposalDetailPage() {
 
   const isProposed = proposal.status === "proposed";
   const isApplied = proposal.status === "applied";
-  const expiresIn = useMemo(() => {
-    if (!proposal.applied_at) return null;
-    const ms = new Date(proposal.expires_at).getTime() - Date.now();
-    if (ms < 0) return "expired";
-    const days = Math.floor(ms / 86_400_000);
-    return days <= 0 ? "today" : `${days}d`;
-  }, [proposal.applied_at, proposal.expires_at]);
 
   return (
     <AppShell>
@@ -164,18 +151,11 @@ export default function ProposalDetailPage() {
           </Link>
           <div className="mt-2 flex flex-wrap items-baseline justify-between gap-3">
             <div>
-              <h1 className="font-display text-2xl font-bold tracking-tight">
-                Sync proposal
-              </h1>
+              <h1 className="font-display text-2xl font-bold tracking-tight">Sync proposal</h1>
               <div className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
-                Proposed{" "}
-                {new Date(proposal.proposed_at).toLocaleString()} ·{" "}
+                Proposed {new Date(proposal.proposed_at).toLocaleString()} ·{" "}
                 <StatusPill status={proposal.status} />
-                {expiresIn && (
-                  <span className="ml-2">
-                    Revertable for {expiresIn}
-                  </span>
-                )}
+                {expiresIn && <span className="ml-2">Revertable for {expiresIn}</span>}
               </div>
             </div>
             <div className="flex gap-2">
@@ -187,11 +167,7 @@ export default function ProposalDetailPage() {
                   >
                     Cancel
                   </Link>
-                  <Button
-                    size="sm"
-                    onClick={onApply}
-                    disabled={busy !== null}
-                  >
+                  <Button size="sm" onClick={onApply} disabled={busy !== null}>
                     {busy === "applying" ? (
                       <>
                         <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -207,12 +183,7 @@ export default function ProposalDetailPage() {
                 </>
               )}
               {isApplied && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={onRevert}
-                  disabled={busy !== null}
-                >
+                <Button size="sm" variant="ghost" onClick={onRevert} disabled={busy !== null}>
                   {busy === "reverting" ? (
                     <>
                       <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -315,19 +286,17 @@ function WouldUpdate({ diff }: { diff: SyncDiff }) {
 }
 
 function Conflicts({ diff }: { diff: SyncDiff }) {
-  const conflicts = [
-    ...diff.customers.conflicts,
-    ...diff.items.conflicts,
-  ];
+  const conflicts = [...diff.customers.conflicts, ...diff.items.conflicts];
   if (conflicts.length === 0) {
     return <Empty>No conflicts — every change is auto-resolvable.</Empty>;
   }
   return (
-    <Section title={`${conflicts.length} conflict${conflicts.length === 1 ? "" : "s"} need your decision`}>
+    <Section
+      title={`${conflicts.length} conflict${conflicts.length === 1 ? "" : "s"} need your decision`}
+    >
       <p className="text-2xs text-slate-500">
-        Conflicts don&apos;t block apply — auto-resolvable changes still
-        land. Resolve these in the conflict queue when you&apos;re
-        ready.
+        Conflicts don&apos;t block apply — auto-resolvable changes still land. Resolve these in the
+        conflict queue when you&apos;re ready.
       </p>
       <Link
         href="/dashboard/connectors/conflicts"
@@ -339,29 +308,17 @@ function Conflicts({ diff }: { diff: SyncDiff }) {
         <table className="w-full text-2xs">
           <thead className="bg-slate-50 text-slate-400">
             <tr>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Field
-              </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Existing
-              </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Incoming
-              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Field</th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Existing</th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Incoming</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {conflicts.map((entry, idx) => (
               <tr key={idx}>
-                <td className="px-3 py-3 font-medium text-ink">
-                  {entry.field}
-                </td>
-                <td className="px-3 py-3 text-slate-600">
-                  {entry.existing_value || "—"}
-                </td>
-                <td className="px-3 py-3 text-slate-600">
-                  {entry.incoming_value || "—"}
-                </td>
+                <td className="px-3 py-3 font-medium text-ink">{entry.field}</td>
+                <td className="px-3 py-3 text-slate-600">{entry.existing_value || "—"}</td>
+                <td className="px-3 py-3 text-slate-600">{entry.incoming_value || "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -372,14 +329,8 @@ function Conflicts({ diff }: { diff: SyncDiff }) {
 }
 
 function Skipped({ diff }: { diff: SyncDiff }) {
-  const locked = [
-    ...diff.customers.skipped_locked,
-    ...diff.items.skipped_locked,
-  ];
-  const verified = [
-    ...diff.customers.skipped_verified,
-    ...diff.items.skipped_verified,
-  ];
+  const locked = [...diff.customers.skipped_locked, ...diff.items.skipped_locked];
+  const verified = [...diff.customers.skipped_verified, ...diff.items.skipped_verified];
   if (locked.length === 0 && verified.length === 0) {
     return <Empty>Nothing was skipped.</Empty>;
   }
@@ -388,14 +339,16 @@ function Skipped({ diff }: { diff: SyncDiff }) {
       {locked.length > 0 && (
         <Section title={`${locked.length} locked field${locked.length === 1 ? "" : "s"}`}>
           <p className="text-2xs text-slate-500">
-            These fields are pinned. Future syncs always route to the
-            conflict queue rather than auto-overwriting them.
+            These fields are pinned. Future syncs always route to the conflict queue rather than
+            auto-overwriting them.
           </p>
           <RawList entries={locked} />
         </Section>
       )}
       {verified.length > 0 && (
-        <Section title={`${verified.length} authority-verified field${verified.length === 1 ? "" : "s"}`}>
+        <Section
+          title={`${verified.length} authority-verified field${verified.length === 1 ? "" : "s"}`}
+        >
           <p className="text-2xs text-slate-500">
             Verified by LHDN — authoritative, syncs can&apos;t override.
           </p>
@@ -412,12 +365,8 @@ function RecordList({ entries }: { entries: SyncDiffEntry[] }) {
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Source row
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Fields
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Source row</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Fields</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -445,18 +394,10 @@ function UpdateList({ entries }: { entries: SyncDiffEntry[] }) {
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Source row
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Field
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Current
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Proposed
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Source row</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Field</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Current</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Proposed</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -465,17 +406,11 @@ function UpdateList({ entries }: { entries: SyncDiffEntry[] }) {
             return changes.map(([fname, change], cidx) => (
               <tr key={`${idx}-${cidx}`}>
                 <td className="px-3 py-3 font-medium text-ink">
-                  {cidx === 0
-                    ? entry.source_record_id || entry.existing_id
-                    : ""}
+                  {cidx === 0 ? entry.source_record_id || entry.existing_id : ""}
                 </td>
                 <td className="px-3 py-3">{fname}</td>
-                <td className="px-3 py-3 text-slate-500 line-through">
-                  {change.current || "—"}
-                </td>
-                <td className="px-3 py-3 text-ink">
-                  {change.proposed || "—"}
-                </td>
+                <td className="px-3 py-3 text-slate-500 line-through">{change.current || "—"}</td>
+                <td className="px-3 py-3 text-ink">{change.proposed || "—"}</td>
               </tr>
             ));
           })}
@@ -489,7 +424,10 @@ function RawList({ entries }: { entries: SyncDiffEntry[] }) {
   return (
     <ul className="rounded-xl border border-slate-100 bg-white p-3 text-2xs">
       {entries.map((e, idx) => (
-        <li key={idx} className="flex justify-between border-b border-slate-100 py-1.5 last:border-b-0">
+        <li
+          key={idx}
+          className="flex justify-between border-b border-slate-100 py-1.5 last:border-b-0"
+        >
           <span className="font-medium text-ink">{e.field}</span>
           <span className="text-slate-500">{e.incoming_value}</span>
         </li>
@@ -506,13 +444,7 @@ function Empty({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-base font-semibold">{title}</h2>

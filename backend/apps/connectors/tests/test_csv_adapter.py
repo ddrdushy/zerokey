@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from apps.connectors.adapters import CSVConnector, ConnectorError, get_adapter_class
+from apps.connectors.adapters import ConnectorError, CSVConnector, get_adapter_class
 from apps.connectors.models import IntegrationConfig
-
 
 CSV_BASIC = b"""Company Name,Tax ID,Address
 Acme Sdn Bhd,C9999999999,Level 5 KL
@@ -30,9 +29,7 @@ MAPPING_CUSTOMERS = {
 
 class TestCSVAdapterShape:
     def test_basic_parse_yields_records(self) -> None:
-        adapter = CSVConnector(
-            csv_bytes=CSV_BASIC, column_mapping=MAPPING_CUSTOMERS
-        )
+        adapter = CSVConnector(csv_bytes=CSV_BASIC, column_mapping=MAPPING_CUSTOMERS)
         records = list(adapter.fetch_customers())
         assert len(records) == 2
         first = records[0]
@@ -46,9 +43,7 @@ class TestCSVAdapterShape:
             "Company Name": "legal_name",
             "Tax ID": "tin",
         }
-        adapter = CSVConnector(
-            csv_bytes=CSV_BASIC, column_mapping=partial_mapping
-        )
+        adapter = CSVConnector(csv_bytes=CSV_BASIC, column_mapping=partial_mapping)
         records = list(adapter.fetch_customers())
         # Address dropped; legal_name + tin retained.
         assert "address" not in records[0].fields
@@ -83,9 +78,7 @@ class TestCSVAdapterShape:
         assert len(list(adapter.fetch_items())) == 2
 
     def test_authenticate_is_noop(self) -> None:
-        adapter = CSVConnector(
-            csv_bytes=CSV_BASIC, column_mapping=MAPPING_CUSTOMERS
-        )
+        adapter = CSVConnector(csv_bytes=CSV_BASIC, column_mapping=MAPPING_CUSTOMERS)
         # No exception.
         adapter.authenticate()
 
@@ -116,11 +109,7 @@ class TestCSVAdapterShape:
         assert list(adapter.fetch_customers()) == []
 
     def test_explicit_source_record_id_column(self) -> None:
-        csv_with_id = (
-            b"row_id,Company Name\n"
-            b"DEBT-1,Acme\n"
-            b"DEBT-2,Globex\n"
-        )
+        csv_with_id = b"row_id,Company Name\nDEBT-1,Acme\nDEBT-2,Globex\n"
         adapter = CSVConnector(
             csv_bytes=csv_with_id,
             column_mapping={

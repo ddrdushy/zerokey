@@ -50,16 +50,12 @@ def smtp_configured(db) -> SystemSetting:
 
 @pytest.fixture
 def staff_user(seeded) -> User:
-    return User.objects.create_user(
-        email="staff@symprio.com", password="x", is_staff=True
-    )
+    return User.objects.create_user(email="staff@symprio.com", password="x", is_staff=True)
 
 
 @pytest.fixture
 def org_owner(seeded) -> tuple[Organization, User]:
-    org = Organization.objects.create(
-        legal_name="Acme", tin="C10000000001", contact_email="o@a"
-    )
+    org = Organization.objects.create(legal_name="Acme", tin="C10000000001", contact_email="o@a")
     user = User.objects.create_user(email="o@a.test", password="x")
     OrganizationMembership.objects.create(
         user=user, organization=org, role=Role.objects.get(name="owner")
@@ -79,9 +75,7 @@ class TestEmailConfigured:
 @pytest.mark.django_db
 class TestSendEmail:
     def test_no_smtp_returns_failure(self) -> None:
-        result = send_email(
-            to="someone@example.com", subject="Hi", body="Test"
-        )
+        result = send_email(to="someone@example.com", subject="Hi", body="Test")
         assert result.ok is False
         assert "not configured" in result.detail.lower()
 
@@ -150,14 +144,10 @@ def _smtp_context(target):
 
 @pytest.mark.django_db
 class TestSendTestEmail:
-    def test_renders_test_template_and_audits(
-        self, smtp_configured, staff_user
-    ) -> None:
+    def test_renders_test_template_and_audits(self, smtp_configured, staff_user) -> None:
         fake_smtp = MagicMock()
         with patch("smtplib.SMTP", return_value=_smtp_context(fake_smtp)):
-            result = send_test_email(
-                to="ops@example.com", actor_user_id=staff_user.id
-            )
+            result = send_test_email(to="ops@example.com", actor_user_id=staff_user.id)
         assert result["ok"] is True
         # Audit event recorded.
         event = (
@@ -170,16 +160,12 @@ class TestSendTestEmail:
 
     def test_failure_audited_distinctly(self, smtp_configured) -> None:
         fake_smtp = MagicMock()
-        fake_smtp.login.side_effect = smtplib.SMTPAuthenticationError(
-            535, b"Bad creds"
-        )
+        fake_smtp.login.side_effect = smtplib.SMTPAuthenticationError(535, b"Bad creds")
         with patch("smtplib.SMTP", return_value=_smtp_context(fake_smtp)):
             result = send_test_email(to="ops@example.com")
         assert result["ok"] is False
         event = (
-            AuditEvent.objects.filter(
-                action_type="notifications.email.test_failed"
-            )
+            AuditEvent.objects.filter(action_type="notifications.email.test_failed")
             .order_by("-sequence")
             .first()
         )
@@ -198,13 +184,9 @@ class TestDeliverForEvent:
         assert result["no_template"] is True
         assert result["recipients_email_queued"] == 0
 
-    def test_queues_email_for_active_member(
-        self, smtp_configured, org_owner
-    ) -> None:
+    def test_queues_email_for_active_member(self, smtp_configured, org_owner) -> None:
         org, _user = org_owner
-        with patch(
-            "apps.notifications.tasks.send_email_task.delay"
-        ) as queued:
+        with patch("apps.notifications.tasks.send_email_task.delay") as queued:
             result = deliver_for_event(
                 organization_id=org.id,
                 event_key="invoice.validated",
@@ -221,20 +203,14 @@ class TestDeliverForEvent:
         assert "INV-001" in kwargs["subject"]
         assert "test.pdf" in kwargs["body"]
 
-    def test_skips_user_who_opted_out(
-        self, smtp_configured, org_owner
-    ) -> None:
+    def test_skips_user_who_opted_out(self, smtp_configured, org_owner) -> None:
         org, user = org_owner
         NotificationPreference.objects.create(
             organization=org,
             user=user,
-            preferences={
-                "invoice.validated": {"in_app": True, "email": False}
-            },
+            preferences={"invoice.validated": {"in_app": True, "email": False}},
         )
-        with patch(
-            "apps.notifications.tasks.send_email_task.delay"
-        ) as queued:
+        with patch("apps.notifications.tasks.send_email_task.delay") as queued:
             result = deliver_for_event(
                 organization_id=org.id,
                 event_key="invoice.validated",
@@ -244,9 +220,7 @@ class TestDeliverForEvent:
         queued.assert_not_called()
 
     def test_skips_inactive_member(self, smtp_configured, seeded) -> None:
-        org = Organization.objects.create(
-            legal_name="A", tin="C10000000001", contact_email="o@a"
-        )
+        org = Organization.objects.create(legal_name="A", tin="C10000000001", contact_email="o@a")
         user = User.objects.create_user(email="x@a", password="x")
         OrganizationMembership.objects.create(
             user=user,
@@ -254,9 +228,7 @@ class TestDeliverForEvent:
             role=Role.objects.get(name="owner"),
             is_active=False,
         )
-        with patch(
-            "apps.notifications.tasks.send_email_task.delay"
-        ) as queued:
+        with patch("apps.notifications.tasks.send_email_task.delay") as queued:
             deliver_for_event(
                 organization_id=org.id,
                 event_key="invoice.validated",
@@ -296,9 +268,7 @@ class TestAdminTestEmailEndpoint:
         )
         assert response.status_code == 400
 
-    def test_staff_test_send_returns_smtp_outcome(
-        self, smtp_configured, staff_user
-    ) -> None:
+    def test_staff_test_send_returns_smtp_outcome(self, smtp_configured, staff_user) -> None:
         client = Client()
         client.force_login(staff_user)
         fake_smtp = MagicMock()

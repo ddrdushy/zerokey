@@ -74,7 +74,7 @@ def _should_retry(status_code: int | None, error_class: str) -> bool:
     max_retries=MAX_ATTEMPTS - 1,
     acks_late=True,
 )
-def deliver_webhook_task(self, *, delivery_id: str) -> dict:  # noqa: ANN001
+def deliver_webhook_task(self, *, delivery_id: str) -> dict:
     """One delivery attempt. Self-reschedules on retryable failure.
 
     The Celery task signature uses kwargs-only so callers don't
@@ -85,9 +85,10 @@ def deliver_webhook_task(self, *, delivery_id: str) -> dict:  # noqa: ANN001
     we add scheduled retries) sees the outcome. Audit events are
     fire-and-forget — the dict is for log enrichment only.
     """
+    from apps.identity.tenancy import super_admin_context
+
     from .delivery import deliver_one
     from .models import WebhookDelivery
-    from apps.identity.tenancy import super_admin_context
 
     result = deliver_one(delivery_id)
     attempt = self.request.retries + 1
@@ -97,9 +98,7 @@ def deliver_webhook_task(self, *, delivery_id: str) -> dict:  # noqa: ANN001
     # only — never the body or signature.
     with super_admin_context(reason="webhooks:audit"):
         try:
-            delivery = WebhookDelivery.objects.select_related(
-                "endpoint"
-            ).get(id=delivery_id)
+            delivery = WebhookDelivery.objects.select_related("endpoint").get(id=delivery_id)
         except WebhookDelivery.DoesNotExist:
             return {"ok": False, "abandoned": True}
 
@@ -127,18 +126,14 @@ def deliver_webhook_task(self, *, delivery_id: str) -> dict:  # noqa: ANN001
         return {"ok": True, "attempts": attempt}
 
     # Failure — decide retry vs abandon.
-    if attempt >= MAX_ATTEMPTS or not _should_retry(
-        result.status_code, result.error_class
-    ):
+    if attempt >= MAX_ATTEMPTS or not _should_retry(result.status_code, result.error_class):
         # Mark abandoned so the row leaves "pending/retrying"
         # state if it was sitting there.
         with super_admin_context(reason="webhooks:abandon"):
             from .models import WebhookDelivery as WD
 
             WD.objects.filter(id=delivery_id).update(
-                outcome=WD.Outcome.ABANDONED
-                if attempt >= MAX_ATTEMPTS
-                else WD.Outcome.FAILURE,
+                outcome=WD.Outcome.ABANDONED if attempt >= MAX_ATTEMPTS else WD.Outcome.FAILURE,
             )
         return {"ok": False, "abandoned": True, "attempts": attempt}
 

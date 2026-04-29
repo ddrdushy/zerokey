@@ -6,21 +6,9 @@
 // synthetic ping (real outbound HTTP wires in a follow-up).
 
 import { useEffect, useState } from "react";
-import {
-  AlertTriangle,
-  Copy,
-  Plus,
-  Send,
-  Trash2,
-  Webhook,
-} from "lucide-react";
+import { AlertTriangle, Copy, Plus, Send, Trash2, Webhook } from "lucide-react";
 
-import {
-  api,
-  ApiError,
-  type WebhookDeliveryRow,
-  type WebhookEndpointRow,
-} from "@/lib/api";
+import { api, ApiError, type WebhookDeliveryRow, type WebhookEndpointRow } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { SettingsTabs } from "@/components/settings/SettingsTabs";
@@ -107,18 +95,14 @@ export default function WebhooksSettingsPage() {
   }
 
   function toggleEvent(key: string) {
-    setNewEvents((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
-    );
+    setNewEvents((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
   }
 
   return (
     <AppShell>
       <div className="flex flex-col gap-6">
         <header>
-          <h1 className="font-display text-2xl font-bold tracking-tight">
-            Settings
-          </h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Settings</h1>
           <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
             Organization, members, and platform integrations
           </p>
@@ -134,26 +118,15 @@ export default function WebhooksSettingsPage() {
           </div>
         )}
 
-        {newSecret && (
-          <NewSecretAlert
-            plaintext={newSecret}
-            onDismiss={() => setNewSecret(null)}
-          />
-        )}
+        {newSecret && <NewSecretAlert plaintext={newSecret} onDismiss={() => setNewSecret(null)} />}
 
         <section className="rounded-xl border border-slate-100 bg-white">
           <header className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
             <div className="flex items-center gap-2">
               <Webhook className="h-4 w-4 text-slate-400" />
-              <h2 className="text-sm font-semibold text-ink">
-                Webhook endpoints
-              </h2>
+              <h2 className="text-sm font-semibold text-ink">Webhook endpoints</h2>
             </div>
-            <Button
-              size="sm"
-              onClick={() => setCreating(!creating)}
-              disabled={!!newSecret}
-            >
+            <Button size="sm" onClick={() => setCreating(!creating)} disabled={!!newSecret}>
               <Plus className="mr-1.5 h-3.5 w-3.5" />
               {creating ? "Cancel" : "New endpoint"}
             </Button>
@@ -161,9 +134,8 @@ export default function WebhooksSettingsPage() {
           {creating && (
             <div className="border-b border-slate-100 bg-slate-50 px-5 py-4">
               <p className="mb-2 text-2xs text-slate-500">
-                We&apos;ll POST a JSON payload to your URL whenever any
-                of the selected events fires. The signing secret is
-                shown once after creation; verify deliveries with
+                We&apos;ll POST a JSON payload to your URL whenever any of the selected events
+                fires. The signing secret is shown once after creation; verify deliveries with
                 <code className="mx-1 rounded bg-slate-200 px-1 py-0.5 font-mono text-[10px]">
                   HMAC-SHA256(secret, payload)
                 </code>
@@ -186,9 +158,7 @@ export default function WebhooksSettingsPage() {
                 />
               </div>
               <div className="mt-3">
-                <p className="mb-1 text-[10px] uppercase tracking-wider text-slate-400">
-                  Events
-                </p>
+                <p className="mb-1 text-[10px] uppercase tracking-wider text-slate-400">Events</p>
                 <div className="flex flex-wrap gap-1.5">
                   {available.map((e) => {
                     const checked = newEvents.includes(e.key);
@@ -237,12 +207,8 @@ export default function WebhooksSettingsPage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <div className="font-medium text-ink truncate">
-                        {e.label}
-                      </div>
-                      <div className="font-mono text-[10px] text-slate-500 truncate">
-                        {e.url}
-                      </div>
+                      <div className="truncate font-medium text-ink">{e.label}</div>
+                      <div className="truncate font-mono text-[10px] text-slate-500">{e.url}</div>
                     </div>
                     <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700">
                       {e.secret_prefix}…
@@ -297,13 +263,7 @@ export default function WebhooksSettingsPage() {
   );
 }
 
-function NewSecretAlert({
-  plaintext,
-  onDismiss,
-}: {
-  plaintext: string;
-  onDismiss: () => void;
-}) {
+function NewSecretAlert({ plaintext, onDismiss }: { plaintext: string; onDismiss: () => void }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -315,10 +275,7 @@ function NewSecretAlert({
     }
   }
   return (
-    <div
-      role="alert"
-      className="rounded-xl border border-warning/40 bg-warning/5 p-4"
-    >
+    <div role="alert" className="rounded-xl border border-warning/40 bg-warning/5 p-4">
       <div className="flex items-start gap-2">
         <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-warning" />
         <div className="flex-1">
@@ -356,19 +313,13 @@ function NewSecretAlert({
   );
 }
 
-function DeliveriesSection({
-  deliveries,
-}: {
-  deliveries: WebhookDeliveryRow[];
-}) {
+function DeliveriesSection({ deliveries }: { deliveries: WebhookDeliveryRow[] }) {
   return (
     <section className="rounded-xl border border-slate-100 bg-white">
       <header className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
         <div className="flex items-center gap-2">
           <Send className="h-4 w-4 text-slate-400" />
-          <h2 className="text-sm font-semibold text-ink">
-            Recent deliveries
-          </h2>
+          <h2 className="text-sm font-semibold text-ink">Recent deliveries</h2>
         </div>
         <span className="text-[10px] uppercase tracking-wider text-slate-400">
           Worker not yet wired — test deliveries are synthetic
@@ -376,28 +327,17 @@ function DeliveriesSection({
       </header>
       {deliveries.length === 0 ? (
         <div className="px-5 py-8 text-center text-2xs text-slate-400">
-          No deliveries yet. Hit the test button on an endpoint to
-          create a synthetic one.
+          No deliveries yet. Hit the test button on an endpoint to create a synthetic one.
         </div>
       ) : (
         <table className="w-full text-2xs">
           <thead className="bg-slate-50 text-slate-400">
             <tr>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Event
-              </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                Outcome
-              </th>
-              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
-                Attempt
-              </th>
-              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-                When
-              </th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Event</th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Outcome</th>
+              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Status</th>
+              <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Attempt</th>
+              <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">When</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -411,16 +351,10 @@ function DeliveriesSection({
                 <td className="px-3 py-2">
                   <OutcomeBadge outcome={d.outcome} />
                 </td>
-                <td className="px-3 py-2 text-right text-slate-500">
-                  {d.response_status ?? "—"}
-                </td>
-                <td className="px-3 py-2 text-right text-slate-500">
-                  #{d.attempt}
-                </td>
+                <td className="px-3 py-2 text-right text-slate-500">{d.response_status ?? "—"}</td>
+                <td className="px-3 py-2 text-right text-slate-500">#{d.attempt}</td>
                 <td className="px-3 py-2 text-slate-500">
-                  {d.delivered_at
-                    ? new Date(d.delivered_at).toLocaleString()
-                    : "—"}
+                  {d.delivered_at ? new Date(d.delivered_at).toLocaleString() : "—"}
                 </td>
               </tr>
             ))}
@@ -431,11 +365,7 @@ function DeliveriesSection({
   );
 }
 
-function OutcomeBadge({
-  outcome,
-}: {
-  outcome: WebhookDeliveryRow["outcome"];
-}) {
+function OutcomeBadge({ outcome }: { outcome: WebhookDeliveryRow["outcome"] }) {
   const cls =
     outcome === "success"
       ? "bg-success/10 text-success"
@@ -464,9 +394,8 @@ function EmptyState() {
     <div className="grid place-items-center px-5 py-12 text-center">
       <Webhook className="h-6 w-6 text-slate-300" aria-hidden />
       <p className="mt-2 max-w-md text-2xs text-slate-500">
-        No webhooks yet. Click{" "}
-        <span className="font-medium">New endpoint</span> above to
-        register one.
+        No webhooks yet. Click <span className="font-medium">New endpoint</span> above to register
+        one.
       </p>
     </div>
   );

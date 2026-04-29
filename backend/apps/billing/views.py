@@ -35,21 +35,15 @@ def billing_overview(request: Request) -> Response:
             {"detail": "No active organization."},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    if not identity_services.can_user_act_for_organization(
-        request.user, organization_id
-    ):
+    if not identity_services.can_user_act_for_organization(request.user, organization_id):
         return Response(
             {"detail": "You are not a member of that organization."},
             status=status.HTTP_403_FORBIDDEN,
         )
     return Response(
         {
-            "subscription": services.get_active_subscription(
-                organization_id=organization_id
-            ),
-            "usage": services.current_period_usage(
-                organization_id=organization_id
-            ),
+            "subscription": services.get_active_subscription(organization_id=organization_id),
+            "usage": services.current_period_usage(organization_id=organization_id),
             "available_plans": services.list_public_plans(),
         }
     )
@@ -82,9 +76,7 @@ def start_checkout_view(request: Request) -> Response:
             {"detail": "No active organization."},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    if not identity_services.can_user_act_for_organization(
-        request.user, organization_id
-    ):
+    if not identity_services.can_user_act_for_organization(request.user, organization_id):
         return Response(
             {"detail": "You are not a member of that organization."},
             status=status.HTTP_403_FORBIDDEN,
@@ -97,11 +89,7 @@ def start_checkout_view(request: Request) -> Response:
     cancel_url = str(body.get("cancel_url") or "").strip()
     if not plan_id or not success_url or not cancel_url:
         return Response(
-            {
-                "detail": (
-                    "plan_id, success_url, and cancel_url are required."
-                )
-            },
+            {"detail": ("plan_id, success_url, and cancel_url are required.")},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -118,13 +106,9 @@ def start_checkout_view(request: Request) -> Response:
     except checkout.CheckoutError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     except stripe_client.StripeAuthError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
     except stripe_client.StripeError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
     return Response(result)
 
 
@@ -153,24 +137,18 @@ def stripe_webhook_view(request: Request) -> Response:
     raw_body = request.body if hasattr(request, "body") else b""
 
     try:
-        event = stripe_client.verify_webhook_signature(
-            payload=raw_body, signature_header=signature
-        )
+        event = stripe_client.verify_webhook_signature(payload=raw_body, signature_header=signature)
     except stripe_client.StripeWebhookError as exc:
         # 400 — malformed / unverifiable. Stripe will retry; if the
         # signature is genuinely bad they'll keep retrying forever
         # (operator should rotate the signing secret).
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     except stripe_client.StripeError as exc:
-        return Response(
-            {"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY
-        )
+        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
     try:
         result = checkout.handle_webhook(event=event)
-    except Exception:  # noqa: BLE001
+    except Exception:
         # If our handler crashes, return 500 so Stripe retries —
         # but log the actual stack so we can fix it.
         import logging

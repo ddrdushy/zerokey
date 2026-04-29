@@ -10,11 +10,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FileText, Search } from "lucide-react";
 
-import {
-  api,
-  ApiError,
-  type InvoiceListSummary,
-} from "@/lib/api";
+import { api, ApiError, type InvoiceListSummary } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 
@@ -123,9 +119,7 @@ export default function InvoicesListPage() {
       <div className="flex flex-col gap-6">
         <header className="flex items-end justify-between">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight">
-              Invoices
-            </h1>
+            <h1 className="font-display text-2xl font-bold tracking-tight">Invoices</h1>
             <p className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
               Every invoice your organization has produced
             </p>
@@ -163,12 +157,7 @@ export default function InvoicesListPage() {
             <InvoiceTable invoices={invoices} />
             {hasMore && (
               <div className="flex justify-center">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onLoadMore}
-                  disabled={loadingMore}
-                >
+                <Button variant="ghost" size="sm" onClick={onLoadMore} disabled={loadingMore}>
                   {loadingMore ? "Loading…" : "Load more"}
                 </Button>
               </div>
@@ -211,7 +200,7 @@ function FilterBar({
         ))}
       </select>
 
-      <div className="flex flex-1 min-w-[200px] items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5">
+      <div className="flex min-w-[200px] flex-1 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5">
         <Search className="h-3.5 w-3.5 text-slate-400" aria-hidden />
         <input
           type="search"
@@ -257,21 +246,13 @@ function InvoiceTable({ invoices }: { invoices: InvoiceListSummary[] }) {
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Invoice
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Buyer
-            </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Issue date
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Invoice</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Buyer</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Issue date</th>
             <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">
               Grand total
             </th>
-            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">
-              Status
-            </th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Status</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -282,15 +263,11 @@ function InvoiceTable({ invoices }: { invoices: InvoiceListSummary[] }) {
                   href={`/dashboard/jobs/${invoice.ingestion_job_id}`}
                   className="font-medium text-ink hover:underline"
                 >
-                  {invoice.invoice_number || (
-                    <span className="text-slate-400">no number</span>
-                  )}
+                  {invoice.invoice_number || <span className="text-slate-400">no number</span>}
                 </Link>
               </td>
               <td className="px-3 py-3">
-                {invoice.buyer_legal_name || (
-                  <span className="text-slate-400">—</span>
-                )}
+                {invoice.buyer_legal_name || <span className="text-slate-400">—</span>}
                 {invoice.buyer_tin && (
                   <div className="mt-0.5 font-mono text-2xs text-slate-400">
                     {invoice.buyer_tin}
@@ -298,14 +275,10 @@ function InvoiceTable({ invoices }: { invoices: InvoiceListSummary[] }) {
                 )}
               </td>
               <td className="px-3 py-3 text-slate-600">
-                {invoice.issue_date
-                  ? new Date(invoice.issue_date).toLocaleDateString()
-                  : "—"}
+                {invoice.issue_date ? new Date(invoice.issue_date).toLocaleDateString() : "—"}
               </td>
               <td className="px-3 py-3 text-right font-mono">
-                {invoice.grand_total
-                  ? `${invoice.currency_code} ${invoice.grand_total}`
-                  : "—"}
+                {invoice.grand_total ? `${invoice.currency_code} ${invoice.grand_total}` : "—"}
               </td>
               <td className="px-3 py-3">
                 <StatusPill status={invoice.status} />
@@ -329,10 +302,7 @@ function StatusPill({ status }: { status: string }) {
           : "bg-slate-100 text-slate-600";
   return (
     <span
-      className={[
-        "inline-block rounded-full px-2 py-0.5 text-[10px] font-medium",
-        tone,
-      ].join(" ")}
+      className={["inline-block rounded-full px-2 py-0.5 text-[10px] font-medium", tone].join(" ")}
     >
       {status.replace(/_/g, " ")}
     </span>
