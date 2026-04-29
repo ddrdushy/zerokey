@@ -24,6 +24,12 @@ dependencies = [
     # CPU torch wheel is ~200MB and EasyOCR's English language model is
     # downloaded on first use (cached in the easyocr/ directory).
     "easyocr>=1.7,<2.0",
+    # RapidOCR (Slice 72) — PaddleOCR's PP-OCR models reorganised to run on
+    # ONNX Runtime. Same accuracy as PaddleOCR but ~200MB smaller install
+    # (no torch / no paddle), faster cold start, and no GPU deps. Wins at
+    # priority 50 over EasyOCR (priority 100) for invoices because of
+    # PP-OCR's stronger table-aware detection.
+    "rapidocr-onnxruntime>=1.3,<2.0",
     # PDF → image rasterisation for OCR. pypdfium2 is a single Python wheel
     # with no system deps, much leaner than pdf2image+poppler.
     "pypdfium2>=4,<5",

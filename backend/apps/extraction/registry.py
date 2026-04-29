@@ -26,6 +26,8 @@ from .adapters.ollama_adapter import ADAPTER_NAME as OLLAMA_STRUCTURE_NAME
 from .adapters.ollama_adapter import OllamaFieldStructureAdapter
 from .adapters.pdfplumber_adapter import ADAPTER_NAME as PDFPLUMBER_ADAPTER_NAME
 from .adapters.pdfplumber_adapter import PdfplumberAdapter
+from .adapters.rapidocr_adapter import ADAPTER_NAME as RAPIDOCR_ADAPTER_NAME
+from .adapters.rapidocr_adapter import RapidOCRAdapter
 
 # adapter name → factory. Keep this list small; new adapters land here.
 _ADAPTER_FACTORIES: dict[str, Callable[[], Any]] = {
@@ -34,6 +36,7 @@ _ADAPTER_FACTORIES: dict[str, Callable[[], Any]] = {
     STRUCTURE_ADAPTER_NAME: ClaudeFieldStructureAdapter,
     OLLAMA_STRUCTURE_NAME: OllamaFieldStructureAdapter,
     EASYOCR_ADAPTER_NAME: EasyOCRAdapter,
+    RAPIDOCR_ADAPTER_NAME: RapidOCRAdapter,
 }
 
 

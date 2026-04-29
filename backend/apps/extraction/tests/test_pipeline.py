@@ -88,7 +88,10 @@ def easyocr_engine_and_rule(db) -> Engine:
 
 
 class _FakeOCRAdapter(TextExtractEngine):
-    name = "easyocr"
+    # Slice 72: rapidocr is the new OCR launch primary (priority 150).
+    # The fixture's easyocr rule (priority 200) is now the second-tier
+    # fallback; the OCR escalation finds rapidocr first.
+    name = "rapidocr"
 
     def __init__(self, result: TextExtractResult | None = None) -> None:
         self._result = result or TextExtractResult(
@@ -603,7 +606,7 @@ class TestOCREscalation:
         job.refresh_from_db()
         assert job.status == IngestionJob.Status.READY_FOR_REVIEW
         # Combined engine name records the chain step.
-        assert job.extraction_engine == "pdfplumber+easyocr"
+        assert job.extraction_engine == "pdfplumber+rapidocr"
         # Confidence reflects the OCR pass, not pdfplumber's 0.10.
         assert job.extraction_confidence == pytest.approx(0.85)
         # The OCR text becomes the job's extracted_text.
@@ -708,14 +711,16 @@ class TestOCREscalation:
         text_adapter = _FakeAdapter(self._scanned())
 
         class _BoomOCR(TextExtractEngine):
-            name = "easyocr"
+            # rapidocr is the new launch primary; the escalation finds
+            # this rule first now.
+            name = "rapidocr"
 
             def __init__(self):
                 self.calls: list = []
 
             def extract_text(self, *, body, mime_type):
                 self.calls.append((body, mime_type))
-                raise EngineUnavailable("easyocr is not installed")
+                raise EngineUnavailable("rapidocr is not installed")
 
         ocr_adapter = _BoomOCR()
         vision_adapter = _FakeVisionAdapter()
@@ -741,4 +746,4 @@ class TestOCREscalation:
         skip_event = AuditEvent.objects.filter(
             action_type="ingestion.job.ocr_escalation_skipped"
         ).first()
-        assert "easyocr is not installed" in skip_event.payload["reason"]
+        assert "rapidocr is not installed" in skip_event.payload["reason"]
