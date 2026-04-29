@@ -150,6 +150,31 @@ export type OrganizationMemberRow = {
   joined_date: string | null;
 };
 
+export type IntegrationCard = {
+  integration_key: string;
+  label: string;
+  description: string;
+  fields: Array<{
+    key: string;
+    label: string;
+    kind: "credential" | "config";
+    placeholder?: string;
+    required?: boolean;
+  }>;
+  active_environment: "sandbox" | "production";
+  sandbox: {
+    values: Record<string, string>;
+    credential_present: Record<string, boolean>;
+  };
+  production: {
+    values: Record<string, string>;
+    credential_present: Record<string, boolean>;
+  };
+  last_test_sandbox: { at: string; ok: boolean; detail: string } | null;
+  last_test_production: { at: string; ok: boolean; detail: string } | null;
+  configured: boolean;
+};
+
 export type InvitationRow = {
   id: string;
   email: string;
@@ -885,6 +910,46 @@ export const api = {
     }>(
       "/identity/invitations/accept/",
       { method: "POST", body: JSON.stringify({ token }) },
+    ),
+  // Slice 57 — per-org integrations
+  listIntegrations: () =>
+    request<{ results: IntegrationCard[] }>(
+      "/identity/organization/integrations/",
+    ).then((r) => r.results),
+  patchIntegrationCredentials: (
+    integrationKey: string,
+    environment: "sandbox" | "production",
+    fields: Record<string, string>,
+  ) =>
+    request<IntegrationCard>(
+      `/identity/organization/integrations/${integrationKey}/credentials/`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ environment, fields }),
+      },
+    ),
+  switchIntegrationEnvironment: (
+    integrationKey: string,
+    environment: "sandbox" | "production",
+    reason?: string,
+  ) =>
+    request<IntegrationCard>(
+      `/identity/organization/integrations/${integrationKey}/active-environment/`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ environment, reason: reason || "" }),
+      },
+    ),
+  testIntegration: (
+    integrationKey: string,
+    environment: "sandbox" | "production",
+  ) =>
+    request<{ ok: boolean; detail: string; duration_ms: number }>(
+      `/identity/organization/integrations/${integrationKey}/test/`,
+      {
+        method: "POST",
+        body: JSON.stringify({ environment }),
+      },
     ),
   listApiKeys: () =>
     request<{ results: APIKeyRow[] }>(

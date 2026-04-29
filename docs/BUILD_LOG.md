@@ -5472,6 +5472,165 @@ What's deferred:
 
 ---
 
+### Slice 57 — Per-org integration credentials with sandbox/prod toggle
+
+The customer needs to configure their own LHDN MyInvois
+credentials — every tenant has their own LHDN-issued client_id
++ secret + TIN. The earlier Slice 41 (`SystemSetting`) was
+**platform-level**: one row of LHDN creds for the whole platform.
+That works for Stripe (one Stripe account for ZeroKey) but breaks
+for LHDN (every customer has their own LHDN account).
+
+Slice 57 lands the per-tenant credential surface. Two slots per
+integration (sandbox + production) with a one-click "go-live"
+toggle and a per-environment test-connection button so the
+operator gets an instant "creds are working" verdict.
+
+This is foundational for Slice 58 (LHDN signing + submission),
+which reads these creds at submit time.
+
+Backend:
+
+- **`identity.OrganizationIntegration`** — TenantScopedModel
+  with `(org, integration_key)` unique. Two JSONField credential
+  blobs (`sandbox_credentials`, `production_credentials`),
+  `active_environment` enum (sandbox | production), per-env
+  last-test cursors (`last_test_*_at`, `last_test_*_ok`,
+  `last_test_*_detail`). RLS migration 0012 follows the standard
+  tenant-isolation pattern.
+- **`apps.identity.integrations`** module (distinct from the
+  bounded-context `apps.integrations` package — that's the
+  webhook surface). Holds:
+  - `INTEGRATION_SCHEMAS` registry. Each integration declares
+    its fields with `kind` (`credential` | `config`),
+    `placeholder`, `required`. Today: `lhdn_myinvois` with
+    `client_id` / `client_secret` / `base_url` / `tin`.
+    Sandbox + production both pre-seed sensible default
+    `base_url` values so first-time setup doesn't require
+    copy-pasting LHDN URLs from docs.
+  - `upsert_credentials(*, environment, field_updates, ...)` —
+    per-environment patch. Decrypts current → diff in plaintext
+    → re-encrypts on write (via Slice 55 helpers). Audit
+    records WHICH fields changed by name; values never enter
+    the chain.
+  - `set_active_environment(*, environment, reason, ...)` —
+    the go-live toggle. Audit captures `from_environment` →
+    `to_environment` so a chain reader sees "this tenant
+    flipped to production at T".
+  - `test_connection(*, environment, ...)` — runs the
+    integration's tester + persists outcome on the row.
+  - `_test_lhdn_myinvois(plain)` — Slice 57 ships a
+    *connectivity probe* (DNS resolution + HEAD on the base
+    URL + sanity check that `client_id` / `client_secret` /
+    `tin` are populated). Slice 58 swaps this for a real
+    OAuth2 token request once the LHDN client lands.
+- **Endpoints** under `/api/v1/identity/`:
+  - `GET /organization/integrations/` — list all cards (any
+    member; viewers see read-only state).
+  - `PATCH /organization/integrations/<key>/credentials/` —
+    upsert one environment's creds (owner / admin only).
+  - `PATCH /organization/integrations/<key>/active-environment/` —
+    flip the toggle (owner / admin only).
+  - `POST /organization/integrations/<key>/test/` — run the
+    test-connection probe (owner / admin only).
+
+Frontend:
+
+- **Settings → Integrations** new tab. SettingsTabs strip
+  extended.
+- **Per-integration card** — title + description + active-
+  environment badge + "Go live →" / "Switch to sandbox" button
+  (with a confirm dialog on the production switch).
+- **Two stacked sub-cards**: Sandbox + Production. Each shows
+  the configured fields (credentials masked + "Configured"
+  pill, config fields plaintext), a Save / Discard pair on
+  any draft change, and a "Test connection" button per
+  environment with the result rendered inline (success-green
+  or error-red panel with the detail string).
+- **"Go live" gesture** — `window.confirm` on switching to
+  production with a clear warning that live invoices will hit
+  LHDN's real API. Customer-pleasing safety belt without being
+  a modal-form burden.
+- **Read-only for non-admins** — fields disabled, buttons
+  hidden. Backend gate is the source of truth; the FE gate
+  is for UX.
+
+Tests: 23 new (604 passing total, was 581). Cover:
+- Schema registry exposes `lhdn_myinvois` with the required
+  fields (`client_id`, `client_secret`, `base_url`, `tin`).
+- `list_integrations_for_org` returns the default empty shape
+  for orgs with no row yet (so the form renders).
+- `upsert_credentials`: defaults seeded on first save +
+  values encrypted at rest (raw column read confirms ciphertext)
+  + audit captures field names only (literal secret value
+  never appears in payload JSON) + unknown field / unknown
+  integration / invalid environment all 400 + empty value
+  clears the key.
+- `set_active_environment`: flips state + audit captures
+  from→to transition + idempotent (no-op skips audit).
+- `test_connection`: 400 if no creds saved, DNS failure +
+  5xx response + missing-credentials warning all surface
+  with structured detail, success persists `last_test_*_at`
+  + `last_test_*_ok` on the row.
+- Endpoints: list returns LHDN card + non-admin 403 on patch
+  + owner can patch + switch-environment endpoint flips +
+  test endpoint invokes the tester.
+
+Verified live: configured a fresh test org's LHDN sandbox
+creds (`client_id=demo-id`, `client_secret=demo-secret`,
+`tin=C1234567890`) — saved + got the "Configured" pill.
+Hit Test connection — got "connectivity OK + credentials
+present" in 380ms with the row's `last_test_sandbox_at`
+populated. Switched to production, confirm dialog fired,
+the badge flipped to "Live · production".
+
+Durable design decisions:
+
+- **Two slots per integration, not overwrite-on-go-live.**
+  Operators want sandbox creds to stay configured after
+  going live so they can A/B test against the sandbox
+  without rotating keys. Two columns is simpler than a
+  history table.
+- **Per-env test cursors.** "Last tested 5 min ago"
+  beats "operator hits Test then waits 30s" for the
+  always-on observability the credentials surface needs.
+- **`_test_lhdn_myinvois` is a stub today.** A connectivity
+  probe gets us 80% of the value (catches the most common
+  misconfiguration: typo in base_url) for 5% of the work
+  Slice 58's real OAuth2 tester needs. Stub matches the
+  same `TestOutcome` contract so the swap is invisible to
+  the UI.
+- **Schema registry in code, not DB.** Adding a new
+  integration is a one-entry change in `INTEGRATION_SCHEMAS`
+  + a tester in `_INTEGRATION_TESTERS`. No migration. The
+  list of integrations IS schema, not data — same logic
+  as `EVENT_KEYS` for notifications.
+- **Encryption inherited from Slice 55.** Strings → ciphertext
+  via `encrypt_dict_values`; non-strings (bools, ints) pass
+  through. Compatible with the migration-in-progress legacy
+  plaintext state for free.
+- **Confirm on go-live.** Switching to production is the
+  single highest-impact gesture in the UI. A confirm
+  dialog is the right amount of friction — too low and
+  customers go live by accident; too high (multi-step
+  modal) and engineers hate it.
+
+What's deferred:
+
+- **OAuth2 tester for LHDN** — connectivity probe today;
+  Slice 58 ships the real token-request tester that
+  proves client_id + secret are valid against LHDN.
+- **Reason required on production switch.** Today reason
+  is captured but optional. Likely tightened with
+  compliance review (auditors want "why did this org go
+  live at this moment?").
+- **More integrations** — Stripe (likely platform-level
+  not per-org), Peppol (later when Malaysia mandates
+  cross-border via Peppol), Email-forward ingestion
+  (handled by Slice 60 platform-side).
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for

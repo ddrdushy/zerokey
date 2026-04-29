@@ -249,6 +249,84 @@ class OrganizationMembership(TenantScopedModel):
         return f"{self.user.email} @ {self.organization.legal_name} ({self.role.name})"
 
 
+class OrganizationIntegration(TenantScopedModel):
+    """Per-tenant external-integration credentials (Slice 57).
+
+    One row per ``(organization, integration_key)``. Holds two credential
+    blobs (sandbox + production), a cursor saying which one is currently
+    active, and the last-test outcomes per environment.
+
+    Why two slots and an active-environment toggle rather than one set
+    that gets overwritten:
+
+      - LHDN MyInvois has separate sandbox + production endpoints + each
+        gets its own client_id / client_secret. Operators want to keep
+        sandbox creds wired up after going live so they can A/B test
+        against the sandbox without rotating keys.
+      - The toggle is a clean "go-live" gesture: one click flips the
+        org from sandbox to production with a single audited change.
+
+    Credential values are encrypted at rest via
+    ``apps.administration.crypto`` (Slice 55). The schema registry in
+    ``apps.identity.integrations`` declares which keys are credentials
+    (kind="credential") so the read surface returns presence-only
+    booleans for those, plaintext for non-secret config (URLs, IDs).
+    """
+
+    class Environment(models.TextChoices):
+        SANDBOX = "sandbox", "Sandbox / Dev"
+        PRODUCTION = "production", "Production"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # Stable identifier matching a key in the INTEGRATION_SCHEMAS
+    # registry. Today: "lhdn_myinvois". One row per integration per
+    # tenant — the unique constraint enforces that.
+    integration_key = models.CharField(max_length=64)
+
+    # Per-environment credential JSON blobs. Strings are encrypted at
+    # rest; non-string values (timeouts, booleans) pass through plain.
+    sandbox_credentials = models.JSONField(default=dict, blank=True)
+    production_credentials = models.JSONField(default=dict, blank=True)
+
+    active_environment = models.CharField(
+        max_length=16,
+        choices=Environment.choices,
+        default=Environment.SANDBOX,
+    )
+
+    # Last-test outcome per environment. Surfaced in the UI as
+    # "Last tested 5 min ago — succeeded" / "Failed: invalid_grant".
+    last_test_sandbox_at = models.DateTimeField(null=True, blank=True)
+    last_test_sandbox_ok = models.BooleanField(null=True, blank=True)
+    last_test_sandbox_detail = models.CharField(max_length=512, blank=True)
+
+    last_test_production_at = models.DateTimeField(null=True, blank=True)
+    last_test_production_ok = models.BooleanField(null=True, blank=True)
+    last_test_production_detail = models.CharField(max_length=512, blank=True)
+
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+    updated_by_user_id = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        db_table = "identity_organization_integration"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "integration_key"],
+                name="uniq_org_integration_key",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "integration_key"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.integration_key}@{self.organization_id} "
+            f"({self.active_environment})"
+        )
+
+
 class MembershipInvitation(TenantScopedModel):
     """Pending invite for a future OrganizationMembership (Slice 56).
 

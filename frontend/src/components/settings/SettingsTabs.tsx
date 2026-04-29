@@ -26,6 +26,7 @@ const TABS: Tab[] = [
   { href: "/dashboard/settings/notifications", label: "Notifications" },
   { href: "/dashboard/settings/billing", label: "Billing" },
   { href: "/dashboard/settings/webhooks", label: "Webhooks" },
+  { href: "/dashboard/settings/integrations", label: "Integrations" },
 ];
 
 export function SettingsTabs() {

@@ -583,3 +583,162 @@ def preview_invitation_view(request: Request) -> Response:
             "expires_at": invitation.expires_at.isoformat(),
         }
     )
+
+
+# --- Slice 57: Per-org integrations -------------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def organization_integrations(request: Request) -> Response:
+    """Settings → Integrations card list for the active org.
+
+    Read is open to any active member (so viewers see the
+    configured-state); writes are owner / admin only via the
+    other endpoints.
+    """
+    from .integrations import list_integrations_for_org
+
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return Response(
+        {"results": list_integrations_for_org(organization_id=organization_id)}
+    )
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def organization_integration_credentials(
+    request: Request, integration_key: str
+) -> Response:
+    """Patch one environment's credential set.
+
+    Body: ``{"environment": "sandbox|production", "fields": {...}}``
+    """
+    from . import integrations as integ_service
+
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not _is_owner_or_admin(request.user, organization_id):
+        return Response(
+            {"detail": "Only owners and admins can change integration credentials."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    body = request.data or {}
+    environment = str(body.get("environment") or "").strip()
+    fields = body.get("fields") or {}
+    if not isinstance(fields, dict):
+        return Response(
+            {"detail": "fields must be an object."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        result = integ_service.upsert_credentials(
+            organization_id=organization_id,
+            integration_key=integration_key,
+            environment=environment,
+            field_updates={k: str(v) if v is not None else "" for k, v in fields.items()},
+            actor_user_id=request.user.id,
+        )
+    except integ_service.IntegrationConfigError as exc:
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+    return Response(result)
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def organization_integration_active_environment(
+    request: Request, integration_key: str
+) -> Response:
+    """Flip the integration between sandbox + production.
+
+    Body: ``{"environment": "sandbox|production", "reason": "..."}``
+    """
+    from . import integrations as integ_service
+
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not _is_owner_or_admin(request.user, organization_id):
+        return Response(
+            {"detail": "Only owners and admins can switch environments."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    body = request.data or {}
+    try:
+        result = integ_service.set_active_environment(
+            organization_id=organization_id,
+            integration_key=integration_key,
+            environment=str(body.get("environment") or "").strip(),
+            actor_user_id=request.user.id,
+            reason=str(body.get("reason") or ""),
+        )
+    except integ_service.IntegrationConfigError as exc:
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+    return Response(result)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def organization_integration_test(
+    request: Request, integration_key: str
+) -> Response:
+    """Run the test-connection probe for one environment.
+
+    Body: ``{"environment": "sandbox|production"}``. Returns
+    ``{"ok": bool, "detail": str, "duration_ms": int}``.
+    """
+    from . import integrations as integ_service
+
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not _is_owner_or_admin(request.user, organization_id):
+        return Response(
+            {"detail": "Only owners and admins can test integrations."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    body = request.data or {}
+    try:
+        outcome = integ_service.test_connection(
+            organization_id=organization_id,
+            integration_key=integration_key,
+            environment=str(body.get("environment") or "").strip(),
+            actor_user_id=request.user.id,
+        )
+    except integ_service.IntegrationConfigError as exc:
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+    return Response(
+        {
+            "ok": outcome.ok,
+            "detail": outcome.detail,
+            "duration_ms": outcome.duration_ms,
+        }
+    )

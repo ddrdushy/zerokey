@@ -70,4 +70,25 @@ urlpatterns = [
         views.preview_invitation_view,
         name="invitation-preview",
     ),
+    # Slice 57 — per-org integrations (sandbox/prod toggle + test)
+    path(
+        "organization/integrations/",
+        views.organization_integrations,
+        name="organization-integrations",
+    ),
+    path(
+        "organization/integrations/<str:integration_key>/credentials/",
+        views.organization_integration_credentials,
+        name="organization-integration-credentials",
+    ),
+    path(
+        "organization/integrations/<str:integration_key>/active-environment/",
+        views.organization_integration_active_environment,
+        name="organization-integration-active-environment",
+    ),
+    path(
+        "organization/integrations/<str:integration_key>/test/",
+        views.organization_integration_test,
+        name="organization-integration-test",
+    ),
 ]
