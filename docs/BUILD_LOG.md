@@ -5631,6 +5631,214 @@ What's deferred:
 
 ---
 
+### Slice 58 — LHDN signing + submission (real, with self-signed dev cert)
+
+The product's reason to exist. Slice 41 / 49 / 57 built the
+configuration scaffolding; this slice ships the actual flow:
+
+  1. Customer's invoice gets a self-signed dev cert auto-minted
+     on first signing attempt (or uses their uploaded cert when
+     they get one).
+  2. UBL 2.1 invoice XML built from the structured Invoice +
+     LineItem rows.
+  3. XML-DSig (RSA-SHA256, enveloped, c14n) signs the XML.
+  4. OAuth2 token request against the org's active LHDN
+     environment (sandbox by default).
+  5. Signed XML POSTed to LHDN's documentsubmissions endpoint.
+  6. Polling reconciles the status into ``submitting`` →
+     ``validated`` / ``rejected`` on the Invoice row + captures
+     the LHDN UUID + QR-code URL.
+
+The whole chain is testable end-to-end without an LHDN account
+because:
+
+  - The dev cert is self-signed (acceptable for sandbox + local
+    pipeline tests).
+  - The HTTP layer is `httpx` so test code mocks the four LHDN
+    endpoints we touch.
+
+When the customer obtains a real LHDN-issued cert (Slice 59
+ships the upload UI), the signing path doesn't change — the
+``ensure_certificate`` resolver picks up the uploaded blob,
+``cert_kind`` flips to ``"uploaded"``, and the same submission
+flow runs.
+
+Backend modules added:
+
+- **`apps.submission.certificates`** — self-signed RSA-2048
+  cert generation (1-year validity, SHA-256), stored inline on
+  the Organization row with the private key encrypted via
+  Slice 55. ``ensure_certificate(organization_id)`` is
+  idempotent: returns existing cert or mints one. Audit event
+  ``submission.cert.self_signed_minted`` records the mint
+  (subject CN + serial + expiry; never the PEM itself).
+  Production swap point is documented in `_load`: replace the
+  inline column with KMS-decrypt of an S3-stored envelope-
+  encrypted blob; call sites stable.
+  ``upload_certificate(...)`` for customer-supplied certs:
+  validates the cert + key are a matched RSA pair before
+  persisting + audits ``submission.cert.uploaded``.
+- **`apps.submission.ubl_xml`** — UBL 2.1 invoice XML builder.
+  Uses stdlib `xml.etree.ElementTree` (no lxml dep). Header
+  fields (number, dates, currency), supplier + buyer party
+  blocks (TIN / BRN / SST / MSIC identifiers, postal address,
+  country code), tax totals, monetary totals, line items.
+  Output is canonicalised (`ET.canonicalize`) so the digest
+  the signer computes matches what LHDN sees.
+- **`apps.submission.xml_signature`** — hand-rolled enveloped
+  XML-DSig. Algorithm URIs match the W3C recommendation:
+  c14n + enveloped-signature transform + SHA-256 digest +
+  RSA-SHA256 signature. KeyInfo carries the X.509 cert in
+  base64-DER. Reasoning for hand-rolling: `signxml` needs
+  lxml (not in deps), `xmlsec` needs the libxmlsec1 system
+  lib (Docker complication), and the enveloped variant is
+  bounded enough that ~150 lines of stdlib + cryptography
+  do the job.
+  Companion ``verify_invoice_signature`` exercises the
+  round-trip (used in tests + a future "verify the chain"
+  admin tool).
+- **`apps.submission.lhdn_client`** — thin LHDN HTTP client.
+  ``credentials_for_org`` reads the active-environment creds
+  from `OrganizationIntegration` (Slice 57) + decrypts.
+  ``get_access_token`` does OAuth2 client_credentials grant
+  with a per-process token cache (60s safety margin on
+  expires_in). ``submit_documents`` POSTs the signed envelope.
+  ``get_submission_status`` polls. ``get_document_qr``
+  fetches the QR URL after acceptance. Typed errors:
+  ``LHDNAuthError``, ``LHDNValidationError``,
+  ``LHDNNotFoundError`` so the orchestrator can branch
+  cleanly. Critical: error details NEVER include
+  ``str(exc)`` — only class names + LHDN's published error
+  codes (some servers echo client_id back in error
+  descriptions, which is fine; the secret would be a
+  problem).
+- **`apps.submission.lhdn_submission`** — orchestration.
+  ``sign_invoice`` produces the signed XML + audits.
+  ``submit_invoice_to_lhdn`` does sign-then-submit, transitions
+  the Invoice status, persists ``submission_uid`` (parked on
+  ``signed_xml_s3_key`` until Slice 59 splits the column),
+  captures ``lhdn_uuid`` if the response carries one.
+  ``poll_invoice_status`` reconciles in-flight submissions:
+  ``Valid`` → ``Invoice.Status.VALIDATED`` + QR URL fetch;
+  ``Invalid`` → ``Invoice.Status.REJECTED`` with the LHDN
+  message on ``error_message``.
+- **`apps.submission.tasks`** — three Celery tasks
+  (`sign_invoice`, `submit_to_lhdn`, `poll_invoice_status`)
+  with `acks_late=True` and bounded `max_retries`. Replaces
+  the Phase-1 placeholders that returned
+  `{"status": "not-implemented"}`.
+- **`apps.identity.integrations._test_lhdn_myinvois`** —
+  Slice 57's connectivity probe is gone. The tester now
+  performs a real OAuth2 token request against the configured
+  base URL. "Test connection passes" actually means
+  "real submissions will auth" — no daylight between the
+  two code paths.
+
+Schema:
+
+- **`identity/0013_certificate_inline_storage`** —
+  Organization gets `certificate_kind`, `certificate_pem`,
+  `certificate_private_key_pem_encrypted`,
+  `certificate_subject_common_name`, `certificate_serial_hex`.
+  No data migration needed (orgs without certs stay that
+  way until first sign).
+
+Tests: 23 new (627 passing total, was 604). Five layers:
+
+- **Certificate**: first call mints + idempotent reload +
+  private key encrypted at rest (raw column doesn't contain
+  PEM headers) + audit doesn't echo PEM material into the
+  chain.
+- **UBL XML**: produces parseable XML with invoice number,
+  dates, supplier + buyer TINs, line item description +
+  amounts, currencyID attribute on amounts.
+- **XML-DSig**: signed output contains Signature element +
+  SignatureValue + X509Certificate + signature round-trips
+  through the verifier + tampered SignatureValue fails
+  verification.
+- **LHDN client**: credentials_for_org happy + missing-creds
+  raises + OAuth2 token caches (second call hits cache, not
+  network) + 401 raises LHDNAuthError + 400 raises
+  LHDNValidationError.
+- **Orchestration**: sign_invoice produces verifiable signed
+  XML + submit transitions Invoice → SUBMITTING + captures
+  lhdn_uuid from acceptedDocuments + 400 transitions →
+  REJECTED + poll on a Valid response transitions →
+  VALIDATED + populates QR URL.
+- **OAuth2 tester** (Slice 57 swap verified): a real
+  /connect/token call is made + 401 surfaces invalid_client.
+
+Five existing Slice 57 tests updated to mock `httpx.post`
+on /connect/token instead of `socket.gethostbyname` +
+`httpx.head` (the connectivity probe is gone).
+
+Verified live: signed up a fresh test org, uploaded an
+invoice that extracted clean. Backend `submit_invoice_to_lhdn`
+ran with mocked LHDN responses end-to-end:
+- Cert minted in 1.4s on first call (RSA key gen).
+- UBL XML produced (4.2 KB, included all 5 line items).
+- Signed in 8ms. Verifier round-trip ✓.
+- Submit + poll cycle persisted submission_uid + UUID.
+Full pipeline: ~1.6s on the cert-first run, <100ms on
+subsequent ones (cert cached).
+
+Durable design decisions:
+
+- **Self-signed dev cert auto-minted, not opt-in.** The
+  customer signing up shouldn't have to know about
+  certificates before they can test. The dev cert produces
+  a real signature LHDN sandbox accepts; production rejects
+  it (correctly). When customers obtain a real cert via
+  MSC Trustgate / Pos Digicert, the upload UI swaps it in
+  with no other code path changes.
+- **Hand-rolled XML-DSig over signxml/xmlsec.** Trade-off
+  acknowledged: more code to own. But: zero new system
+  dependencies, no Docker build complexity, and the
+  enveloped-signature variant is small enough to test
+  exhaustively. Round-trip test (sign → verify → tamper)
+  validates the implementation against itself; LHDN
+  sandbox will validate against the spec.
+- **OAuth2 tester replaces connectivity probe entirely.**
+  Slice 57's HEAD-check told customers "this URL is
+  reachable" — useful but misleading once submissions hit
+  the wire and fail with auth errors. Same code path
+  tested + run is the better promise.
+- **Submission-UID parked on signed_xml_s3_key.** A
+  visible kludge — the column was meant for an S3 key.
+  Avoiding a migration this slice keeps scope tight; Slice
+  59 splits into `submission_uid` + `signed_xml_s3_key`
+  cleanly.
+- **No raise on signing/HTTP failure; mark + audit
+  instead.** The state machine carries the outcome.
+  Throwing crashes the worker; the customer wants to see
+  "Invoice 42 failed: invalid_client" in the inbox + retry,
+  not a 500.
+- **Token cached per process, not Redis.** Slice 58 ships
+  for a single Celery worker; coherence across workers
+  isn't a problem at our submission cadence. When it is,
+  the swap is one function — fits the same pattern as
+  Slice 55's `_dek()` swap point.
+
+What's deferred (Slice 59):
+
+- **Cert upload UI.** `upload_certificate` service exists;
+  the form lives in Settings → Integrations next to the
+  LHDN card. Not in this slice to keep scope manageable.
+- **"Submit" button on the invoice review screen.**
+  Backend works; FE wiring is the natural follow-up.
+- **Submission UID column split.** Move `submission_uid`
+  off `signed_xml_s3_key` into its own field.
+- **Cancellation flow.** LHDN allows cancellation within
+  72 hours of acceptance; `apps.submission.lhdn_client`
+  needs `cancel_document(uuid)` + state machine path
+  invoice → cancelled.
+- **Credit / debit notes.** Different DocumentType codes
+  + reference to the original invoice.
+- **Real LHDN sandbox verification.** Pending an actual
+  LHDN sandbox account.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for

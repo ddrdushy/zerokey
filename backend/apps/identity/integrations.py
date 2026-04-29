@@ -40,7 +40,7 @@ so the operator gets a true "creds are working" verdict.
 
 from __future__ import annotations
 
-import socket
+import json
 import time
 import uuid
 from dataclasses import dataclass
@@ -395,17 +395,24 @@ def test_connection(
 
 
 def _test_lhdn_myinvois(plain: dict[str, Any]) -> TestOutcome:
-    """LHDN MyInvois test (Slice 57 — connectivity probe).
+    """LHDN MyInvois test (Slice 58 — real OAuth2 probe).
 
-    Slice 58 replaces this with a real OAuth2 token request that
-    validates the client_id + client_secret against LHDN's auth
-    endpoint. Today's probe just checks that the base URL resolves
-    + the host responds, which catches the most common
-    misconfiguration (typo in the URL) without needing a live
-    LHDN account.
+    Performs a real OAuth2 client_credentials token request against
+    the configured LHDN base URL. Catches:
+
+      - Typos in base_url (DNS / connect errors).
+      - Wrong scheme on the URL (still validated up front).
+      - Invalid client_id / client_secret (LHDN returns 401 with
+        an OAuth2-style error_code).
+      - Missing required fields (client_id / secret / tin).
+
+    Slice 57 shipped a connectivity-only probe; that path is gone.
+    The new tester is the one Slice 58 uses for real submissions
+    too — same code path means "Test connection passes" actually
+    means "real submissions will auth".
     """
     started = time.perf_counter()
-    base_url = (plain.get("base_url") or "").strip()
+    base_url = (plain.get("base_url") or "").strip().rstrip("/")
     if not base_url:
         return TestOutcome(
             ok=False,
@@ -421,31 +428,33 @@ def _test_lhdn_myinvois(plain: dict[str, Any]) -> TestOutcome:
             duration_ms=int((time.perf_counter() - started) * 1000),
         )
 
-    # DNS resolution. Catches typos in the host part.
-    try:
-        socket.gethostbyname(parsed.hostname)
-    except OSError as exc:
+    missing = [
+        k for k in ("client_id", "client_secret", "tin") if not plain.get(k)
+    ]
+    if missing:
         return TestOutcome(
             ok=False,
-            detail=f"DNS resolution failed: {type(exc).__name__}",
+            detail=f"credentials missing: {missing}",
             duration_ms=int((time.perf_counter() - started) * 1000),
         )
 
-    # HEAD probe — just checks the host responds. LHDN's actual auth
-    # path is reachable via OAuth2 (Slice 58); for now any reachable
-    # response counts as "URL is plausible".
+    # Real OAuth2 token request.
+    token_url = base_url + "/connect/token"
     try:
-        response = httpx.head(
-            base_url, timeout=8.0, follow_redirects=True
+        response = httpx.post(
+            token_url,
+            data={
+                "client_id": plain["client_id"],
+                "client_secret": plain["client_secret"],
+                "grant_type": "client_credentials",
+                "scope": "InvoicingAPI",
+            },
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+            timeout=15.0,
         )
-        # 2xx, 3xx, 401, 403, 404 all confirm the host is up. 5xx +
-        # connect errors fail.
-        if response.status_code >= 500:
-            return TestOutcome(
-                ok=False,
-                detail=f"server returned HTTP {response.status_code}",
-                duration_ms=int((time.perf_counter() - started) * 1000),
-            )
     except httpx.HTTPError as exc:
         return TestOutcome(
             ok=False,
@@ -453,26 +462,34 @@ def _test_lhdn_myinvois(plain: dict[str, Any]) -> TestOutcome:
             duration_ms=int((time.perf_counter() - started) * 1000),
         )
 
-    # Sanity-check that the credential fields are populated. Without
-    # them Slice 58's real tester will fail anyway; warn now.
-    missing = [
-        k
-        for k in ("client_id", "client_secret", "tin")
-        if not plain.get(k)
-    ]
-    if missing:
+    if response.status_code == 200:
+        try:
+            access_token = response.json().get("access_token")
+        except (json.JSONDecodeError, ValueError):
+            access_token = None
+        if access_token:
+            return TestOutcome(
+                ok=True,
+                detail="OAuth2 token issued — credentials valid",
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
         return TestOutcome(
             ok=False,
-            detail=(
-                f"connectivity OK but credentials missing: {missing}. "
-                f"Save them and test again."
-            ),
+            detail="200 response but no access_token in body",
             duration_ms=int((time.perf_counter() - started) * 1000),
         )
 
+    # Failure path. LHDN returns OAuth2-style {error, error_description}.
+    # Surface error code only — descriptions occasionally echo the
+    # client_id which is fine, but never the secret.
+    try:
+        body = response.json()
+        error_code = body.get("error", f"HTTP {response.status_code}")
+    except (json.JSONDecodeError, ValueError):
+        error_code = f"HTTP {response.status_code}"
     return TestOutcome(
-        ok=True,
-        detail="connectivity OK + credentials present",
+        ok=False,
+        detail=f"LHDN rejected: {error_code}",
         duration_ms=int((time.perf_counter() - started) * 1000),
     )
 

@@ -299,8 +299,22 @@ class TestSetActiveEnvironment:
 
 
 def _mock_head(status_code: int = 200) -> MagicMock:
+    """Pre-Slice-58 helper, retained for compatibility."""
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
+    return resp
+
+
+def _mock_oauth_response(
+    status_code: int = 200, body: dict | None = None
+) -> MagicMock:
+    """Slice 58: tester now hits /connect/token via httpx.post."""
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = status_code
+    resp.json = MagicMock(
+        return_value=body
+        or {"access_token": "test-token", "expires_in": 3600}
+    )
     return resp
 
 
@@ -331,7 +345,8 @@ class TestTestConnection:
                 actor_user_id=user.id,
             )
 
-    def test_dns_failure_returns_failure_outcome(self, org_owner) -> None:
+    def test_connection_failure_returns_failure_outcome(self, org_owner) -> None:
+        """Slice 58: tester now POSTs OAuth2 — connect-failure path."""
         org, user = org_owner
         upsert_credentials(
             organization_id=org.id,
@@ -346,8 +361,8 @@ class TestTestConnection:
             actor_user_id=user.id,
         )
         with patch(
-            "apps.identity.integrations.socket.gethostbyname",
-            side_effect=OSError("Name does not resolve"),
+            "apps.identity.integrations.httpx.post",
+            side_effect=httpx.ConnectError("DNS lookup failed"),
         ):
             outcome = run_test_connection(
                 organization_id=org.id,
@@ -356,17 +371,15 @@ class TestTestConnection:
                 actor_user_id=user.id,
             )
         assert outcome.ok is False
-        assert "DNS" in outcome.detail
+        assert "ConnectError" in outcome.detail
 
     def test_success_records_outcome_on_row(self, org_owner) -> None:
+        """Slice 58: 200 + access_token in body == success."""
         self._save_creds(org_owner)
         org, user = org_owner
         with patch(
-            "apps.identity.integrations.socket.gethostbyname",
-            return_value="1.2.3.4",
-        ), patch(
-            "apps.identity.integrations.httpx.head",
-            return_value=_mock_head(200),
+            "apps.identity.integrations.httpx.post",
+            return_value=_mock_oauth_response(200),
         ):
             outcome = run_test_connection(
                 organization_id=org.id,
@@ -381,15 +394,15 @@ class TestTestConnection:
         assert row.last_test_sandbox_ok is True
         assert row.last_test_sandbox_at is not None
 
-    def test_5xx_response_is_failure(self, org_owner) -> None:
+    def test_oauth_invalid_client_is_failure(self, org_owner) -> None:
+        """Slice 58: 401 with OAuth2 error_code surfaces in detail."""
         self._save_creds(org_owner)
         org, user = org_owner
         with patch(
-            "apps.identity.integrations.socket.gethostbyname",
-            return_value="1.2.3.4",
-        ), patch(
-            "apps.identity.integrations.httpx.head",
-            return_value=_mock_head(503),
+            "apps.identity.integrations.httpx.post",
+            return_value=_mock_oauth_response(
+                401, {"error": "invalid_client"}
+            ),
         ):
             outcome = run_test_connection(
                 organization_id=org.id,
@@ -398,9 +411,10 @@ class TestTestConnection:
                 actor_user_id=user.id,
             )
         assert outcome.ok is False
-        assert "503" in outcome.detail
+        assert "invalid_client" in outcome.detail
 
     def test_missing_credentials_warns(self, org_owner) -> None:
+        """No HTTP call — credentials check fires first."""
         org, user = org_owner
         # Save only base_url, no client_id / client_secret.
         upsert_credentials(
@@ -413,12 +427,8 @@ class TestTestConnection:
             actor_user_id=user.id,
         )
         with patch(
-            "apps.identity.integrations.socket.gethostbyname",
-            return_value="1.2.3.4",
-        ), patch(
-            "apps.identity.integrations.httpx.head",
-            return_value=_mock_head(200),
-        ):
+            "apps.identity.integrations.httpx.post"
+        ) as posted:
             outcome = run_test_connection(
                 organization_id=org.id,
                 integration_key="lhdn_myinvois",
@@ -427,6 +437,8 @@ class TestTestConnection:
             )
         assert outcome.ok is False
         assert "missing" in outcome.detail.lower()
+        # Bail-out is local — no HTTP call is made when creds are missing.
+        posted.assert_not_called()
 
 
 # --- Endpoints ---
@@ -511,11 +523,8 @@ class TestEndpoints:
             actor_user_id=user.id,
         )
         with patch(
-            "apps.identity.integrations.socket.gethostbyname",
-            return_value="1.2.3.4",
-        ), patch(
-            "apps.identity.integrations.httpx.head",
-            return_value=_mock_head(200),
+            "apps.identity.integrations.httpx.post",
+            return_value=_mock_oauth_response(200),
         ):
             response = client.post(
                 "/api/v1/identity/organization/integrations/lhdn_myinvois/test/",
