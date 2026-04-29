@@ -69,6 +69,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
 
     two_factor_enabled = models.BooleanField(default=False)
+    # TOTP secret (encrypted at rest via apps.administration.crypto).
+    # Empty until the user enrolls; populated during enrollment but
+    # ``two_factor_enabled`` only flips True once the user confirms a
+    # code matches.
+    totp_secret_encrypted = models.TextField(blank=True, default="")
+    # HMAC-SHA-256 hex digests of one-time recovery codes. Plaintext
+    # codes are surfaced once at confirm + never re-shown.
+    totp_recovery_hashes = models.JSONField(blank=True, default=list)
 
     preferred_language = models.CharField(max_length=10, default="en-MY")
     preferred_timezone = models.CharField(max_length=64, default="Asia/Kuala_Lumpur")

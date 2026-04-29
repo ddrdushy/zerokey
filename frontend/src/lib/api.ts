@@ -888,9 +888,30 @@ export const api = {
   ensureCsrf: () => request<{ detail: string }>("/identity/csrf/"),
   me: () => request<Me>("/identity/me/"),
   login: (email: string, password: string) =>
-    request<Me>("/identity/login/", {
+    // Slice 89 — login may return a needs_2fa challenge instead
+    // of a full Me payload when the user has TOTP enabled.
+    request<Me | { needs_2fa: true; email: string }>("/identity/login/", {
       method: "POST",
       body: JSON.stringify({ email, password }),
+    }),
+  loginTwoFactor: (code: string) =>
+    request<Me>("/identity/login/2fa/", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+  twoFactorEnroll: () =>
+    request<{ secret: string; provisioning_uri: string }>("/identity/me/2fa/enroll/", {
+      method: "POST",
+    }),
+  twoFactorConfirm: (code: string) =>
+    request<{ ok: boolean; recovery_codes: string[] }>("/identity/me/2fa/confirm/", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+  twoFactorDisable: (code: string) =>
+    request<{ ok: boolean }>("/identity/me/2fa/disable/", {
+      method: "POST",
+      body: JSON.stringify({ code }),
     }),
   logout: () => request<void>("/identity/logout/", { method: "POST" }),
   register: (data: {

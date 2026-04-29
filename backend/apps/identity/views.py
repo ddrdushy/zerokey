@@ -76,6 +76,18 @@ def login_view(request: Request) -> Response:
         # user_login_failed signal, fired by ``authenticate`` on miss.
         return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
 
+    # Slice 89 — if 2FA is enabled, defer login() until the
+    # second factor is verified. Stash the user's id on the
+    # session so /login/2fa/ can complete the auth without
+    # re-asking for the password.
+    if user.two_factor_enabled:
+        request.session["pending_2fa_user_id"] = str(user.id)
+        request.session["pending_2fa_email"] = user.email
+        return Response(
+            {"needs_2fa": True, "email": user.email},
+            status=status.HTTP_200_OK,
+        )
+
     # Set the active organization first so the auth signal handler attributes
     # the login event to the right tenant, then call login().
     memberships = services.memberships_for(user)
@@ -83,6 +95,48 @@ def login_view(request: Request) -> Response:
         request.session["organization_id"] = str(memberships[0].organization_id)
     login(request, user)
 
+    return Response(UserSerializer(user, context={"request": request}).data)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def login_2fa_view(request: Request) -> Response:
+    """Complete login after a TOTP / recovery-code challenge (Slice 89)."""
+    from .models import User
+    from .totp import decrypt_secret, verify_and_consume_recovery_code, verify_code
+
+    user_id = request.session.get("pending_2fa_user_id")
+    if not user_id:
+        return Response(
+            {"detail": "No 2FA challenge in progress. Sign in first."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    user = User.objects.filter(id=user_id, is_active=True).first()
+    if user is None:
+        return Response({"detail": "Session expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+    code = str((request.data or {}).get("code") or "").strip()
+    if not code:
+        return Response({"detail": "code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    secret = decrypt_secret(user.totp_secret_encrypted)
+    ok = verify_code(secret_b32=secret, code=code)
+    if not ok:
+        # Try the recovery code path. Single-use; consume on match.
+        if verify_and_consume_recovery_code(user=user, code=code):
+            user.save(update_fields=["totp_recovery_hashes"])
+            ok = True
+
+    if not ok:
+        return Response({"detail": "Invalid code."}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Clear challenge state, complete the login.
+    request.session.pop("pending_2fa_user_id", None)
+    request.session.pop("pending_2fa_email", None)
+    memberships = services.memberships_for(user)
+    if memberships:
+        request.session["organization_id"] = str(memberships[0].organization_id)
+    login(request, user)
     return Response(UserSerializer(user, context={"request": request}).data)
 
 
@@ -887,3 +941,128 @@ def organization_certificate(request: Request) -> Response:
             **result,
         }
     )
+
+
+# --- Slice 89 — TOTP 2FA enrollment / disable ---------------------------
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def two_factor_enroll(request: Request) -> Response:
+    """Mint a fresh TOTP secret + provisioning URI for the user.
+
+    Does NOT enable 2FA yet — the user must POST a valid code
+    to ``/2fa/confirm/`` before ``two_factor_enabled`` flips True.
+    Re-calling this overwrites any half-finished enrollment, which
+    is what the user wants if they lost their previous QR.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    from . import totp
+
+    plain, encrypted = totp.generate_secret_encrypted()
+    request.user.totp_secret_encrypted = encrypted
+    # Pre-confirmation: do NOT touch two_factor_enabled or
+    # totp_recovery_hashes. Enabling without confirmation would
+    # lock the user out on next login.
+    request.user.save(update_fields=["totp_secret_encrypted"])
+
+    record_event(
+        action_type="identity.2fa.enroll_started",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(request.user.id),
+        organization_id=request.session.get("organization_id"),
+        affected_entity_type="User",
+        affected_entity_id=str(request.user.id),
+        payload={},
+    )
+
+    uri = totp.provisioning_uri(account_email=request.user.email, secret_b32=plain)
+    return Response({"secret": plain, "provisioning_uri": uri})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def two_factor_confirm(request: Request) -> Response:
+    """Verify a TOTP code, flip 2FA on, mint recovery codes."""
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    from . import totp
+
+    code = str((request.data or {}).get("code") or "").strip()
+    if not code:
+        return Response({"detail": "code is required."}, status=status.HTTP_400_BAD_REQUEST)
+    if not request.user.totp_secret_encrypted:
+        return Response(
+            {"detail": "2FA enrollment hasn't been started."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    secret = totp.decrypt_secret(request.user.totp_secret_encrypted)
+    if not totp.verify_code(secret_b32=secret, code=code):
+        return Response({"detail": "Invalid code."}, status=status.HTTP_400_BAD_REQUEST)
+
+    plain_codes = totp.generate_recovery_codes()
+    request.user.totp_recovery_hashes = [totp.hash_recovery_code(c) for c in plain_codes]
+    request.user.two_factor_enabled = True
+    request.user.save(update_fields=["two_factor_enabled", "totp_recovery_hashes"])
+
+    record_event(
+        action_type="identity.2fa.enabled",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(request.user.id),
+        organization_id=request.session.get("organization_id"),
+        affected_entity_type="User",
+        affected_entity_id=str(request.user.id),
+        payload={"recovery_codes_minted": len(plain_codes)},
+    )
+
+    # Recovery codes are surfaced exactly once. The user must
+    # save them now; we never re-show them.
+    return Response({"ok": True, "recovery_codes": plain_codes})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def two_factor_disable(request: Request) -> Response:
+    """Disable 2FA — requires a current TOTP or recovery code."""
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    from . import totp
+
+    if not request.user.two_factor_enabled:
+        return Response({"detail": "2FA is not enabled."}, status=status.HTTP_400_BAD_REQUEST)
+    code = str((request.data or {}).get("code") or "").strip()
+    if not code:
+        return Response({"detail": "code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    secret = totp.decrypt_secret(request.user.totp_secret_encrypted)
+    ok = totp.verify_code(secret_b32=secret, code=code)
+    if not ok:
+        ok = totp.verify_and_consume_recovery_code(user=request.user, code=code)
+    if not ok:
+        return Response({"detail": "Invalid code."}, status=status.HTTP_401_UNAUTHORIZED)
+
+    request.user.two_factor_enabled = False
+    request.user.totp_secret_encrypted = ""
+    request.user.totp_recovery_hashes = []
+    request.user.save(
+        update_fields=[
+            "two_factor_enabled",
+            "totp_secret_encrypted",
+            "totp_recovery_hashes",
+        ]
+    )
+
+    record_event(
+        action_type="identity.2fa.disabled",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(request.user.id),
+        organization_id=request.session.get("organization_id"),
+        affected_entity_type="User",
+        affected_entity_id=str(request.user.id),
+        payload={},
+    )
+    return Response({"ok": True})

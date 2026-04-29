@@ -20,10 +20,16 @@ urlpatterns = [
     path("csrf/", views.csrf, name="csrf"),
     path("register/", views.register, name="register"),
     path("login/", views.login_view, name="login"),
+    # Slice 89 — TOTP second factor on login.
+    path("login/2fa/", views.login_2fa_view, name="login-2fa"),
     path("logout/", views.logout_view, name="logout"),
     path("me/", views.me, name="me"),
     # Slice 86 — UI preferences (preferred_language for now).
     path("me/preferences/", views.update_preferences, name="me-preferences"),
+    # Slice 89 — TOTP enrollment / disable.
+    path("me/2fa/enroll/", views.two_factor_enroll, name="me-2fa-enroll"),
+    path("me/2fa/confirm/", views.two_factor_confirm, name="me-2fa-confirm"),
+    path("me/2fa/disable/", views.two_factor_disable, name="me-2fa-disable"),
     path("switch-organization/", views.switch_organization, name="switch-organization"),
     path("organization/", views.organization_detail, name="organization-detail"),
     path(
