@@ -71,6 +71,32 @@ class LHDNNotFoundError(LHDNError):
     """Submission ID or document UUID doesn't exist on LHDN's side."""
 
 
+class LHDNRateLimitError(LHDNError):
+    """LHDN returned 429. Carries ``retry_after_seconds`` parsed from
+    the Retry-After header; -1 if absent. Caller (Celery task wrapper)
+    schedules a retry with that delay."""
+
+    def __init__(self, message: str, retry_after_seconds: int = -1) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
+class LHDNDuplicateError(LHDNError):
+    """422 with code ``DuplicateSubmission`` — identical document
+    hash submitted within 10 minutes. Per spec, the customer should
+    wait for the original to validate rather than retry."""
+
+    def __init__(self, message: str, retry_after_seconds: int = -1) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
+class LHDNCancellationWindowError(LHDNError):
+    """400 with code ``OperationPeriodOver`` — invoice is past the
+    72-hour cancellation window. The caller surfaces a "use a credit
+    note instead" message to the customer."""
+
+
 @dataclass
 class LHDNCredentials:
     base_url: str
@@ -200,25 +226,27 @@ def get_access_token(creds: LHDNCredentials, *, force: bool = False) -> str:
     if not token:
         raise LHDNAuthError("LHDN auth response missing access_token.")
 
-    # Bake in a 60s safety margin so we don't try to use a token
-    # 1ms before LHDN considers it expired.
-    _token_cache[cache_key] = (token, time.time() + expires_in - 60)
+    # Per LHDN integration spec §3.2: cache TTL = expires_in - 300
+    # (5-minute buffer). Proactive renewal before expiry avoids 401s
+    # in flight on long-running submission jobs that read a "fresh"
+    # token but don't actually call LHDN until 4 minutes later.
+    _token_cache[cache_key] = (token, time.time() + expires_in - 300)
     return token
 
 
 def submit_documents(
-    *, creds: LHDNCredentials, signed_xml_documents: list[str]
+    *, creds: LHDNCredentials, signed_xml_documents: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """POST one or more signed UBL invoices to LHDN.
 
-    ``signed_xml_documents`` is a list of base64-encoded UTF-8
-    XML payloads. LHDN's request shape is:
+    ``signed_xml_documents`` is a list of envelope dicts produced by
+    :func:`encode_for_submission`. LHDN's request shape:
 
         {
           "documents": [
             {
               "format": "XML",
-              "documentHash": "<sha256-base64>",
+              "documentHash": "<sha256-hex>",
               "codeNumber": "<unique caller-generated id>",
               "document": "<base64 of the XML>"
             },
@@ -226,10 +254,22 @@ def submit_documents(
           ]
         }
 
-    Today we accept the already-base64-encoded payload (the caller
-    wraps the call with ``encode_for_submission``). LHDN's response
-    carries a top-level ``submissionUid`` we use to poll status.
+    Per spec §4.1 batch constraints:
+      - Max 100 documents per submission
+      - Max 5 MB total submission size
+      - Max 300 KB per document (post-base64)
+
+    The guards here raise ``LHDNError`` (programmer error) before
+    any network call rather than letting LHDN reject — the caller
+    is responsible for splitting batches.
+
+    LHDN's response carries a top-level ``submissionUid`` we use to
+    poll status. 429 raises ``LHDNRateLimitError`` with the
+    Retry-After value parsed; the caller respects it. 422 with
+    ``DuplicateSubmission`` raises ``LHDNDuplicateError``.
     """
+    _enforce_batch_limits(signed_xml_documents)
+
     url = urljoin(creds.base_url + "/", "api/v1.0/documentsubmissions")
     token = get_access_token(creds)
     payload = {"documents": signed_xml_documents}
@@ -251,11 +291,23 @@ def submit_documents(
 
     if response.status_code == 401:
         raise LHDNAuthError("LHDN rejected the bearer token.")
+    if response.status_code == 429:
+        raise LHDNRateLimitError(
+            "LHDN rate limit exceeded.",
+            retry_after_seconds=_parse_retry_after(response),
+        )
     if response.status_code in (400, 422):
-        # 400/422 — schema or business-rule rejection. Body carries
-        # per-document errors. Return as a typed exception with the
-        # response body so the caller can persist it on the invoice.
-        raise LHDNValidationError(_safe_json_dump(response.json()))
+        body = _safe_json(response)
+        code = _extract_error_code(body)
+        if code == "DuplicateSubmission":
+            raise LHDNDuplicateError(
+                _safe_json_dump(body),
+                retry_after_seconds=_parse_retry_after(response),
+            )
+        if code == "OperationPeriodOver":
+            raise LHDNCancellationWindowError(_safe_json_dump(body))
+        # Generic schema / business rule failure.
+        raise LHDNValidationError(_safe_json_dump(body))
     if response.status_code >= 500:
         raise LHDNError(f"LHDN server error: HTTP {response.status_code}")
     if response.status_code != 202:
@@ -264,6 +316,77 @@ def submit_documents(
         )
 
     return response.json()
+
+
+# Per LHDN integration spec §4.1.
+MAX_DOCUMENTS_PER_SUBMISSION = 100
+MAX_TOTAL_SUBMISSION_BYTES = 5 * 1024 * 1024  # 5 MB
+MAX_PER_DOCUMENT_BYTES = 300 * 1024  # 300 KB
+
+
+def _enforce_batch_limits(documents: list[dict[str, Any]]) -> None:
+    if len(documents) > MAX_DOCUMENTS_PER_SUBMISSION:
+        raise LHDNError(
+            f"Batch too large: {len(documents)} documents > "
+            f"{MAX_DOCUMENTS_PER_SUBMISSION} max. Split into smaller batches."
+        )
+    total = 0
+    for idx, doc in enumerate(documents):
+        # The envelope's ``document`` field is the base64 payload —
+        # what LHDN actually counts toward the 300 KB limit.
+        encoded = doc.get("document", "")
+        size = len(encoded)
+        if size > MAX_PER_DOCUMENT_BYTES:
+            raise LHDNError(
+                f"Document #{idx} is {size} bytes (post-base64) > "
+                f"{MAX_PER_DOCUMENT_BYTES} max."
+            )
+        total += size
+    if total > MAX_TOTAL_SUBMISSION_BYTES:
+        raise LHDNError(
+            f"Submission total {total} bytes > "
+            f"{MAX_TOTAL_SUBMISSION_BYTES} max. Split the batch."
+        )
+
+
+def _parse_retry_after(response: httpx.Response) -> int:
+    """Read the Retry-After header. Returns -1 if absent / malformed."""
+    raw = response.headers.get("Retry-After", "").strip()
+    if not raw:
+        return -1
+    try:
+        return int(raw)
+    except ValueError:
+        # The HTTP spec also allows an HTTP-date in Retry-After. We
+        # don't see that format from LHDN today; if we ever do, parse
+        # it here. For now, treating an unrecognized format as "no
+        # hint" + falling back to the worker's standard backoff is
+        # safe + simple.
+        return -1
+
+
+def _safe_json(response: httpx.Response) -> Any:
+    try:
+        return response.json()
+    except (json.JSONDecodeError, ValueError):
+        return {"raw": response.text[:512]}
+
+
+def _extract_error_code(body: Any) -> str:
+    """Pull the LHDN error code out of an error response body.
+
+    LHDN returns either ``{"code": "...", "message": "..."}`` or a
+    nested envelope ``{"error": {"code": "...", ...}}``. Be tolerant
+    of both shapes.
+    """
+    if not isinstance(body, dict):
+        return ""
+    if isinstance(body.get("error"), dict):
+        code = body["error"].get("code")
+        if code:
+            return str(code)
+    code = body.get("code") or body.get("errorCode")
+    return str(code) if code else ""
 
 
 def encode_for_submission(
@@ -304,42 +427,111 @@ def get_submission_status(
         creds.base_url + "/",
         f"api/v1.0/documentsubmissions/{submission_uid}",
     )
+    return _authed_get(creds=creds, url=url, what="submission")
+
+
+def get_document_raw(
+    *, creds: LHDNCredentials, document_uuid: str
+) -> dict[str, Any]:
+    """Fetch a validated document (per spec §4.4: ``/raw``).
+
+    Returns the document body wrapped in LHDN's envelope. The
+    ``longId`` field is the slug used to construct the public QR /
+    verification URL on the portal hostname:
+    ``{portal_url}/{uuid}/share/{longId}``.
+    """
+    url = urljoin(
+        creds.base_url + "/",
+        f"api/v1.0/documents/{document_uuid}/raw",
+    )
+    return _authed_get(creds=creds, url=url, what="document")
+
+
+# Back-compat alias — Slice 58 callers used get_document_qr.
+get_document_qr = get_document_raw
+
+
+def cancel_document(
+    *,
+    creds: LHDNCredentials,
+    document_uuid: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Cancel a validated document within the 72-hour window.
+
+    Per spec §4.3, the endpoint is ``PUT /api/v1.0/documents/state/
+    {uuid}/state`` with body ``{"status": "cancelled", "reason": "..."}``.
+    LHDN's 400 ``OperationPeriodOver`` surfaces as
+    ``LHDNCancellationWindowError`` so the caller can redirect the
+    operator to issue a credit note instead.
+    """
+    if not reason or not reason.strip():
+        raise LHDNError("Cancellation reason is required.")
+    url = urljoin(
+        creds.base_url + "/",
+        f"api/v1.0/documents/state/{document_uuid}/state",
+    )
     token = get_access_token(creds)
     try:
-        response = httpx.get(
+        response = httpx.put(
             url,
+            json={"status": "cancelled", "reason": reason.strip()[:300]},
             headers={
                 "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
                 "Accept": "application/json",
             },
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as exc:
         raise LHDNError(
-            f"LHDN status request failed: {type(exc).__name__}"
+            f"LHDN cancel request failed: {type(exc).__name__}"
         ) from exc
 
     if response.status_code == 401:
         raise LHDNAuthError("LHDN rejected the bearer token.")
     if response.status_code == 404:
-        raise LHDNNotFoundError(
-            f"Submission {submission_uid} not found on LHDN."
+        raise LHDNNotFoundError(f"Document {document_uuid} not found.")
+    if response.status_code == 429:
+        raise LHDNRateLimitError(
+            "LHDN rate limit exceeded.",
+            retry_after_seconds=_parse_retry_after(response),
         )
-    if response.status_code != 200:
+    if response.status_code in (400, 422):
+        body = _safe_json(response)
+        code = _extract_error_code(body)
+        if code == "OperationPeriodOver":
+            raise LHDNCancellationWindowError(_safe_json_dump(body))
+        raise LHDNValidationError(_safe_json_dump(body))
+    if response.status_code >= 500:
+        raise LHDNError(f"LHDN server error: HTTP {response.status_code}")
+    if response.status_code not in (200, 204):
         raise LHDNError(
-            f"Unexpected LHDN response: HTTP {response.status_code}"
+            f"Unexpected LHDN cancel response: HTTP {response.status_code}"
         )
 
-    return response.json()
+    return _safe_json(response) or {"status": "cancelled"}
 
 
-def get_document_qr(
-    *, creds: LHDNCredentials, document_uuid: str
-) -> dict[str, Any]:
-    """Fetch a validated document's metadata (carries the QR URL)."""
+def validate_tin(
+    *, creds: LHDNCredentials, tin: str
+) -> bool:
+    """Check whether LHDN recognizes a TIN (per spec §4.5).
+
+    Per LHDN docs, the response body is empty + the status code
+    distinguishes the outcome. Used by the customer-master enrich
+    path before submission to catch typo'd buyer TINs early.
+
+    Returns ``True`` if LHDN accepts the TIN, ``False`` if it
+    rejects it. Raises ``LHDNError`` for connectivity / auth
+    failures so the caller can degrade gracefully (treat unknown
+    as "not validated" rather than "invalid").
+    """
+    tin = (tin or "").strip()
+    if not tin:
+        return False
     url = urljoin(
-        creds.base_url + "/",
-        f"api/v1.0/documents/{document_uuid}/details",
+        creds.base_url + "/", f"api/v1.0/taxpayer/validate/{tin}"
     )
     token = get_access_token(creds)
     try:
@@ -353,18 +545,62 @@ def get_document_qr(
         )
     except httpx.HTTPError as exc:
         raise LHDNError(
-            f"LHDN document fetch failed: {type(exc).__name__}"
+            f"LHDN TIN validation failed: {type(exc).__name__}"
+        ) from exc
+
+    if response.status_code == 401:
+        raise LHDNAuthError("LHDN rejected the bearer token.")
+    if response.status_code == 200:
+        return True
+    if response.status_code == 404:
+        return False
+    if response.status_code == 429:
+        raise LHDNRateLimitError(
+            "LHDN rate limit exceeded.",
+            retry_after_seconds=_parse_retry_after(response),
+        )
+    if response.status_code >= 500:
+        raise LHDNError(f"LHDN server error: HTTP {response.status_code}")
+    raise LHDNError(
+        f"Unexpected LHDN TIN-validate response: HTTP {response.status_code}"
+    )
+
+
+def _authed_get(
+    *, creds: LHDNCredentials, url: str, what: str
+) -> dict[str, Any]:
+    """Common GET path: bearer auth + status-code routing.
+
+    Used by ``get_submission_status`` and ``get_document_raw``.
+    Each maps to the same set of typed errors.
+    """
+    token = get_access_token(creds)
+    try:
+        response = httpx.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError as exc:
+        raise LHDNError(
+            f"LHDN {what} request failed: {type(exc).__name__}"
         ) from exc
 
     if response.status_code == 401:
         raise LHDNAuthError("LHDN rejected the bearer token.")
     if response.status_code == 404:
-        raise LHDNNotFoundError(
-            f"Document {document_uuid} not found on LHDN."
+        raise LHDNNotFoundError(f"LHDN {what} not found.")
+    if response.status_code == 429:
+        raise LHDNRateLimitError(
+            "LHDN rate limit exceeded.",
+            retry_after_seconds=_parse_retry_after(response),
         )
     if response.status_code != 200:
         raise LHDNError(
-            f"Unexpected LHDN response: HTTP {response.status_code}"
+            f"Unexpected LHDN {what} response: HTTP {response.status_code}"
         )
 
     return response.json()

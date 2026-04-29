@@ -343,6 +343,125 @@ def poll_invoice_status(invoice_id: uuid.UUID | str) -> dict:
 # --- Helpers ---------------------------------------------------------------
 
 
+def cancel_invoice(
+    *,
+    invoice_id: uuid.UUID | str,
+    reason: str,
+    actor_user_id: uuid.UUID | str,
+) -> dict:
+    """Cancel a validated invoice within LHDN's 72-hour window.
+
+    Per spec §4.3 the window is 72 hours from
+    ``dateTimeValidated``. We stash that in
+    ``Invoice.validation_timestamp`` at submission time. On
+    request:
+
+      - If the invoice has no ``lhdn_uuid``, it never reached
+        LHDN — nothing to cancel.
+      - If we're past the 72-hour window locally, refuse before
+        calling LHDN (saves a round trip + gives the customer a
+        clear "use a credit note instead" message).
+      - Otherwise call LHDN's cancel endpoint. On their
+        ``OperationPeriodOver`` response, surface the same
+        message — our local clock might disagree with LHDN's
+        validated-at timestamp by seconds.
+
+    On success: invoice → ``Status.CANCELLED`` +
+    ``cancellation_timestamp`` set + audit
+    ``submission.cancel.accepted``.
+    """
+    from datetime import timedelta
+
+    invoice = _get_invoice(invoice_id)
+
+    if not invoice.lhdn_uuid:
+        return {
+            "ok": False,
+            "reason": "Invoice has not been submitted to LHDN.",
+        }
+
+    if not reason or not reason.strip():
+        return {
+            "ok": False,
+            "reason": "A cancellation reason is required by LHDN.",
+        }
+
+    # Local-clock 72-hour gate. We compare against
+    # validation_timestamp (when LHDN accepted the submission).
+    if invoice.validation_timestamp is not None:
+        elapsed = timezone.now() - invoice.validation_timestamp
+        if elapsed > timedelta(hours=72):
+            return {
+                "ok": False,
+                "reason": (
+                    "Cancellation window expired (72 hours). "
+                    "Issue a credit note instead."
+                ),
+                "code": "operation_period_over_local",
+            }
+
+    try:
+        creds = lhdn_client.credentials_for_org(
+            organization_id=invoice.organization_id
+        )
+    except lhdn_client.LHDNError as exc:
+        return {"ok": False, "reason": str(exc)}
+
+    try:
+        lhdn_client.cancel_document(
+            creds=creds,
+            document_uuid=invoice.lhdn_uuid,
+            reason=reason.strip(),
+        )
+    except lhdn_client.LHDNCancellationWindowError:
+        return {
+            "ok": False,
+            "reason": (
+                "LHDN reports the cancellation window has expired. "
+                "Issue a credit note instead."
+            ),
+            "code": "operation_period_over",
+        }
+    except lhdn_client.LHDNNotFoundError:
+        return {
+            "ok": False,
+            "reason": "LHDN no longer recognises this document UUID.",
+        }
+    except lhdn_client.LHDNError as exc:
+        _audit_failure(
+            invoice,
+            action="submission.cancel.failed",
+            reason=f"{type(exc).__name__}: {exc!s}"[:255],
+        )
+        return {"ok": False, "reason": str(exc)}
+
+    invoice.status = Invoice.Status.CANCELLED
+    invoice.cancellation_timestamp = timezone.now()
+    invoice.save(
+        update_fields=["status", "cancellation_timestamp", "updated_at"]
+    )
+
+    record_event(
+        action_type="submission.cancel.accepted",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=str(invoice.organization_id),
+        affected_entity_type="Invoice",
+        affected_entity_id=str(invoice.id),
+        payload={
+            "lhdn_uuid": invoice.lhdn_uuid,
+            "environment": creds.environment,
+            "reason": reason.strip()[:255],
+        },
+    )
+
+    return {
+        "ok": True,
+        "lhdn_uuid": invoice.lhdn_uuid,
+        "cancelled_at": invoice.cancellation_timestamp.isoformat(),
+    }
+
+
 def _get_invoice(invoice_id) -> Invoice:
     from apps.identity.tenancy import super_admin_context
 

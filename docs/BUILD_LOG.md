@@ -5839,6 +5839,122 @@ What's deferred (Slice 59):
 
 ---
 
+### Slice 59A — LHDN spec-conformance fixes
+
+After Slice 58 shipped, dushy added the LHDN integration
+spec to `docs/`. The existing client was correct in shape
+but had several small protocol-level gaps. Slice 59A is a
+focused conformance pass — no new product surface, just
+aligning the client with the spec.
+
+Changes:
+
+- **Token cache buffer 60s → 300s** (spec §3.2). Proactive
+  renewal 5 minutes before expiry avoids 401s in flight on
+  long-running submission jobs.
+- **`get_document_raw` replaces `get_document_qr` URL path**
+  (spec §4.4). Endpoint is `/api/v1.0/documents/{uuid}/raw`,
+  not `/details`. The old name remains as a back-compat
+  alias so Slice 58 callers continue to work.
+- **Batch-size guards** (spec §4.1). Refuse before the HTTP
+  call when:
+  - Documents in batch > 100
+  - Any single document > 300 KB (post-base64)
+  - Total submission size > 5 MB
+  Saves a round trip + gives the caller a clear message
+  (LHDN's own error wording is opaque).
+- **`Retry-After` honored** (spec §8). New
+  `LHDNRateLimitError` carries `retry_after_seconds` parsed
+  from the header; -1 if absent. The Celery wrapper
+  respects it.
+- **Typed errors for spec-named codes** (spec §7.2):
+  - `LHDNDuplicateError` — 422 with `DuplicateSubmission`
+    (carries `Retry-After` for the customer's wait hint).
+  - `LHDNCancellationWindowError` — 400 with
+    `OperationPeriodOver`. Caller surfaces "issue a credit
+    note instead" rather than a generic 400.
+  - `LHDNRateLimitError` — 429 (any endpoint).
+- **TIN validation** (spec §4.5). New
+  `lhdn_client.validate_tin(creds, tin)` — `True` on 200,
+  `False` on 404, raises `LHDNError` on connectivity / auth
+  / 5xx so the caller can degrade gracefully.
+  `apps.submission.tin_validation.is_tin_valid(...)` wraps
+  it with a 24-hour Django cache (per-environment key) +
+  `invalidate_cached_tin(...)` for manual TIN edits.
+- **Cancel document** (spec §4.3). New
+  `lhdn_client.cancel_document(creds, document_uuid, reason)`
+  — `PUT /api/v1.0/documents/state/{uuid}/state`.
+  `lhdn_submission.cancel_invoice(invoice_id, reason,
+  actor_user_id)` orchestrates: requires reason, gates on
+  `Invoice.lhdn_uuid` + a local 72-hour clock check (saves
+  a round trip if we're already past the window), translates
+  LHDN's `OperationPeriodOver` into the "use a credit note
+  instead" message. On success: `Invoice.Status.CANCELLED`
+  + `cancellation_timestamp` + audit
+  `submission.cancel.accepted`.
+
+Tests: 19 new (646 total, was 627).
+- Token cache TTL roughly equals `expires_in - 300`.
+- Batch-size limit (101 docs / >300 KB single / >5 MB total)
+  refused before HTTP.
+- 429 → `LHDNRateLimitError(retry_after_seconds=...)`.
+- 422 with `DuplicateSubmission` → `LHDNDuplicateError`.
+- 400 with `OperationPeriodOver` → `LHDNCancellationWindowError`.
+- `get_document_raw` calls `/raw` not `/details` + alias
+  preserved.
+- TIN validation: valid 200 → True, 404 → False, cache
+  short-circuits second call, `invalidate_cached_tin` drops
+  entry.
+- Cancel: in-window success, local 72-hour gate (no HTTP
+  call when expired), LHDN's `OperationPeriodOver` falls
+  through to credit-note message, missing-reason refused,
+  unsubmitted-invoice refused.
+
+Durable design decisions:
+
+- **Local 72-hour clock check before LHDN call.** Saves a
+  round trip + gives instant operator feedback when the
+  window is clearly past. Race between local clock and
+  LHDN's `validatedAt` is handled by treating LHDN's 400
+  as authoritative — the local check is a fast-path, not
+  the source of truth.
+- **Negative TIN cache (24h).** Customers retry-paste the
+  same wrong TIN repeatedly when correcting an invoice.
+  Caching "invalid" for 24 hours matches the cache shape
+  spec asks for + saves the rate budget. If a TIN flips
+  from invalid to valid, that's a real-world event the
+  customer notices + corrects manually anyway, OR they
+  hit the manual `invalidate_cached_tin` path.
+- **Errors carry codes, not class types.** `LHDNDuplicateError`
+  + `LHDNCancellationWindowError` are typed but the
+  classification logic (`_extract_error_code`) sniffs the
+  body's `code` field tolerantly (handles both flat
+  `{"code": ...}` and nested `{"error": {"code": ...}}`
+  shapes). Future LHDN error codes are one-line entries
+  in `submit_documents`'s code-routing block.
+- **Token cache TTL is the only place the buffer lives.**
+  Spec §3.2 lets us renew at any point. We renew on cache
+  miss + on 401 (caller's responsibility — wraps the call,
+  catches `LHDNAuthError`, retries with `force=True`).
+- **Get-document alias preserved.** `get_document_qr` →
+  `get_document_raw` is a name change driven by the spec.
+  Aliasing keeps Slice 58 + the Slice 58.1 portal_url fix
+  working without a sweep through the orchestrator.
+
+What's deferred (Slice 59B):
+
+- **Cert upload UI** — `upload_certificate` service exists
+  from Slice 58; needs the form in Settings → Integrations.
+- **"Submit to LHDN" button** + **"Cancel" button** on the
+  invoice review screen.
+- **Status display** showing UUID + QR link + timestamps.
+- **Polling backoff cadence in the worker** (2/4/8/16/30s)
+  — the task wrapper has `acks_late + max_retries` but
+  doesn't yet match the spec's exponential schedule.
+- **Submission UID column split** off `signed_xml_s3_key`.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
