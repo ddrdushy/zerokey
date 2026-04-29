@@ -7720,6 +7720,82 @@ hand-edit `SystemSetting` from `/django-admin/`):
 
 ---
 
+### Slice 83 — Items page (closes the master-data lock loop)
+
+Slice 81 shipped lock icons on the Customer detail page; the
+Item detail page had been on the punch list ever since. Slice
+83 ships the symmetric Items surface: list page, detail-and-edit
+page, provenance pills, lock icons. Same `MasterFieldLock`
+plumbing — just `master_type=item` instead of `customer`.
+
+Backend:
+
+- **`ItemMasterSerializer`** in `apps/enrichment/serializers.py`
+  — mirrors `CustomerMasterSerializer.locked_fields`, queries
+  `MasterFieldLock` filtered to `MasterType.ITEM`.
+- **Service helpers** `list_item_masters` / `get_item_master` /
+  `update_item_master` in `apps/enrichment/services.py`. The
+  update path mirrors `update_customer_master`: editable-field
+  allowlist (`EDITABLE_ITEM_FIELDS`), rename files the previous
+  canonical as an alias, manual provenance written for every
+  changed field, single `item_master.updated` audit event with
+  changed_field NAMES only.
+- **Views** `list_items` / `item_detail` (GET + PATCH) added to
+  `apps/enrichment/views.py`. Cross-tenant access returns 404 to
+  preserve tenant opacity.
+- **URLs** mounted at `/api/v1/items/` (separate URLconf module
+  `apps.enrichment.items_urls` so the existing `/customers/`
+  mount doesn't have to be restructured).
+
+Frontend:
+
+- **`/dashboard/items/`** list page — most-used items first,
+  showing canonical name + alias hint + the four default codes
+  + usage_count + last_used_at. Empty state speaks in
+  opportunity ("Drop your first invoice").
+- **`/dashboard/items/[id]/`** detail page — same draft +
+  SaveBar + lock-toggle pattern as the customer detail page.
+  Identity section (canonical name) + Defaults section (MSIC,
+  classification, tax type, UOM, unit price). Each field
+  carries its provenance pill + lock icon; toggling the lock
+  hits `POST /api/v1/connectors/locks/{,/unlock/}` with
+  `master_type=item`.
+- **AppShell nav** — added "Items" with the `Package` icon,
+  next to "Customers" in the Workflow group.
+- **API client** — `Item` type + `listItems` / `getItem` /
+  `updateItem` methods in `frontend/src/lib/api.ts`.
+
+Tests: 14 new backend (list / detail / locked_fields x2 / patch
+edit + audit / rename + alias filing / non-editable rejection /
+blank canonical-name rejection / no-op / unit-price clear / 404
+on cross-tenant). 926 total, was 912.
+
+Durable design decisions:
+
+- **Separate URLconf, not a re-mount.** `/api/v1/customers/`
+  has been the enrichment URL prefix since Phase 1. Renaming
+  it is a breaking API change for no benefit; mounting a
+  second `items_urls` module is one line and keeps existing
+  paths stable.
+- **`update_item_master` mirrors the customer path.** The two
+  master types are sibling structures — same provenance
+  semantics, same alias-on-rename rule, same audit shape. The
+  duplication is tiny + each path is read in isolation; an
+  abstraction would just couple them without saving lines.
+- **Unit price clears via `null` on the wire, not empty
+  string.** Decimal columns reject `""`; the frontend converts
+  the empty editor input to `null` before PATCHing. The
+  backend service then maps `None`/`""` → `None` so either
+  shape works for resilience.
+- **No invoices-from-this-item view (yet).** Customer detail
+  has it because buyers are the natural pivot for "what have
+  we sent to them?". Items don't have a comparable user
+  question — they're keys for auto-fill, not entities you
+  manage. If demand surfaces we'll add it; for now the
+  invoice-line-from-this-item view would be cluttered noise.
+
+---
+
 ## Future direction: OCR-lane quality lifts (planned)
 
 Slice 54 lands the selector + a regex floor structurer for
@@ -7969,6 +8045,9 @@ state isn't confused):
 - ~~**WhatsApp ingestion channel**~~ — Slice 82. Per-tenant
   `phone_number_id` mapping; Meta Cloud API webhook with
   signature verification + injectable media fetcher.
+- ~~**Items page with provenance + locks**~~ — Slice 83.
+  Symmetric to the customer detail editor: list page, detail
+  + PATCH, lock toggles, alias filing on rename.
 - ~~**Billing + Stripe**~~ — Slice 63 + Slice 65 (Subscribe
   UI). FPX is part of Stripe checkout; nothing else needed.
 - ~~**PII field-level encryption**~~ — covered by Slice 55's

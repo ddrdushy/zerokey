@@ -416,9 +416,7 @@ class TestEmailForwardWebhook:
 
 @pytest.mark.django_db
 class TestRotateInboxToken:
-    def test_service_replaces_token_and_invalidates_old(
-        self, org_with_inbox
-    ) -> None:
+    def test_service_replaces_token_and_invalidates_old(self, org_with_inbox) -> None:
         org, original_token = org_with_inbox
         new_address = email_forward.rotate_inbox_token(
             organization_id=org.id,
@@ -441,9 +439,7 @@ class TestRotateInboxToken:
         resolved = email_forward.resolve_tenant_from_address(new_address)
         assert str(resolved) == str(org.id)
 
-    def test_audit_event_records_prefixes_only(
-        self, org_with_inbox
-    ) -> None:
+    def test_audit_event_records_prefixes_only(self, org_with_inbox) -> None:
         from apps.audit.models import AuditEvent
 
         org, original_token = org_with_inbox
@@ -453,9 +449,7 @@ class TestRotateInboxToken:
             actor_user_id=actor,
             reason="quarterly rotation",
         )
-        ev = AuditEvent.objects.filter(
-            action_type="ingestion.inbox_token.rotated"
-        ).first()
+        ev = AuditEvent.objects.filter(action_type="ingestion.inbox_token.rotated").first()
         assert ev is not None
         assert ev.payload["from_token_prefix"] == original_token[:4]
         # Full token never appears in the payload.

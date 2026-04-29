@@ -38,6 +38,7 @@ urlpatterns = [
     path("api/v1/ingestion/", include("apps.ingestion.urls")),
     path("api/v1/invoices/", include("apps.submission.urls")),
     path("api/v1/customers/", include("apps.enrichment.urls")),
+    path("api/v1/items/", include("apps.enrichment.items_urls")),
     path("api/v1/engines/", include("apps.extraction.urls")),
     path("api/v1/inbox/", include("apps.submission.inbox_urls")),
     path("api/v1/audit/", include("apps.audit.urls")),

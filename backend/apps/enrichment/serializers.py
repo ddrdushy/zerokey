@@ -1,4 +1,4 @@
-"""DRF serializers for the enrichment context — the Customers UI surface."""
+"""DRF serializers for the enrichment context — Customers + Items UI surfaces."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from rest_framework import serializers
 
 from apps.submission.models import Invoice
 
-from .models import CustomerMaster
+from .models import CustomerMaster, ItemMaster
 
 
 class CustomerMasterSerializer(serializers.ModelSerializer):
@@ -54,6 +54,46 @@ class CustomerMasterSerializer(serializers.ModelSerializer):
             MasterFieldLock.objects.filter(
                 organization_id=obj.organization_id,
                 master_type=MasterType.CUSTOMER,
+                master_id=obj.id,
+            ).values_list("field_name", flat=True)
+        )
+
+
+class ItemMasterSerializer(serializers.ModelSerializer):
+    # Slice 83 — symmetric to CustomerMasterSerializer.locked_fields:
+    # the Items UI renders a lock icon on each field; the click
+    # toggles MasterFieldLock(master_type=item, master_id=row).
+    locked_fields = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ItemMaster
+        fields = [
+            "id",
+            "canonical_name",
+            "aliases",
+            "default_msic_code",
+            "default_classification_code",
+            "default_tax_type_code",
+            "default_unit_of_measurement",
+            "default_unit_price_excl_tax",
+            "field_provenance",
+            "locked_fields",
+            "usage_count",
+            "last_used_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_locked_fields(self, obj: ItemMaster) -> list[str]:
+        # Lazy import for the same apps-loading-order reason as
+        # CustomerMasterSerializer.get_locked_fields.
+        from apps.connectors.models import MasterFieldLock, MasterType
+
+        return list(
+            MasterFieldLock.objects.filter(
+                organization_id=obj.organization_id,
+                master_type=MasterType.ITEM,
                 master_id=obj.id,
             ).values_list("field_name", flat=True)
         )

@@ -450,6 +450,112 @@ def list_invoices_for_customer_master(
     return list(qs)
 
 
+# --- ItemMaster read + edit surface (Slice 83) ----------------------------
+
+
+# Editable fields on ItemMaster. Defaults the user can correct; aliases /
+# usage_count / last_used_at remain system-managed (auto-managed by the
+# enrichment matcher and the line-item learner).
+EDITABLE_ITEM_FIELDS: frozenset[str] = frozenset(
+    {
+        "canonical_name",
+        "default_msic_code",
+        "default_classification_code",
+        "default_tax_type_code",
+        "default_unit_of_measurement",
+        "default_unit_price_excl_tax",
+    }
+)
+
+
+class ItemUpdateError(Exception):
+    """Editor-facing failure for ItemMaster edits."""
+
+
+def list_item_masters(*, organization_id: UUID | str, limit: int | None = 200) -> list[ItemMaster]:
+    """Most-used items first. Tenant-scoped — RLS belt-and-suspenders."""
+    qs = ItemMaster.objects.filter(organization_id=organization_id).order_by(
+        "-usage_count", "canonical_name"
+    )
+    if limit is not None:
+        qs = qs[:limit]
+    return list(qs)
+
+
+def get_item_master(*, organization_id: UUID | str, item_id: UUID | str) -> ItemMaster | None:
+    return ItemMaster.objects.filter(organization_id=organization_id, id=item_id).first()
+
+
+@transaction.atomic
+def update_item_master(
+    *,
+    organization_id: UUID | str,
+    item_id: UUID | str,
+    updates: dict,
+    actor_user_id: UUID | str,
+) -> ItemMaster:
+    """Apply staff edits to an ItemMaster row, audit-logged.
+
+    Renaming the master files the previous canonical name as an alias,
+    matching the customer-master rename path. The audit event records
+    field names only (values can be commercially sensitive).
+    """
+    unknown = set(updates.keys()) - EDITABLE_ITEM_FIELDS
+    if unknown:
+        raise ItemUpdateError(
+            f"Cannot edit non-editable fields: {sorted(unknown)}. "
+            f"Editable: {sorted(EDITABLE_ITEM_FIELDS)}"
+        )
+
+    master = ItemMaster.objects.get(organization_id=organization_id, id=item_id)
+
+    changed: list[str] = []
+    rename_old_name: str | None = None
+    for field_name, raw_value in updates.items():
+        if field_name == "default_unit_price_excl_tax":
+            new_value = raw_value if raw_value not in ("", None) else None
+        else:
+            new_value = "" if raw_value is None else str(raw_value)
+        if field_name == "canonical_name" and not str(new_value).strip():
+            raise ItemUpdateError("canonical_name cannot be empty.")
+        previous = getattr(master, field_name)
+        if previous == new_value:
+            continue
+        if field_name == "canonical_name":
+            rename_old_name = previous or ""
+        setattr(master, field_name, new_value)
+        changed.append(field_name)
+
+    if not changed:
+        return master
+
+    if rename_old_name and rename_old_name not in master.aliases:
+        master.aliases = [*master.aliases, rename_old_name]
+
+    edited_at_iso = timezone.now().isoformat()
+    provenance = dict(master.field_provenance or {})
+    for fname in changed:
+        provenance[fname] = {
+            "source": "manual",
+            "entered_at": edited_at_iso,
+            "edited_by": str(actor_user_id),
+        }
+    master.field_provenance = provenance
+
+    master.save()
+
+    record_event(
+        action_type="item_master.updated",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=str(organization_id),
+        affected_entity_type="ItemMaster",
+        affected_entity_id=str(master.id),
+        payload={"changed_fields": sorted(changed)},
+    )
+    return master
+
+
 @transaction.atomic
 def update_customer_master(
     *,

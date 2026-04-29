@@ -614,6 +614,23 @@ export type Customer = {
   updated_at: string;
 };
 
+export type Item = {
+  id: string;
+  canonical_name: string;
+  aliases: string[];
+  default_msic_code: string;
+  default_classification_code: string;
+  default_tax_type_code: string;
+  default_unit_of_measurement: string;
+  default_unit_price_excl_tax: string | null;
+  field_provenance: Record<string, FieldProvenanceEntry>;
+  locked_fields: string[];
+  usage_count: number;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type InboxItem = {
   id: string;
   reason:
@@ -1293,6 +1310,14 @@ export const api = {
     request<{ results: CustomerInvoiceSummary[] }>(`/customers/${id}/invoices/`).then(
       (r) => r.results,
     ),
+  // Slice 83 — items master surface, symmetric to customers.
+  listItems: () => request<{ results: Item[] }>("/items/").then((r) => r.results),
+  getItem: (id: string) => request<Item>(`/items/${id}/`),
+  updateItem: (id: string, updates: Partial<Record<keyof Item, string | null>>) =>
+    request<Item>(`/items/${id}/`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    }),
   uploadFile,
   // Connectors (Slices 73–77)
   listConnectorConfigs: () =>
