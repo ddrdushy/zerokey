@@ -8,6 +8,9 @@ Phase 1/2 surface:
 
 from __future__ import annotations
 
+import base64
+import binascii
+
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser
@@ -103,3 +106,124 @@ def job_detail(request: Request, job_id: str) -> Response:
     return Response(
         IngestionJobSerializer(job, context={"request": request, "include_download_url": True}).data
     )
+
+
+# --- Slice 64: Email-forward ingestion ----------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def inbox_address_view(request: Request) -> Response:
+    """Return the per-tenant magic email-forward address.
+
+    Generates the inbox token on first call so the customer
+    immediately gets a working address without an explicit
+    "enable email forwarding" gesture.
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    from apps.identity import services as identity_services
+
+    if not identity_services.can_user_act_for_organization(
+        request.user, organization_id
+    ):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    from . import email_forward
+
+    address = email_forward.inbox_address_for_org(organization_id)
+    return Response({"address": address})
+
+
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework.decorators import authentication_classes
+
+
+@csrf_exempt
+@api_view(["POST"])
+@permission_classes([])
+@authentication_classes([])
+def email_forward_webhook_view(request: Request) -> Response:
+    """Inbound email webhook receiver.
+
+    Provider-agnostic: accepts a JSON body with the parsed email +
+    attachments. Today we accept the minimal shape a Mailgun /
+    SendGrid / SES + Lambda integration produces. Bearer-token auth
+    via the ``X-ZeroKey-Inbound-Token`` header (operator-managed
+    in SystemSetting('email_inbound')).
+
+    Body:
+        {
+          "to": "invoices+abc123@inbox.zerokey.symprio.com",
+          "from": "billing@vendor.com",
+          "subject": "Invoice INV-001 attached",
+          "message_id": "<msgid@vendor.com>",
+          "attachments": [
+            {
+              "filename": "invoice.pdf",
+              "mime_type": "application/pdf",
+              "body_b64": "<base64>"
+            }, ...
+          ]
+        }
+    """
+    # Auth: shared bearer token, configured in SystemSetting.
+    from apps.administration.services import system_setting
+
+    expected_token = system_setting(
+        namespace="email_inbound",
+        key="webhook_token",
+        env_fallback="EMAIL_INBOUND_WEBHOOK_TOKEN",
+    )
+    presented = request.headers.get("X-ZeroKey-Inbound-Token", "")
+    if not expected_token or not presented or presented != expected_token:
+        return Response(
+            {"detail": "Unauthorized."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    body = request.data or {}
+    from . import email_forward
+
+    try:
+        attachments = []
+        for raw in body.get("attachments") or []:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                decoded = base64.b64decode(raw.get("body_b64") or "")
+            except (binascii.Error, ValueError):
+                continue
+            attachments.append(
+                email_forward.InboundAttachment(
+                    filename=str(raw.get("filename") or "attachment"),
+                    mime_type=str(raw.get("mime_type") or "application/octet-stream"),
+                    body=decoded,
+                )
+            )
+        email = email_forward.InboundEmail(
+            to=str(body.get("to") or "").strip(),
+            sender=str(body.get("from") or "").strip(),
+            subject=str(body.get("subject") or "")[:255],
+            message_id=str(body.get("message_id") or "")[:255],
+            attachments=attachments,
+        )
+        result = email_forward.process_inbound_email(email)
+    except email_forward.InboxNotFoundError as exc:
+        # 404 so the provider can mark the bounce / dead-letter the
+        # forward — it'll never resolve by retrying.
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND
+        )
+    except email_forward.EmailForwardError as exc:
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+    return Response(result)

@@ -986,6 +986,24 @@ SYSTEM_SETTING_SCHEMAS: list[dict[str, Any]] = [
         ],
     },
     {
+        "namespace": "email_inbound",
+        "label": "Email-forward inbound",
+        "description": (
+            "Inbound webhook for the email-forward ingestion channel "
+            "(Slice 64). The email provider (SES + Lambda, Mailgun, "
+            "SendGrid Inbound Parse) POSTs parsed messages to "
+            "/api/v1/ingestion/inbox/email-forward/. The shared bearer "
+            "token is the auth — set it here AND in the provider config."
+        ),
+        "fields": [
+            {
+                "key": "webhook_token",
+                "label": "Inbound webhook bearer token",
+                "kind": "credential",
+            },
+        ],
+    },
+    {
         "namespace": "branding",
         "label": "Branding & support",
         "description": (

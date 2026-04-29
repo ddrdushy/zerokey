@@ -174,6 +174,15 @@ class Organization(TimestampedModel):
     language_preference = models.CharField(max_length=10, default="en-MY")
     timezone = models.CharField(max_length=64, default="Asia/Kuala_Lumpur")
 
+    # Per-tenant inbox token (Slice 64) — the slug embedded in the
+    # magic email-forward address ``invoices+<token>@inbox.zerokey…``.
+    # Generated on first email-forward request; rotatable from
+    # Settings (rotation invalidates the old token immediately).
+    # 16-char URL-safe slug; unique per organization.
+    inbox_token = models.CharField(
+        max_length=32, blank=True, default="", db_index=True
+    )
+
     # Per-tenant extraction lane (Slice 54). Default is the AI lane —
     # accuracy first, customer can opt down to the cost-saver. The
     # extraction pipeline reads this at run_extraction() and branches
