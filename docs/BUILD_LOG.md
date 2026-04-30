@@ -7720,6 +7720,242 @@ hand-edit `SystemSetting` from `/django-admin/`):
 
 ---
 
+### Slice 89 — TOTP 2FA: enrollment, login challenge, recovery codes
+
+Domain 13 P0. Slices 1–88 carried a placeholder
+`User.two_factor_enabled` bool that nothing actually verified;
+Slice 89 turns it into real RFC-6238 TOTP plus single-use
+recovery codes.
+
+Architectural choice: hand-rolled TOTP (~30 lines in
+`apps.identity.totp`) instead of pulling `pyotp` /
+`django-otp`. The HOTP/TOTP primitive is small; the rest of
+the cost (provisioning URI, recovery codes, login flow) lives
+in our auth flow regardless of library. Skipping the dependency
+also lets us tie at-rest encryption to
+`apps.administration.crypto` explicitly — same envelope the
+rest of the platform uses.
+
+Backend:
+
+- **`apps.identity.totp`** — `_hotp(secret, counter)`,
+  `verify_code(*, secret_b32, code, at=None)` with ±1 step
+  (90s) drift tolerance, `provisioning_uri(...)` emitting an
+  `otpauth://totp/...` URI compatible with Google
+  Authenticator / Authy / 1Password / Microsoft Authenticator /
+  Aegis, `generate_secret_encrypted()` returning
+  `(plain_b32, encrypted_form)`, `generate_recovery_codes()`
+  minting 8 × 16-hex codes, `hash_recovery_code(code)`
+  HMAC-SHA-256 keyed by `SECRET_KEY` (pepper pattern), and
+  `verify_and_consume_recovery_code(*, user, code)` that
+  removes the matching hash on success.
+- **User model** — `totp_secret_encrypted` (envelope-encrypted
+  base32) + `totp_recovery_hashes` (JSON list of HMAC digests)
+  + the existing `two_factor_enabled` bool. Migration 0017.
+- **Enroll / confirm / disable** — `POST /me/2fa/enroll/`
+  mints a fresh secret + provisioning URI but leaves
+  `two_factor_enabled=False` until `POST /me/2fa/confirm/`
+  verifies a real code (lockout-proof). Confirm also returns
+  the 8 plaintext recovery codes (shown once). `POST
+  /me/2fa/disable/` requires a current TOTP **or** recovery
+  code; cannot just toggle the bool.
+- **Login challenge** — `POST /identity/login/` returns
+  `{needs_2fa: true}` (and *defers* `django.contrib.auth.login`)
+  when 2FA is enabled. The session carries a short-lived
+  pending-user marker; `POST /identity/login/2fa/` verifies
+  the code, clears the marker, and completes the login.
+  Recovery codes are accepted on this path and consumed.
+
+Frontend:
+
+- **`/sign-in` page** — flips into challenge mode on
+  `needs_2fa`. Authenticator-code input is `autoComplete="one-time-code"`
+  + `inputMode="numeric"` so iOS/Android keyboards do the
+  right thing.
+- **API client** (`@/lib/api`) — `login` returns a discriminated
+  union (`needs_2fa` branch vs `is_staff` branch);
+  `loginTwoFactor`, `twoFactorEnroll`, `twoFactorConfirm`,
+  `twoFactorDisable` round it out.
+
+Tests: 18 new (RFC-4226 known vectors at counter 0–9, drift
+tolerance, separator stripping, recovery-code consumption,
+challenge flow with /me/ guard, disable gating). 1001 total,
+was 983.
+
+Durable design decisions:
+
+- **Hand-rolled, no `pyotp`/`django-otp`.** Rationale at top
+  of `apps.identity.totp`. The total surface is ~180 lines
+  and one fewer thing to vendor + audit.
+- **±1 step (90s) tolerance.** Reasonable for slightly-skewed
+  phone clocks; tighter triggers spurious lockouts in field
+  testing.
+- **Recovery codes hashed with HMAC + `SECRET_KEY` pepper.**
+  Same construction as Django password hashing — a database
+  leak alone doesn't permit brute-forcing the (~64-bit) code
+  space.
+- **Confirm is the only path that flips
+  `two_factor_enabled=True`.** Enroll alone never enables 2FA.
+  This means a user who scans the QR but never confirms can't
+  lock themselves out.
+- **Challenge state in the session, not a JWT.** The pending-
+  login marker is a single session key cleared on success or
+  expiry. Server-side state means a stolen browser cookie
+  can't be replayed to skip the challenge from another origin.
+
+What's deferred:
+
+- **Org-level "require 2FA for all members" enforcement
+  policy.** Today 2FA is per-user opt-in. The org-level switch
+  + nag screen for non-compliant members is a follow-up.
+- **WebAuthn / passkey** as a stronger second factor. TOTP is
+  what every customer in market understands; WebAuthn lands
+  when there's clear demand.
+
+---
+
+### Slice 88 — CSV exports: invoices + audit log
+
+Domain 9 P0 + bookkeeper persona ask. Customers need their
+submission stream as CSV for monthly reconciliation against
+their accounting system; auditors need the immutable audit log
+with hash columns hex-encoded so a downstream verifier can
+re-derive chain integrity.
+
+Backend:
+
+- **`apps.submission.exports`** — `stream_invoices_csv(*,
+  organization_id, since, until, status)` and
+  `stream_audit_csv(*, organization_id, since, until,
+  action_type, actor_id)`. Both are generators that yield
+  500-row chunks; the view layer wraps them in
+  `StreamingHttpResponse` so a year of an active customer's
+  audit log doesn't have to buffer in memory.
+- **Pinned column lists.** Invoice export columns:
+  `internal_id`, `invoice_type`, `lhdn_uuid`, `submission_uid`,
+  `status`, `issue_date`, `supplier_tin`, `buyer_tin`,
+  `currency`, `subtotal`, `tax_total`, `grand_total`,
+  `submitted_at`, `validated_at`, `cancelled_at`. Audit
+  export: chain hashes (`previous_hash`, `current_hash`)
+  hex-encoded; payload is a flat JSON dump. The columns are
+  the contract — adding columns later only at the end.
+- **Endpoints**
+  `GET /api/v1/invoices/export.csv` (filters: `since`,
+  `until`, `status`)
+  `GET /api/v1/audit/export.csv` (filters: `since`, `until`,
+  `action_type`, `actor_id`).
+- **Self-audited.** Each export emits a
+  `submission.export.invoices` /
+  `audit.export.events` event with `row_count` + the filter
+  snapshot. Per PRODUCT_REQUIREMENTS Domain 9: "export
+  operations are themselves audit-logged."
+
+Frontend:
+
+- **"Export CSV" anchor** on the invoices list and audit log
+  pages — a plain `<a href>` so the browser handles the
+  streamed download (no JS state, no spinner needed).
+
+Tests: 9 new (cross-tenant isolation, filter behaviour,
+audit-event emission, hash hex encoding round-trip). 983
+total, was 974.
+
+Durable design decisions:
+
+- **Generators + `StreamingHttpResponse`, not buffered
+  responses.** A 50k-row audit log is plausible for a
+  busy mid-market customer; buffering kills the worker.
+- **Hex-encoded hashes, not base64.** Hex is what every
+  ad-hoc verifier script expects; one fewer thing to
+  document. The integrity tool in `apps.audit.integrity`
+  reads the same encoding.
+- **Pinned columns, not introspection-driven.** Generating
+  columns from the model means a future column rename
+  silently breaks downstream pipelines. The export is a
+  contract; adding columns at the end only.
+- **GET, not POST.** Lets bookmarking / curl / spreadsheet
+  data-import URLs work. Filters live in the query string.
+
+---
+
+### Slice 87 — Two-step approval workflow
+
+Domain 7 P1 (Growth-tier and above). Closes the four-eyes
+gap: until now any submitter could push an invoice straight
+to LHDN. Slice 87 lets an org require a second pair of eyes
+before submission, with policy choices that match what
+customers actually asked for in discovery: nothing, every
+invoice, or only above a threshold amount.
+
+Backend:
+
+- **`Organization.approval_policy`** ∈ {`none`, `always`,
+  `threshold`} + `approval_threshold_amount` (decimal).
+  Migration 0016. `none` is the default; behaviour is
+  unchanged for orgs that don't opt in.
+- **`ApprovalRequest`** model — `pending → approved | rejected`,
+  immutable history. Re-requesting after a rejection creates
+  a *fresh* row; old rows stay as audit. Migration 0010.
+- **`apps.submission.approvals`** —
+  `invoice_requires_approval(invoice)` is a pure predicate
+  reading the org policy + threshold; `request_approval` /
+  `approve` / `reject` mutate state and emit audit events.
+  Four-eyes is enforced: the actor cannot approve / reject
+  their own request. Submitters and viewers cannot decide
+  approvals (Owner / Admin / Approver only).
+- **Submit gate** — `POST /invoices/<id>/submit/` checks
+  `invoice_requires_approval` and returns
+  `{needs_approval: true}` when the org demands approval and
+  no active row exists.
+- **Endpoints** —
+  `POST /invoices/<id>/request-approval/`,
+  `POST /invoices/approvals/<id>/approve/`,
+  `POST /invoices/approvals/<id>/reject/`,
+  `GET /invoices/approvals/pending/`.
+
+Frontend:
+
+- **`/dashboard/approvals`** — pending-approval queue.
+  Approve / reject inline; reject prompts for a reason
+  (audit-readable).
+- **AppShell nav** — adds "Approvals" with EN + BM strings.
+- **Review screen** — submit button surfaces `needs_approval`
+  state and routes through the request-approval flow when
+  the org policy demands it.
+
+Tests: 21 new (policy predicates, four-eyes gating, role
+gating, threshold misconfig fail-closed, re-request after
+rejection). 974 total, was 953.
+
+Durable design decisions:
+
+- **`threshold` policy with no amount fails *closed* (requires
+  approval).** A misconfigured org should err on the side of
+  "send it through review", not "skip review." The error
+  surfaces immediately on the next submission attempt.
+- **Approve / reject rows are immutable.** A rejected request
+  isn't reopened — re-requesting creates a new row. Audit
+  readers can reconstruct the full back-and-forth without
+  worrying about a row's history being mutated underneath.
+- **Single-step today, chain-ready schema.** Multi-step
+  approval chains (Scale tier + per-buyer / per-category
+  chains) are deferred. They share this row's structure and
+  can land later as `(chain_id, step_number)` columns
+  without a schema break.
+- **Four-eyes = `requested_by != decided_by`.** Cheap, hard
+  to bypass, doesn't require a separate "approver list" join
+  table. Owner/Admin/Approver scope is enforced separately.
+
+What's deferred:
+
+- **Multi-step approval chains** (per-buyer / per-category /
+  per-amount tiers).
+- **Approval-policy edits in the UI.** Today the policy is
+  set via the API or admin shell; the Settings panel UI
+  comes when an early customer asks.
+
+---
+
 ### Slice 86 — i18n scaffold + Bahasa Malaysia
 
 VISUAL_IDENTITY.md commits the platform to four first-class
@@ -8284,6 +8520,17 @@ state isn't confused):
   side translation layer (`@/lib/i18n`), EN + BM tables
   (~30 high-traffic keys), language switcher in the user
   dropdown, persisted via `PATCH /identity/me/preferences/`.
+- ~~**Two-step approval workflow**~~ — Slice 87. Org-level
+  `approval_policy` ∈ {none, always, threshold} +
+  `ApprovalRequest` rows; submit gate refuses LHDN dispatch
+  until an active approval exists. Four-eyes enforced:
+  requester ≠ decider.
+- ~~**CSV exports (invoices + audit log)**~~ — Slice 88.
+  Streaming generators, hex-encoded chain hashes for the
+  audit export, exports themselves audit-logged.
+- ~~**TOTP 2FA**~~ — Slice 89. Hand-rolled RFC-6238 +
+  recovery codes. Enroll → confirm → enabled flow,
+  challenge on login, recovery-code consumption.
 - ~~**Billing + Stripe**~~ — Slice 63 + Slice 65 (Subscribe
   UI). FPX is part of Stripe checkout; nothing else needed.
 - ~~**PII field-level encryption**~~ — covered by Slice 55's
@@ -8292,25 +8539,31 @@ state isn't confused):
   production. Per-column field-level encryption is still
   open if regulatory pressure warrants it.
 
-Still open (ordered roughly by Phase 4–5 priority):
+Still open (ordered roughly by Phase 5–6 priority):
 
-- ~~**Public API ingestion**~~ — Slice 78. `POST /api/v1/ingestion/jobs/api-upload/`
-  with APIKey-only auth + JSON-base64 body.
-- ~~**Inbox token rotation**~~ — Slice 80.
-  `POST /api/v1/ingestion/inbox/rotate-token/` + Rotate button
-  on the Settings → Integrations inbox card.
-1. **Signed-XML at rest** — `signed_xml_s3_key` is now a
-   free column (Slice 67); needs the actual KMS-encrypted
-   blob path wired.
-5. **Dual structuring lift for the OCR lane** —
-   PP-Structure tables + LayoutLMv3 KIE on top of the
-   RapidOCR text (Slice 72). Closes the "merged columns"
-   gap on poor-quality scans.
-- ~~**CI workflow**~~ — Slice 79. `.github/workflows/ci.yml`
-  wraps `ruff` + `pytest` + frontend `prettier` / `lint` /
-  `typecheck` / `build`.
-7. **i18n** — Bahasa Malaysia + Mandarin + Tamil per
-   ROADMAP Phase 6. English-only today.
+- **Dual structuring lift for the OCR lane** —
+  PP-Structure tables + LayoutLMv3 KIE on top of the
+  RapidOCR text (Slice 72). Closes the "merged columns"
+  gap on poor-quality scans. Most product-meaningful
+  remaining extraction-quality slice.
+- **Org-level "require 2FA" enforcement** — Slice 89 ships
+  per-user opt-in. The org-level switch + nag screen for
+  non-compliant members is the natural next slice in
+  Domain 13.
+- **Approval-policy editor in the UI** — Slice 87 lets
+  the API set the policy; the Settings panel UI lands when
+  an early customer asks.
+- **Multi-step approval chains** — Slice 87's row schema
+  is chain-ready (`(chain_id, step_number)`). Implementation
+  follows when a Scale-tier customer needs it.
+- **i18n: Mandarin + Tamil** — Slice 86 shipped EN + BM.
+  ZH + TA are listed but fall back to EN until tables land.
+- **Phase 6 ops work** — production env provisioning,
+  Cloudflare WAF, DR region in `ap-southeast-1`,
+  observability stack with runbook links, backup-restore
+  drill, failover drill, formal security + compliance
+  review. None of these are slice-shaped; they're
+  ROADMAP Phase 6 deliverables.
 
 ---
 
