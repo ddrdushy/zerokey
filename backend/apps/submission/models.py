@@ -25,6 +25,7 @@ import uuid
 from django.db import models
 from django.utils import timezone
 
+from apps.administration.fields import EncryptedCharField, EncryptedTextField
 from apps.identity.models import TenantScopedModel
 
 
@@ -102,30 +103,33 @@ class Invoice(TenantScopedModel):
     supplier_tin = models.CharField(max_length=32, blank=True)
     supplier_registration_number = models.CharField(max_length=64, blank=True)
     supplier_msic_code = models.CharField(max_length=8, blank=True)
-    supplier_address = models.TextField(blank=True)
-    supplier_phone = models.CharField(max_length=32, blank=True)
-    supplier_sst_number = models.CharField(max_length=32, blank=True)
+    # Slice 95 — PII at rest (envelope-encrypted via Fernet).
+    # max_length is ~3× plaintext + 32 to allow Fernet's
+    # ~150% bloat + the ``enc1:`` marker prefix.
+    supplier_address = EncryptedTextField(blank=True, default="")
+    supplier_phone = EncryptedCharField(max_length=128, blank=True, default="")
+    supplier_sst_number = EncryptedCharField(max_length=128, blank=True, default="")
     # LHDN secondary-ID scheme: NRIC | PASSPORT | BRN | ARMY.
     # Picked at edit time based on entity type (individual / corporate
     # / military / foreigner). The combination of TIN + correctly-typed
     # secondary ID is what LHDN's HITS validator matches against.
     supplier_id_type = models.CharField(max_length=16, blank=True, default="")
-    supplier_id_value = models.CharField(max_length=64, blank=True, default="")
+    supplier_id_value = EncryptedCharField(max_length=256, blank=True, default="")
 
     # --- Buyer ---------------------------------------------------------------
     buyer_legal_name = models.CharField(max_length=255, blank=True)
     buyer_tin = models.CharField(max_length=32, blank=True)
     buyer_registration_number = models.CharField(max_length=64, blank=True)
     buyer_msic_code = models.CharField(max_length=8, blank=True)
-    buyer_address = models.TextField(blank=True)
-    buyer_phone = models.CharField(max_length=32, blank=True)
-    buyer_sst_number = models.CharField(max_length=32, blank=True)
+    buyer_address = EncryptedTextField(blank=True, default="")
+    buyer_phone = EncryptedCharField(max_length=128, blank=True, default="")
+    buyer_sst_number = EncryptedCharField(max_length=128, blank=True, default="")
     buyer_country_code = models.CharField(max_length=2, blank=True)
     # Mirror of supplier_id_type/value. Buyer can also be an
     # individual / passport-holder / business — same ID-type
     # picker + same HITS validation rules apply.
     buyer_id_type = models.CharField(max_length=16, blank=True, default="")
-    buyer_id_value = models.CharField(max_length=64, blank=True, default="")
+    buyer_id_value = EncryptedCharField(max_length=256, blank=True, default="")
 
     # --- Totals --------------------------------------------------------------
     subtotal = models.DecimalField(max_digits=19, decimal_places=2, null=True, blank=True)

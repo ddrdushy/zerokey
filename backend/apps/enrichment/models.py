@@ -23,6 +23,7 @@ import uuid
 
 from django.db import models
 
+from apps.administration.fields import EncryptedCharField, EncryptedTextField
 from apps.identity.models import TenantScopedModel
 
 
@@ -80,9 +81,12 @@ class CustomerMaster(TenantScopedModel):
 
     registration_number = models.CharField(max_length=64, blank=True)
     msic_code = models.CharField(max_length=8, blank=True)
-    address = models.TextField(blank=True)
-    phone = models.CharField(max_length=32, blank=True)
-    sst_number = models.CharField(max_length=32, blank=True)
+    # Slice 95 — PII at rest (Fernet via apps.administration.crypto).
+    # max_length doubled + 32 to accommodate the ~150% ciphertext bloat
+    # plus the ``enc1:`` marker prefix.
+    address = EncryptedTextField(blank=True, default="")
+    phone = EncryptedCharField(max_length=128, blank=True, default="")
+    sst_number = EncryptedCharField(max_length=128, blank=True, default="")
     country_code = models.CharField(max_length=2, blank=True)
 
     # Slice 73 — per-field provenance. Maps field_name → entry.
