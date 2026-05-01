@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Activity, CircleCheck, Inbox, ScrollText } from "lucide-react";
 
@@ -83,8 +84,6 @@ export default function DashboardPage() {
     (m) => m.organization.id === me.active_organization_id,
   );
   const orgName = activeMembership?.organization.legal_name ?? "your organization";
-  const localPart = me.email.split("@")[0].split(/[._-]/)[0] || "there";
-  const firstName = localPart.charAt(0).toUpperCase() + localPart.slice(1);
 
   const validated = jobs.filter((j) => j.status === "validated").length;
   const inFlight = jobs.filter(
@@ -128,7 +127,7 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <div className="flex flex-col gap-6">
-        <HeroCard firstName={firstName} organizationName={orgName} validatedThisMonth={validated} />
+        <HeroCard organizationName={orgName} validatedThisMonth={validated} />
 
         <StatsStrip stats={stats} />
 
@@ -156,9 +155,8 @@ export default function DashboardPage() {
             <ul className="mt-4 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100 bg-white">
               {jobs.map((j) => (
                 <li key={j.id}>
-                  <button
-                    type="button"
-                    onClick={() => router.push(`/dashboard/jobs/${j.id}`)}
+                  <Link
+                    href={`/dashboard/jobs/${j.id}`}
                     className="flex w-full items-center justify-between px-5 py-3 text-left hover:bg-slate-50"
                   >
                     <div>
@@ -180,7 +178,7 @@ export default function DashboardPage() {
                     >
                       {j.status.replace(/_/g, " ")}
                     </span>
-                  </button>
+                  </Link>
                 </li>
               ))}
             </ul>

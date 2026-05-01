@@ -40,7 +40,10 @@ export function DropZone({ onUploaded }: { onUploaded: (job: IngestionJob) => vo
   );
 
   return (
-    <div className="rounded-xl border border-slate-100 bg-white p-8">
+    <div
+      data-dropzone="invoice"
+      className="rounded-xl border border-slate-100 bg-white p-8 transition-shadow"
+    >
       <h2 className="text-xl font-semibold">Drop your invoice</h2>
       <p className="mt-2 max-w-2xl text-base text-slate-600">
         PDF, image, Excel, CSV, or ZIP. Up to 25 MB per file.
