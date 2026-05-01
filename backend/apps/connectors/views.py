@@ -303,11 +303,21 @@ def sync_autocount(request: Request, config_id: str) -> Response:
             {"detail": "Connector not found."},
             status=status.HTTP_404_NOT_FOUND,
         )
-    if config.connector_type != IntegrationConfig.ConnectorType.AUTOCOUNT:
+    # Slice 98 — same endpoint handles AutoCount, SQL Account and
+    # Sage UBS. All three are CSV-driven adapters with baked-in
+    # column mappings; the dispatch is via ``get_adapter_class`` so
+    # the only thing that varies is which mapping table fires.
+    _CSV_DRIVEN_ACCOUNTING = {
+        IntegrationConfig.ConnectorType.AUTOCOUNT,
+        IntegrationConfig.ConnectorType.SQL_ACCOUNT,
+        IntegrationConfig.ConnectorType.SAGE_UBS,
+    }
+    if config.connector_type not in _CSV_DRIVEN_ACCOUNTING:
         return Response(
             {
                 "detail": (
-                    f"This endpoint only handles AutoCount connectors. Got {config.connector_type}."
+                    f"This endpoint handles AutoCount / SQL Account / Sage UBS connectors. "
+                    f"Got {config.connector_type}."
                 )
             },
             status=status.HTTP_400_BAD_REQUEST,

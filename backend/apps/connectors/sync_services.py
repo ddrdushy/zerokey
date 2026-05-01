@@ -104,6 +104,8 @@ CONNECTOR_SOURCE_MAP: dict[str, str] = {
     IntegrationConfig.ConnectorType.CSV: "synced_csv",
     IntegrationConfig.ConnectorType.SQL_ACCOUNTING: "synced_sql_accounting",
     IntegrationConfig.ConnectorType.AUTOCOUNT: "synced_autocount",
+    IntegrationConfig.ConnectorType.SQL_ACCOUNT: "synced_sql_account",
+    IntegrationConfig.ConnectorType.SAGE_UBS: "synced_sage_ubs",
     IntegrationConfig.ConnectorType.XERO: "synced_xero",
     IntegrationConfig.ConnectorType.QUICKBOOKS: "synced_quickbooks",
     IntegrationConfig.ConnectorType.SHOPIFY: "synced_shopify",

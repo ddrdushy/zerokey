@@ -857,12 +857,19 @@ async function uploadCsvSync(args: {
   return body as SyncProposalRow;
 }
 
-// Slice 85 — AutoCount upload. No column-mapping wizard; the
-// adapter applies the standard AutoCount column names.
+// Slice 85 (autocount) + Slice 98 (sql_account, sage_ubs) — CSV-
+// driven accounting adapters with baked-in column mappings. No
+// column-mapping wizard. The endpoint is the same for all three;
+// the per-type URL alias is FE clarity. The connector_type lives
+// on the IntegrationConfig row so the backend dispatches to the
+// right adapter regardless of which alias is used.
 async function uploadAutoCountSync(args: {
   configId: string;
   file: File;
   target?: "customers" | "items";
+  // Optional alias for the URL — defaults to ``autocount``.
+  // Pass ``"sql_account"`` or ``"sage_ubs"`` to use those aliases.
+  variant?: "autocount" | "sql_account" | "sage_ubs";
 }): Promise<SyncProposalRow> {
   const headers = new Headers();
   const csrf = readCookie("csrftoken");
@@ -872,12 +879,16 @@ async function uploadAutoCountSync(args: {
   form.append("file", args.file);
   form.append("target", args.target ?? "customers");
 
-  const response = await fetch(`${API_BASE}/connectors/configs/${args.configId}/sync-autocount/`, {
-    method: "POST",
-    headers,
-    credentials: "include",
-    body: form,
-  });
+  const variant = args.variant ?? "autocount";
+  const response = await fetch(
+    `${API_BASE}/connectors/configs/${args.configId}/sync-${variant}/`,
+    {
+      method: "POST",
+      headers,
+      credentials: "include",
+      body: form,
+    },
+  );
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message =
@@ -1478,7 +1489,10 @@ export const api = {
   // far (sparse — only edited fields need to be sent).
   validatePreview: (
     id: string,
-    draft: Record<string, string>,
+    // Slice 98 — accepts header field strings AND structural keys
+    // (``line_items``, ``add_line_items``, ``remove_line_items``)
+    // for live preview of line-item edits.
+    draft: Record<string, unknown>,
   ): Promise<{
     issues: ValidationIssue[];
     summary: { issue_count: number; errors: number; warnings: number; infos: number };

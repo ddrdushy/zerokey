@@ -17,10 +17,22 @@ urlpatterns = [
         name="sync-csv",
     ),
     # Slice 85 — AutoCount upload (no column-mapping required).
+    # Slice 98 — same endpoint handles SQL Account + Sage UBS;
+    # the per-type URLs are aliases for FE clarity.
     path(
         "configs/<uuid:config_id>/sync-autocount/",
         views.sync_autocount,
         name="sync-autocount",
+    ),
+    path(
+        "configs/<uuid:config_id>/sync-sql_account/",
+        views.sync_autocount,
+        name="sync-sql-account",
+    ),
+    path(
+        "configs/<uuid:config_id>/sync-sage_ubs/",
+        views.sync_autocount,
+        name="sync-sage-ubs",
     ),
     path(
         "proposals/<uuid:proposal_id>/",

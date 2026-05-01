@@ -125,36 +125,51 @@ export default function JobDetailPage() {
     };
   }, [params.id, router]);
 
-  // Slice 91 — live validation preview. Whenever the header draft
-  // changes, debounce 400ms then ask the server "what would the
-  // issue list be if I saved these edits right now?" and replace
-  // ``preview`` with the answer. The server runs the same rule
-  // engine save would, so the user gets authoritative feedback as
-  // they type — no client-side rule duplication.
+  // Slice 91 — live validation preview. Whenever any draft (header,
+  // per-line cell, pending-add, or remove) changes, debounce 400ms
+  // then ask the server "what would the issue list be if I saved
+  // these edits right now?" and replace ``preview`` with the answer.
+  // The server runs the same rule engine save would, so the user
+  // gets authoritative feedback as they type — no client-side rule
+  // duplication.
   //
-  // We don't preview line-item or structural edits in v1: the
-  // server endpoint takes header drafts only, line edits revalidate
-  // on save. Skipping the preview when there's no header draft
-  // means the saved invoice's own ``validation_issues`` show through.
+  // Slice 98 — line-item drafts now ride in the preview payload, so
+  // arithmetic rules (line subtotal mismatch, header total mismatch,
+  // tax mismatch) preview live too.
   useEffect(() => {
     if (!invoice) return;
-    const draftKeys = Object.keys(draft);
-    if (draftKeys.length === 0) {
+    const headerKeys = Object.keys(draft);
+    const lineKeys = Object.keys(lineDrafts);
+    const hasPendingAdds = pendingAdds.some((p) => (p.fields.description ?? "").trim() !== "");
+    const hasRemoved = removedNumbers.length > 0;
+    if (headerKeys.length === 0 && lineKeys.length === 0 && !hasPendingAdds && !hasRemoved) {
       setPreview(null);
       return;
     }
     const handle = setTimeout(async () => {
       setPreviewing(true);
       try {
-        // Strip empty-string drafts that haven't actually changed
-        // the value yet — sending {invoice_number: ""} when the
-        // saved value is also "" is wasted effort.
-        const sparse: Record<string, string> = {};
-        for (const key of draftKeys) {
+        const payload: Record<string, unknown> = {};
+        for (const key of headerKeys) {
           const v = (draft as Record<string, string | undefined>)[key];
-          if (v != null) sparse[key] = v;
+          if (v != null) payload[key] = v;
         }
-        const result = await api.validatePreview(invoice.id, sparse);
+        if (lineKeys.length > 0) {
+          payload.line_items = lineKeys.map((num) => ({
+            line_number: Number(num),
+            ...lineDrafts[Number(num)],
+          }));
+        }
+        const validAdds = pendingAdds
+          .map((p) => p.fields)
+          .filter((f) => (f.description ?? "").trim() !== "");
+        if (validAdds.length > 0) {
+          payload.add_line_items = validAdds;
+        }
+        if (removedNumbers.length > 0) {
+          payload.remove_line_items = removedNumbers;
+        }
+        const result = await api.validatePreview(invoice.id, payload);
         setPreview(result);
       } catch {
         // Preview failure is non-fatal; the saved-state issues remain
@@ -164,7 +179,7 @@ export default function JobDetailPage() {
       }
     }, 400);
     return () => clearTimeout(handle);
-  }, [draft, invoice]);
+  }, [draft, lineDrafts, pendingAdds, removedNumbers, invoice]);
 
   function onChangeField(name: string, value: string) {
     setSaveError(null);

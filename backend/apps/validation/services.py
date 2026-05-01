@@ -114,41 +114,148 @@ def issues_for_invoice(*, organization_id: UUID, invoice_id: UUID) -> list[Valid
     )
 
 
-def preview_validation(*, invoice_id: UUID | str, draft: dict[str, str]) -> list[Issue]:
+def preview_validation(
+    *,
+    invoice_id: UUID | str,
+    draft: dict[str, object] | None = None,
+) -> list[Issue]:
     """Run validation against a hypothetical Invoice without persisting.
 
-    The review UI debounces field edits and calls this to show live
+    The review UI debounces edits and calls this to show live
     pass/fail feedback as the user types — the alternative was building
     a parallel TypeScript rule engine that would inevitably drift from
     the Python source of truth. Same rules, same result, no duplication.
 
-    ``draft`` is a sparse map of ``EDITABLE_HEADER_FIELDS`` → string
-    values (the same shape ``update_invoice`` accepts). Unknown keys
-    are silently ignored so a future field that's editable on the
-    client but not yet allowlisted on the server doesn't 500 the
-    preview.
+    ``draft`` shape mirrors ``update_invoice``:
 
-    Line-item edits are NOT supported in v1 — header validation
-    covers the bulk of the issues the user sees. Save still runs full
-    line-aware validation, so we never claim a line-item issue is
-    resolved when it isn't.
+      {
+        "<header_field>": "<value>", ...    # sparse subset of EDITABLE_HEADER_FIELDS
+        "line_items":        [{"line_number": int, ...}, ...],   # cell edits
+        "add_line_items":    [{"description": "...", ...}],      # appended rows
+        "remove_line_items": [int, ...],                         # removed line_numbers
+      }
+
+    Slice 98 — line-item drafts are now applied. Same rule engine
+    sees the post-edit state, so totals.subtotal.mismatch /
+    totals.tax.mismatch / line.subtotal.mismatch all preview live
+    when the user edits a line. Unknown keys / unknown line numbers
+    are silently skipped (preview is best-effort; save remains the
+    authoritative validator).
 
     Returns the raw ``Issue`` list (not persisted ``ValidationIssue``
     rows) so the view layer can serialize it directly.
     """
+    from copy import copy as shallow_copy
+    from decimal import Decimal
+
+    from apps.submission.models import LineItem
     from apps.submission.services import (  # local import — submission depends on validation, not vice versa
         EDITABLE_HEADER_FIELDS,
+        EDITABLE_LINE_FIELDS,
+        _coerce_line_field,
         _set_invoice_field,
     )
 
+    draft = draft or {}
     invoice = Invoice.objects.prefetch_related("line_items").get(id=invoice_id)
-    # Mutate in-memory only — Django won't persist unless ``.save()``
-    # is called. We never call save() on this code path.
-    for name, raw_value in (draft or {}).items():
+
+    # 1. Header field drafts — mutate the invoice in-place. Django won't
+    #    persist unless ``.save()`` is called.
+    for name, raw_value in draft.items():
+        if name in {"line_items", "add_line_items", "remove_line_items"}:
+            continue
         if name not in EDITABLE_HEADER_FIELDS:
             continue
         _set_invoice_field(invoice, name, str(raw_value or ""))
+
+    # 2. Materialise the existing lines into a working list. We
+    #    deep-shallow-copy each LineItem so our mutations don't leak
+    #    into the prefetch cache attached to ``invoice``.
+    working_lines: list[LineItem] = [shallow_copy(line) for line in invoice.line_items.all()]
+    by_number: dict[int, LineItem] = {l.line_number: l for l in working_lines}
+
+    # 3. Apply line-cell edits (line_items[N].field = value).
+    line_payload = draft.get("line_items")
+    if isinstance(line_payload, list):
+        for entry in line_payload:
+            if not isinstance(entry, dict):
+                continue
+            line_number = entry.get("line_number")
+            if not isinstance(line_number, int) or line_number not in by_number:
+                continue
+            line = by_number[line_number]
+            for field_name, raw_value in entry.items():
+                if field_name == "line_number":
+                    continue
+                if field_name not in EDITABLE_LINE_FIELDS:
+                    continue
+                try:
+                    coerced = _coerce_line_field(line, field_name, raw_value)
+                except Exception:
+                    continue  # preview is best-effort
+                setattr(line, field_name, coerced)
+
+    # 4. Drop removed lines.
+    remove_payload = draft.get("remove_line_items")
+    if isinstance(remove_payload, list):
+        removed_set = {n for n in remove_payload if isinstance(n, int)}
+        working_lines = [l for l in working_lines if l.line_number not in removed_set]
+
+    # 5. Append pending-add lines as in-memory LineItem instances.
+    add_payload = draft.get("add_line_items")
+    if isinstance(add_payload, list) and add_payload:
+        next_number = max((l.line_number for l in working_lines), default=0) + 1
+        for entry in add_payload:
+            if not isinstance(entry, dict):
+                continue
+            description = (entry.get("description") or "").strip()
+            if not description:
+                continue  # match update_invoice semantics — empty descriptions are dropped
+            line = LineItem(
+                organization_id=invoice.organization_id,
+                invoice=invoice,
+                line_number=next_number,
+                description=description[:8000],
+                quantity=_safe_decimal(entry.get("quantity")),
+                unit_price_excl_tax=_safe_decimal(entry.get("unit_price_excl_tax")),
+                line_subtotal_excl_tax=_safe_decimal(entry.get("line_subtotal_excl_tax")),
+                tax_rate=_safe_decimal(entry.get("tax_rate")),
+                tax_amount=_safe_decimal(entry.get("tax_amount")),
+                line_total_incl_tax=_safe_decimal(entry.get("line_total_incl_tax")),
+                tax_type_code=str(entry.get("tax_type_code") or "")[:16],
+                unit_of_measurement=str(entry.get("unit_of_measurement") or "")[:16],
+                classification_code=str(entry.get("classification_code") or "")[:16],
+            )
+            working_lines.append(line)
+            next_number += 1
+
+    # 6. Hand the rule engine a view of the invoice that returns the
+    #    mutated line set. ``run_all_rules`` reads via
+    #    ``invoice.line_items.all()`` — Django's prefetch cache
+    #    intercepts that call when ``_prefetched_objects_cache`` is
+    #    populated, so we drop our working list there. Direct
+    #    assignment to ``invoice.line_items`` is rejected by the
+    #    reverse-related-set descriptor; the prefetch cache is the
+    #    documented escape hatch.
+    if not hasattr(invoice, "_prefetched_objects_cache"):
+        invoice._prefetched_objects_cache = {}
+    invoice._prefetched_objects_cache["line_items"] = working_lines
+
     return run_all_rules(invoice)
+
+
+def _safe_decimal(raw):  # type: ignore[no-untyped-def]
+    """Decimal coercion that swallows everything for the preview path."""
+    from decimal import Decimal, InvalidOperation
+
+    if raw is None or raw == "":
+        return None
+    try:
+        return Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        return None
+
+
 
 
 def _count_by_severity(issues: list[Issue]) -> dict[str, int]:

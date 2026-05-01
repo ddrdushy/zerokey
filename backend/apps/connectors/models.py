@@ -44,9 +44,14 @@ class IntegrationConfig(TenantScopedModel):
     class ConnectorType(models.TextChoices):
         # CSV is the universal escape hatch — ships first (Slice 77).
         CSV = "csv", "CSV upload"
-        # Malaysian SME accounting majority — ODBC-based.
-        SQL_ACCOUNTING = "sql_accounting", "SQL Accounting"
+        # Malaysian SME accounting majority — CSV exports with baked-in
+        # column mappings (Slices 85 + 98). Always-on ODBC paths land
+        # later as separate types when a customer asks.
         AUTOCOUNT = "autocount", "AutoCount"
+        SQL_ACCOUNT = "sql_account", "SQL Account"
+        SAGE_UBS = "sage_ubs", "Sage UBS"
+        # Older / legacy MSSQL ODBC umbrella label.
+        SQL_ACCOUNTING = "sql_accounting", "SQL Accounting"
         # Cloud accounting — OAuth2.
         XERO = "xero", "Xero"
         QUICKBOOKS = "quickbooks", "QuickBooks Online"

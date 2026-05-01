@@ -56,9 +56,25 @@ const CATALOG: CatalogEntry[] = [
     shipped: true,
   },
   {
+    type: "sql_account",
+    label: "SQL Account",
+    description:
+      "Upload an SQL Account Debtor / Stock Maintenance export — column mapping is built in.",
+    icon: Database,
+    shipped: true,
+  },
+  {
+    type: "sage_ubs",
+    label: "Sage UBS",
+    description:
+      "Upload a Sage UBS Customer / Stock export — column mapping is built in (handles both LHDN-era and pre-LHDN exports).",
+    icon: Database,
+    shipped: true,
+  },
+  {
     type: "sql_accounting",
-    label: "SQL Accounting",
-    description: "Pull debtors + items directly from SQL Accounting.",
+    label: "SQL Accounting (ODBC)",
+    description: "Always-on ODBC sync against SQL Account / SQL Payroll database — coming when a customer asks.",
     icon: Database,
     shipped: false,
   },
@@ -121,14 +137,15 @@ export default function ConnectorsPage() {
     setError(null);
     try {
       const config = await api.createConnectorConfig(type);
-      // CSV + AutoCount jump straight into their upload page; other
-      // connectors will wire their auth flow in a later slice.
+      // CSV + the three CSV-driven accounting connectors all jump
+      // straight into an upload page. Slice 98 added SQL Account and
+      // Sage UBS using the same upload UX as AutoCount.
       if (type === "csv") {
         router.push(`/dashboard/connectors/${config.id}/upload`);
         return;
       }
-      if (type === "autocount") {
-        router.push(`/dashboard/connectors/${config.id}/autocount`);
+      if (type === "autocount" || type === "sql_account" || type === "sage_ubs") {
+        router.push(`/dashboard/connectors/${config.id}/${type}`);
         return;
       }
       await refresh();
@@ -260,13 +277,20 @@ function ActiveConnections({
                         Upload CSV
                       </Link>
                     )}
-                    {config.connector_type === "autocount" && (
+                    {(config.connector_type === "autocount" ||
+                      config.connector_type === "sql_account" ||
+                      config.connector_type === "sage_ubs") && (
                       <Link
-                        href={`/dashboard/connectors/${config.id}/autocount`}
+                        href={`/dashboard/connectors/${config.id}/${config.connector_type}`}
                         className="mr-3 inline-flex items-center gap-1 text-2xs font-medium text-ink hover:underline"
                       >
                         <Upload className="h-3.5 w-3.5" />
-                        Upload AutoCount
+                        Upload{" "}
+                        {config.connector_type === "autocount"
+                          ? "AutoCount"
+                          : config.connector_type === "sql_account"
+                            ? "SQL Account"
+                            : "Sage UBS"}
                       </Link>
                     )}
                     <button
