@@ -129,14 +129,18 @@ export default function DashboardPage() {
       <div className="flex flex-col gap-6">
         <HeroCard organizationName={orgName} validatedThisMonth={validated} />
 
+        {/* DropZone right after the hero so the action lives next to the
+            invitation. Stats + charts are monitoring views and belong
+            below the call-to-action — for a fresh user, four zero
+            counters before the upload UI was friction. */}
+        <DropZone onUploaded={onUploaded} />
+
         <StatsStrip stats={stats} />
 
         <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
           <ThroughputChart data={throughput?.series} />
           <CompliancePosture validated={validated} needsReview={needsReview} failed={errored} />
         </div>
-
-        <DropZone onUploaded={onUploaded} />
 
         <section>
           <div className="flex items-baseline justify-between">

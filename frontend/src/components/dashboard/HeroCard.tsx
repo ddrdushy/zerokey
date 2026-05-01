@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/button";
 
 // Hero card analogue of the Vuexy "Congratulations" tile, on-brand.
 // Calm tone, italics device on the value phrase per VISUAL_IDENTITY.md.
+//
+// The DropZone renders directly below this on the dashboard — so the
+// hero deliberately doesn't carry its own "Drop an invoice" button.
+// One CTA per row of attention; the dropzone is the action.
 
 export function HeroCard({
   organizationName,
@@ -15,19 +19,6 @@ export function HeroCard({
   validatedThisMonth: number;
 }) {
   const router = useRouter();
-
-  function scrollToDropzone() {
-    // The DropZone always renders below the hero on the dashboard.
-    // Scrolling beats a brittle imperative file-picker open: the user
-    // sees both the drag affordance and the "click to browse" link.
-    const target = document.querySelector('[data-dropzone="invoice"]');
-    if (target instanceof HTMLElement) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
-      // A short visual pulse so the user knows where to drop.
-      target.classList.add("ring-2", "ring-signal");
-      setTimeout(() => target.classList.remove("ring-2", "ring-signal"), 1500);
-    }
-  }
 
   return (
     <section className="relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-6 md:p-8">
@@ -46,30 +37,25 @@ export function HeroCard({
               : "No invoices submitted yet — drop your first one below to get started."}
           </p>
           <div className="mt-2 flex flex-wrap gap-3">
-            <Button variant="signal" size="md" onClick={scrollToDropzone}>
-              Drop an invoice
-            </Button>
             <Button variant="outline" size="md" onClick={() => router.push("/dashboard/audit")}>
               View audit log
             </Button>
           </div>
         </div>
-        <DropMotif onClick={scrollToDropzone} />
+        <DropMotif />
       </div>
     </section>
   );
 }
 
 // The "drop" motif from VISUAL_IDENTITY.md — softly rounded square, 4:5
-// aspect, slightly more rounded top. Used here as the hero anchor instead
-// of the Vuexy mascot illustration.
-function DropMotif({ onClick }: { onClick: () => void }) {
+// aspect, slightly more rounded top. Decorative brand element; the
+// actual upload UI is the DropZone directly below the hero.
+function DropMotif() {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label="Jump to upload"
-      className="relative hidden h-40 w-32 transition-transform hover:scale-105 md:block"
+    <div
+      aria-hidden="true"
+      className="relative hidden h-40 w-32 md:block"
       style={{
         background: "linear-gradient(180deg, #C7F284 0%, #FAFAF7 100%)",
         borderRadius: "30% 30% 14% 14% / 18% 18% 14% 14%",
@@ -82,6 +68,6 @@ function DropMotif({ onClick }: { onClick: () => void }) {
           <div className="mt-1 text-2xs uppercase tracking-wider text-ink/60">drop here</div>
         </div>
       </div>
-    </button>
+    </div>
   );
 }

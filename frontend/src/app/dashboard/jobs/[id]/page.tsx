@@ -233,7 +233,10 @@ export default function JobDetailPage() {
         <Header job={job} onBack={() => router.push("/dashboard")} />
 
         <div className="grid gap-6 lg:grid-cols-[1fr_1fr] lg:items-start">
-          <div className="lg:sticky lg:top-6 lg:h-[calc(100vh-8rem)]">
+          {/* Document pane: 70vh on small screens (so the user can
+              actually read line items), sticky full-height on lg+
+              so it stays in view as they scroll the field list. */}
+          <div className="h-[70vh] lg:sticky lg:top-6 lg:h-[calc(100vh-8rem)]">
             <DocumentPreview
               filename={job.original_filename}
               mimeType={job.file_mime_type}
@@ -409,8 +412,29 @@ function ReviewPanel({
   // ValidationBanner shows.
   const blockingIssues = invoice.validation_issues.filter((i) => i.severity !== "info").length;
 
+  // Auto-fill ran and produced nothing — surface that explicitly
+  // rather than letting the user think extraction silently failed.
+  // The backend stamps ``error_message`` with the reason
+  // ("Auto-structuring skipped: …") when every engine in the
+  // routing chain was unavailable; we mirror it here as a banner
+  // above the validation summary so the empty fields aren't a
+  // mystery.
+  const structuringSkipped =
+    !invoice.structuring_engine && invoice.error_message?.startsWith("Auto-structuring skipped");
+
   return (
     <>
+      {structuringSkipped && (
+        <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-xs">
+          <div className="font-medium text-warning">Auto-fill is offline.</div>
+          <p className="mt-1 text-slate-600">
+            We couldn&apos;t reach a structuring engine for this upload, so the
+            fields below are blank. Fill them in manually — validation will
+            still run on save and the audit log captures the skip reason.
+          </p>
+        </div>
+      )}
+
       <ValidationBanner summary={invoice.validation_summary} />
 
       <LhdnPanel

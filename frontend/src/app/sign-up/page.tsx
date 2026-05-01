@@ -54,18 +54,37 @@ export default function SignUpPage() {
       <p className="text-base text-slate-600">14 days. 20 invoices. No credit card.</p>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
-        <Field label="Your email" type="email" value={email} onChange={setEmail} required />
+        <Field
+          label="Your email"
+          type="email"
+          name="email"
+          autoComplete="email"
+          value={email}
+          onChange={setEmail}
+          required
+        />
         <Field
           label="Password"
           type="password"
+          name="new-password"
+          autoComplete="new-password"
           value={password}
           onChange={setPassword}
           required
           hint="At least 12 characters."
         />
-        <Field label="Company legal name" value={legalName} onChange={setLegalName} required />
+        <Field
+          label="Company legal name"
+          name="organization"
+          autoComplete="organization"
+          value={legalName}
+          onChange={setLegalName}
+          required
+        />
         <Field
           label="Tax Identification Number (TIN)"
+          name="tin"
+          autoComplete="off"
           value={tin}
           onChange={setTin}
           required
@@ -74,6 +93,8 @@ export default function SignUpPage() {
         <Field
           label="Operations contact email"
           type="email"
+          name="contact-email"
+          autoComplete="email"
           value={contactEmail}
           onChange={setContactEmail}
           hint="Defaults to your email above if left blank."
@@ -106,6 +127,8 @@ export default function SignUpPage() {
 function Field({
   label,
   type = "text",
+  name,
+  autoComplete,
   value,
   onChange,
   required,
@@ -113,6 +136,8 @@ function Field({
 }: {
   label: string;
   type?: string;
+  name?: string;
+  autoComplete?: string;
   value: string;
   onChange: (value: string) => void;
   required?: boolean;
@@ -126,6 +151,8 @@ function Field({
       </span>
       <input
         type={type}
+        name={name}
+        autoComplete={autoComplete}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         required={required}

@@ -23,4 +23,11 @@ psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-SQL
         GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $APP_USER;
     ALTER DEFAULT PRIVILEGES IN SCHEMA public
         GRANT USAGE, SELECT ON SEQUENCES TO $APP_USER;
+
+    -- Required for ``manage.py test`` / pytest-django, which spin up a
+    -- throwaway ``test_<dbname>`` database. Granting CREATEDB to a
+    -- non-superuser is the standard Django dev-env pattern; it does
+    -- NOT bypass Row-Level Security (only superusers do that), so the
+    -- multi-tenant isolation contract is preserved.
+    ALTER ROLE $APP_USER CREATEDB;
 SQL
