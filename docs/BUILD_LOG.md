@@ -7720,6 +7720,122 @@ hand-edit `SystemSetting` from `/django-admin/`):
 
 ---
 
+### Slice 90 — Core-flow unblock: extraction works end-to-end again
+
+A UX-audit walkthrough as a fresh user uncovered three regressions
+that silently broke the upload → review path. None raised a
+visible error; the user just saw a job stuck at `extracting` or
+landed in `ready_for_review` with every field blank. Each had a
+distinct root cause that the test suite couldn't catch
+(`make test` is currently blocked by the dev DB user lacking
+`CREATEDB`, so this slice was driven by Playwright walkthroughs
+against a live stack).
+
+Backend:
+
+- **`Invoice.adjustment_reason` / `original_invoice_uuid` /
+  `original_invoice_internal_id`** — added in Slice 60 as
+  `TextField(blank=True)` / `CharField(blank=True)` with no
+  `default=""`. Postgres created them `NOT NULL` with no DB
+  default, and `Invoice.objects.create()` in
+  `create_invoice_from_extraction` (which only sets the basics)
+  blew up with `IntegrityError: null value in column
+  "adjustment_reason"`. The extraction worker died on the insert,
+  leaving the IngestionJob stuck at `extracting` indefinitely.
+  Migration **0011** + explicit `default=""` on the model fields
+  bring model and DB into agreement.
+- **`apps.identity.tenancy.super_admin_context`** — used
+  `cursor.execute("SHOW app.current_tenant_id")` to capture +
+  restore the prior tenant, but `SHOW` raises
+  `unrecognized configuration parameter` when the GUC has never
+  been SET on the session. Web requests pass through
+  `TenantContextMiddleware` first, so the GUC is always pre-set;
+  Celery workers don't, so this raised on the first elevation in
+  every fresh worker process. Switched to
+  `current_setting(name, true)` which returns NULL gracefully when
+  unset; web-request save+restore semantics are unchanged.
+- **`structure_invoice` fallback chain** — the function picked
+  one engine via `pick_engine` and finalized the invoice empty
+  (per the docstring) if the adapter raised `EngineUnavailable`.
+  With Ollama at priority 50 and Anthropic at priority 100 in
+  dev, an Ollama outage guaranteed every upload landed with all
+  fields blank — the opposite of the routing-rule contract.
+  Resolved the FieldStructure routing chain ONCE up front
+  (priority-sorted), and walks each engine in order, only
+  finalizing empty if every engine in the chain is unavailable.
+  Done as a list rather than repeated `pick_fallback_engine`
+  calls because that helper's single-id exclusion couldn't
+  express "skip everything tried so far" — the first iteration
+  of this fix ping-ponged between two engines forever, generated
+  9000+ `engine_call` rows in 4 minutes before I caught it.
+
+Frontend:
+
+- **HeroCard CTAs** were pure decoration — "Drop an invoice",
+  "View audit log", and the green "DROP HERE" motif had no
+  `onClick` handlers. Wired Drop+motif to `scrollIntoView` to
+  the lower DropZone with a 1.5s ring-pulse so the user sees
+  where to drop; "View audit log" navigates to
+  `/dashboard/audit`. HeroCard now declares `"use client"`
+  since it carries event handlers.
+- **Welcome heading dropped the email-derived "first name".**
+  `email.split("@")[0].split(/[._-]/)[0]` produced
+  `Uxaudit+1777620458079` for the first test user (the `+` isn't
+  in the split regex), and even for a clean
+  `john.doe@company.com` it would render "John" without any
+  guarantee that's a real first name. The line above already
+  shows the org name; the personalization wasn't earning its
+  fragility. Now: "Welcome back. Drop a file when you're ready."
+- **Recent-uploads rows are real `<Link>`s now**, not
+  `<button onClick={router.push}>`. cmd-click / middle-click /
+  right-click "open in new tab" all silently no-op'd before;
+  screen readers now announce the destination as a link.
+- **DropZone container exposes `data-dropzone="invoice"`** so the
+  hero CTAs can target it without coupling to a Tailwind class.
+
+Tests: this slice is verified via Playwright walkthrough
+(/tmp/playwright-final-walkthrough.js) — fresh sign-up → upload
+→ extraction → ready_for_review → click into review page →
+fields visible. ~5.5s end-to-end on the dev stack. Backend
+unit tests are blocked by the existing `make test` perm issue
+(documented in the deferred list).
+
+Durable design decisions:
+
+- **Resolve the structurer chain up front, not iteratively.**
+  `pick_fallback_engine` was designed for the OCR-confidence-
+  escalation path (Slice 32) where you exclude one engine and
+  pick the next-best. For "walk the entire chain when each
+  fails", that interface forces a moving exclusion and risks
+  loops. A single SELECT-ordered list is honest about what we
+  need.
+- **Empty fields when no engine is available is the correct
+  graceful-degrade, not the bug.** The bug was that we never
+  tried the fallback. The user can still hand-edit; the audit
+  log carries the per-engine failure reason.
+- **Drop the email-derived greeting rather than fix the parser.**
+  Adding `+` to the split regex would help today but break
+  tomorrow on the next address shape we hadn't thought of. The
+  org-name line above is enough context — adding a real
+  `User.first_name` field is the right fix when we need
+  personalization, and that decision needs more than a parser
+  patch.
+
+What's deferred:
+
+- **`make test` works only with `CREATEDB` granted to the dev
+  DB user.** Out of scope for this slice — needs a one-time
+  postgres-init tweak. Surface in BUILD_LOG so the next contributor
+  doesn't trip on it.
+- **Two-engine-down UX banner.** Today the user sees empty
+  fields with the inline "is required" issues; the State
+  History accordion shows the structuring-skipped event but
+  it's collapsed. A small banner saying "Auto-fill is offline,
+  please fill fields manually" would close this loop. Cheap
+  follow-up.
+
+---
+
 ### Slice 89 — TOTP 2FA: enrollment, login challenge, recovery codes
 
 Domain 13 P0. Slices 1–88 carried a placeholder
@@ -8531,6 +8647,15 @@ state isn't confused):
 - ~~**TOTP 2FA**~~ — Slice 89. Hand-rolled RFC-6238 +
   recovery codes. Enroll → confirm → enabled flow,
   challenge on login, recovery-code consumption.
+- ~~**Core-flow extraction unblock**~~ — Slice 90. Fixed three
+  silent regressions that broke fresh-user upload end-to-end:
+  Slice 60's amendment columns missing defaults
+  (`Invoice.objects.create()` raised IntegrityError),
+  `super_admin_context` raising on workers' first
+  `SHOW app.current_tenant_id` call, and the structurer not
+  walking the routing chain on `EngineUnavailable`. Plus
+  HeroCard CTAs got onClick handlers + recent-uploads rows
+  became real `<Link>` elements.
 - ~~**Billing + Stripe**~~ — Slice 63 + Slice 65 (Subscribe
   UI). FPX is part of Stripe checkout; nothing else needed.
 - ~~**PII field-level encryption**~~ — covered by Slice 55's
@@ -8564,6 +8689,17 @@ Still open (ordered roughly by Phase 5–6 priority):
   drill, failover drill, formal security + compliance
   review. None of these are slice-shaped; they're
   ROADMAP Phase 6 deliverables.
+- **`make test` requires `CREATEDB`.** The dev DB user
+  (`zerokey`) doesn't have CREATEDB privilege, so pytest
+  fails to set up a test database. One-line fix in
+  `infra/postgres-init/`. Surfaced during the Slice 90
+  walkthrough.
+- **"Auto-fill offline" banner on the review page.** When
+  every structurer engine in the chain is unavailable
+  (Slice 90 graceful-degrade), the user lands on the review
+  page with empty fields and inline "is required" issues.
+  A small banner would explain *why* the fields are empty
+  rather than letting the user assume the extraction failed.
 
 ---
 
