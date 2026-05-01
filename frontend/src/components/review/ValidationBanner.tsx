@@ -10,7 +10,19 @@ import { CheckCircle2, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { ValidationSummary } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-export function ValidationBanner({ summary }: { summary: ValidationSummary }) {
+export function ValidationBanner({
+  summary,
+  previewing = false,
+}: {
+  summary: ValidationSummary;
+  /**
+   * Slice 91 — true while a debounced ``/validate-preview/`` round-
+   * trip is in flight. We add an unobtrusive "Validating…" badge so
+   * the user knows the counts they see are about to refresh, without
+   * flashing the whole banner.
+   */
+  previewing?: boolean;
+}) {
   const total = summary.errors + summary.warnings + summary.infos;
   const tone = summary.has_blocking_errors ? "error" : summary.warnings > 0 ? "warning" : "ok";
 
@@ -44,7 +56,14 @@ export function ValidationBanner({ summary }: { summary: ValidationSummary }) {
         )}
       />
       <div className="flex-1">
-        <div className="text-base font-semibold">{headline}</div>
+        <div className="flex items-center gap-2 text-base font-semibold">
+          {headline}
+          {previewing && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-2xs font-medium uppercase tracking-wider text-slate-500">
+              Validating…
+            </span>
+          )}
+        </div>
         <div className="mt-0.5 text-2xs text-slate-600">
           {total === 0 ? "No issues found by pre-flight validation." : detail}
         </div>

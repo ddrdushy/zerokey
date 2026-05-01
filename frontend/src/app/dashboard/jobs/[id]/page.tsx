@@ -78,6 +78,15 @@ export default function JobDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Slice 91 — live validation. ``preview`` is the issue set the
+  // server returned for the *current* (saved + draft) state. Falls
+  // back to ``invoice.validation_issues`` when there's no draft or
+  // the preview is in flight.
+  const [preview, setPreview] = useState<{
+    issues: import("@/lib/api").ValidationIssue[];
+    summary: import("@/lib/api").ValidationSummary;
+  } | null>(null);
+  const [previewing, setPreviewing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,6 +124,47 @@ export default function JobDetailPage() {
       if (timer) clearTimeout(timer);
     };
   }, [params.id, router]);
+
+  // Slice 91 — live validation preview. Whenever the header draft
+  // changes, debounce 400ms then ask the server "what would the
+  // issue list be if I saved these edits right now?" and replace
+  // ``preview`` with the answer. The server runs the same rule
+  // engine save would, so the user gets authoritative feedback as
+  // they type — no client-side rule duplication.
+  //
+  // We don't preview line-item or structural edits in v1: the
+  // server endpoint takes header drafts only, line edits revalidate
+  // on save. Skipping the preview when there's no header draft
+  // means the saved invoice's own ``validation_issues`` show through.
+  useEffect(() => {
+    if (!invoice) return;
+    const draftKeys = Object.keys(draft);
+    if (draftKeys.length === 0) {
+      setPreview(null);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      setPreviewing(true);
+      try {
+        // Strip empty-string drafts that haven't actually changed
+        // the value yet — sending {invoice_number: ""} when the
+        // saved value is also "" is wasted effort.
+        const sparse: Record<string, string> = {};
+        for (const key of draftKeys) {
+          const v = (draft as Record<string, string | undefined>)[key];
+          if (v != null) sparse[key] = v;
+        }
+        const result = await api.validatePreview(invoice.id, sparse);
+        setPreview(result);
+      } catch {
+        // Preview failure is non-fatal; the saved-state issues remain
+        // visible. Save will still revalidate authoritatively.
+      } finally {
+        setPreviewing(false);
+      }
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [draft, invoice]);
 
   function onChangeField(name: string, value: string) {
     setSaveError(null);
@@ -248,6 +298,9 @@ export default function JobDetailPage() {
             {invoice ? (
               <ReviewPanel
                 invoice={invoice}
+                liveIssues={preview?.issues}
+                liveSummary={preview?.summary}
+                previewing={previewing}
                 draft={draft}
                 lineDrafts={lineDrafts}
                 pendingAdds={pendingAdds}
@@ -349,6 +402,12 @@ function PendingPanel({ job }: { job: IngestionJob }) {
 
 type ReviewPanelProps = {
   invoice: Invoice;
+  /** Slice 91 — live preview from /validate-preview/. When present,
+   * overrides ``invoice.validation_issues`` so the user sees the
+   * issue list for their *current* draft, not the saved state. */
+  liveIssues?: import("@/lib/api").ValidationIssue[];
+  liveSummary?: import("@/lib/api").ValidationSummary;
+  previewing?: boolean;
   draft: Draft;
   lineDrafts: LineDrafts;
   pendingAdds: PendingAdd[];
@@ -366,6 +425,9 @@ type ReviewPanelProps = {
 
 function ReviewPanel({
   invoice,
+  liveIssues,
+  liveSummary,
+  previewing,
   draft,
   lineDrafts,
   pendingAdds,
@@ -379,10 +441,14 @@ function ReviewPanel({
   onDiscardPendingAdd,
   onInvoiceChanged,
 }: ReviewPanelProps) {
-  const issuesByPath = useMemo(
-    () => groupByPath(invoice.validation_issues),
-    [invoice.validation_issues],
-  );
+  // ``activeIssues`` is the live-preview issues if the user has
+  // unsaved edits and the preview has come back, otherwise the saved
+  // invoice's persisted issues. The two sets share shape so the rest
+  // of the panel doesn't care which it's looking at.
+  const activeIssues = liveIssues ?? invoice.validation_issues;
+  const activeSummary = liveSummary ?? invoice.validation_summary;
+
+  const issuesByPath = useMemo(() => groupByPath(activeIssues), [activeIssues]);
   const conf = invoice.per_field_confidence ?? {};
 
   // ``valueOf(name)`` returns the value the user is currently looking at:
@@ -401,7 +467,7 @@ function ReviewPanel({
   // are rendered inline by LineItemsTable; a bare ``line_items`` path
   // (e.g. the ``required.line_items`` rule firing on zero items) has
   // nowhere else to land — orphan-stack it.
-  const orphanIssues = invoice.validation_issues.filter((i) => {
+  const orphanIssues = activeIssues.filter((i) => {
     if (!i.field_path) return true;
     if (i.field_path.startsWith("line_items[")) return false;
     return !FIELD_PATHS.has(i.field_path);
@@ -410,7 +476,7 @@ function ReviewPanel({
   // Slice 59B: blocking issues for the LHDN submit gate. We treat
   // any open validation issue as blocking — same threshold the
   // ValidationBanner shows.
-  const blockingIssues = invoice.validation_issues.filter((i) => i.severity !== "info").length;
+  const blockingIssues = activeIssues.filter((i) => i.severity !== "info").length;
 
   // Auto-fill ran and produced nothing — surface that explicitly
   // rather than letting the user think extraction silently failed.
@@ -435,7 +501,7 @@ function ReviewPanel({
         </div>
       )}
 
-      <ValidationBanner summary={invoice.validation_summary} />
+      <ValidationBanner summary={activeSummary} previewing={previewing} />
 
       <LhdnPanel
         invoice={invoice}

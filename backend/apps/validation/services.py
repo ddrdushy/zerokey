@@ -114,6 +114,43 @@ def issues_for_invoice(*, organization_id: UUID, invoice_id: UUID) -> list[Valid
     )
 
 
+def preview_validation(*, invoice_id: UUID | str, draft: dict[str, str]) -> list[Issue]:
+    """Run validation against a hypothetical Invoice without persisting.
+
+    The review UI debounces field edits and calls this to show live
+    pass/fail feedback as the user types — the alternative was building
+    a parallel TypeScript rule engine that would inevitably drift from
+    the Python source of truth. Same rules, same result, no duplication.
+
+    ``draft`` is a sparse map of ``EDITABLE_HEADER_FIELDS`` → string
+    values (the same shape ``update_invoice`` accepts). Unknown keys
+    are silently ignored so a future field that's editable on the
+    client but not yet allowlisted on the server doesn't 500 the
+    preview.
+
+    Line-item edits are NOT supported in v1 — header validation
+    covers the bulk of the issues the user sees. Save still runs full
+    line-aware validation, so we never claim a line-item issue is
+    resolved when it isn't.
+
+    Returns the raw ``Issue`` list (not persisted ``ValidationIssue``
+    rows) so the view layer can serialize it directly.
+    """
+    from apps.submission.services import (  # local import — submission depends on validation, not vice versa
+        EDITABLE_HEADER_FIELDS,
+        _set_invoice_field,
+    )
+
+    invoice = Invoice.objects.prefetch_related("line_items").get(id=invoice_id)
+    # Mutate in-memory only — Django won't persist unless ``.save()``
+    # is called. We never call save() on this code path.
+    for name, raw_value in (draft or {}).items():
+        if name not in EDITABLE_HEADER_FIELDS:
+            continue
+        _set_invoice_field(invoice, name, str(raw_value or ""))
+    return run_all_rules(invoice)
+
+
 def _count_by_severity(issues: list[Issue]) -> dict[str, int]:
     counter: Counter[str] = Counter(issue.severity for issue in issues)
     return {

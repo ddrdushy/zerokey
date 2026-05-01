@@ -115,6 +115,55 @@ def _invoice_update(request: Request, organization_id: str, invoice_id: str) -> 
     return Response(InvoiceSerializer(result.invoice).data)
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def validate_preview_view(request: Request, invoice_id: str) -> Response:
+    """Run validation against an in-memory invoice + draft, no persist.
+
+    The review UI debounces field edits and posts the current draft
+    here; we apply the draft to a fresh copy of the saved invoice and
+    run the rule engine. Issues come back in the same shape as
+    ``invoice.validation_issues`` so the FE can swap them in directly.
+
+    Read-only — never persists. Safe to call as fast as the FE wants.
+    """
+    from apps.validation.services import preview_validation
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+
+    invoice = services.get_invoice(organization_id=organization_id, invoice_id=invoice_id)
+    if invoice is None:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    draft = request.data if isinstance(request.data, dict) else {}
+    issues = preview_validation(invoice_id=invoice.id, draft=draft)
+    counts = {"error": 0, "warning": 0, "info": 0}
+    for issue in issues:
+        counts[issue.severity] = counts.get(issue.severity, 0) + 1
+    return Response(
+        {
+            "issues": [
+                {
+                    "code": issue.code,
+                    "severity": issue.severity,
+                    "field_path": issue.field_path,
+                    "message": issue.message,
+                    "detail": issue.detail,
+                }
+                for issue in issues
+            ],
+            "summary": {
+                "issue_count": len(issues),
+                "errors": counts["error"],
+                "warnings": counts["warning"],
+                "infos": counts["info"],
+            },
+        }
+    )
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def invoice_by_job(request: Request, job_id: str) -> Response:

@@ -99,17 +99,13 @@ export function FieldRow(props: ReadProps | EditProps) {
       {issues.length > 0 && (
         <div className="mt-2 flex flex-col gap-1.5">
           {issues.map((issue) => (
-            // When the user has edited the field, the existing issues
-            // are stale — show them dimmed + struck-through with a
-            // "revalidates on save" hint, so the user sees their fix
-            // was acknowledged. Fresh issues come back after Save.
-            <IssuePill key={issue.code + issue.field_path} issue={issue} stale={dirty} />
+            // Slice 91 — issues here are the LIVE preview from the
+            // server (debounced 400ms). No stale styling needed: if a
+            // pill is visible, the latest validation run still produces
+            // it. When the user fixes the value, the next debounce
+            // tick replaces this list and the pill simply disappears.
+            <IssuePill key={issue.code + issue.field_path} issue={issue} />
           ))}
-          {dirty && (
-            <span className="text-2xs text-slate-400">
-              Issues above will revalidate on save.
-            </span>
-          )}
         </div>
       )}
     </div>

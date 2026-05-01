@@ -1391,6 +1391,20 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(updates),
     }),
+  // Slice 91 — debounced live validation. Same rule engine as save,
+  // never persists. Body is the draft fields the user has edited so
+  // far (sparse — only edited fields need to be sent).
+  validatePreview: (
+    id: string,
+    draft: Record<string, string>,
+  ): Promise<{
+    issues: ValidationIssue[];
+    summary: { issue_count: number; errors: number; warnings: number; infos: number };
+  }> =>
+    request(`/invoices/${id}/validate-preview/`, {
+      method: "POST",
+      body: JSON.stringify(draft),
+    }),
   listCustomers: () => request<{ results: Customer[] }>("/customers/").then((r) => r.results),
   getCustomer: (id: string) => request<Customer>(`/customers/${id}/`),
   updateCustomer: (id: string, updates: Partial<Record<keyof Customer, string>>) =>
