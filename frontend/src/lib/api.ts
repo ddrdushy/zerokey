@@ -886,6 +886,12 @@ async function uploadAutoCountSync(args: {
 
 export const api = {
   ensureCsrf: () => request<{ detail: string }>("/identity/csrf/"),
+  // Slice 94 — MSIC code suggestion ranked against the catalog.
+  // Empty / stop-word-only queries return ``[]`` not the full catalog.
+  suggestMsic: (q: string) =>
+    request<{
+      results: { code: string; description_en: string; description_bm: string; score: number }[];
+    }>(`/msic/suggest/?q=${encodeURIComponent(q)}`),
   // Slice 92 — onboarding checklist for new owners.
   getOnboarding: () =>
     request<{

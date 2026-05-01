@@ -755,6 +755,20 @@ def update_invoice(
         invoice.per_field_confidence = confidence
         invoice.save()
 
+    # Slice 93 — rejection rework loop. When the user edits a
+    # rejected invoice, transition the status back to
+    # ``ready_for_review`` so the normal submit pipeline can re-run.
+    # Without this the LhdnPanel would still show the rejected state
+    # after save and the user couldn't progress. Audited via the
+    # invoice.updated event below.
+    if (
+        invoice.status == Invoice.Status.REJECTED
+        and (changed_header or changed_lines or added_numbers or removed_numbers)
+    ):
+        invoice.status = Invoice.Status.READY_FOR_REVIEW
+        invoice.error_message = ""
+        invoice.save(update_fields=["status", "error_message", "updated_at"])
+
     # Persist the training-data rows. One bulk insert per update; if the
     # transaction rolls back upstream the rows roll back too, so the
     # training table never disagrees with the invoice's actual state.

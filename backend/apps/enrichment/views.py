@@ -23,11 +23,40 @@ from rest_framework.response import Response
 
 from . import services
 from .models import CustomerMaster, ItemMaster
+from .msic_search import suggest_msic
 from .serializers import (
     CustomerInvoiceSummarySerializer,
     CustomerMasterSerializer,
     ItemMasterSerializer,
 )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def msic_suggest_view(request: Request) -> Response:
+    """Slice 94 — MSIC code suggestion ranked against the catalog.
+
+    Query: ``?q=<text>`` (e.g. an item description or industry phrase).
+    Returns up to 5 candidates, score-ranked. Empty / stop-word-only
+    queries return an empty list rather than the full catalog.
+    """
+    query = (request.query_params.get("q") or "").strip()
+    if not query:
+        return Response({"results": []})
+    suggestions = suggest_msic(query, limit=5)
+    return Response(
+        {
+            "results": [
+                {
+                    "code": s.code,
+                    "description_en": s.description_en,
+                    "description_bm": s.description_bm,
+                    "score": round(s.score, 3),
+                }
+                for s in suggestions
+            ]
+        }
+    )
 
 
 def _active_org(request: Request) -> str | None:

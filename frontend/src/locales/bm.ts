@@ -17,6 +17,7 @@ const bm: Record<string, string> = {
   "nav.audit": "Log Audit",
   "nav.engines": "Aktiviti Enjin",
   "nav.settings": "Organisasi",
+  "nav.help": "Pusat bantuan",
   "nav.workflow": "Aliran Kerja",
   "nav.compliance": "Pematuhan",
   "nav.settings_group": "Tetapan",

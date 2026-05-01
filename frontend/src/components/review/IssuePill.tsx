@@ -5,9 +5,11 @@
 // severity per the brand spec — error/warning/info map to the
 // existing semantic tokens, so a future theme change updates everything.
 
-import { AlertCircle, AlertTriangle, Info } from "lucide-react";
+import Link from "next/link";
+import { AlertCircle, AlertTriangle, HelpCircle, Info } from "lucide-react";
 
 import type { ValidationIssue } from "@/lib/api";
+import { getHelpArticle } from "@/lib/help-articles";
 import { cn } from "@/lib/utils";
 
 const TONE = {
@@ -43,6 +45,12 @@ export function IssuePill({
 }) {
   const tone = TONE[issue.severity];
   const Icon = tone.Icon;
+  // Slice 93 — when we have a long-form article for this code, render
+  // a "?" link to /dashboard/help#<code>. The user gets the inline
+  // message AND a path to the why + how-to-fix. Compact pills (line-
+  // items table cells) skip the link to keep the cell tight; the
+  // expanded panel above them carries the same article link.
+  const article = getHelpArticle(issue.code);
   return (
     <span
       role="note"
@@ -66,6 +74,18 @@ export function IssuePill({
         <span className={cn("whitespace-normal break-words", stale && "line-through")}>
           {issue.message}
         </span>
+      )}
+      {!compact && article && (
+        <Link
+          href={`/dashboard/help#${article.code}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Help: ${article.title}`}
+          className="ml-1 inline-flex shrink-0 items-center hover:opacity-70"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <HelpCircle className="h-3 w-3" />
+        </Link>
       )}
     </span>
   );

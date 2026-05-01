@@ -11,6 +11,7 @@ import { Package } from "lucide-react";
 
 import { api, ApiError, type Item } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
+import { MsicSuggestion } from "@/components/items/MsicSuggestion";
 
 export default function ItemsPage() {
   const router = useRouter();
@@ -131,7 +132,22 @@ function ItemTable({ items }: { items: Item[] }) {
                 )}
               </td>
               <td className="px-3 py-3 font-mono text-slate-600">
-                {it.default_msic_code || <span className="text-slate-400">—</span>}
+                {it.default_msic_code ? (
+                  it.default_msic_code
+                ) : (
+                  <MsicSuggestion
+                    item={it}
+                    onApplied={(code) => {
+                      // Optimistic local update — the PATCH already
+                      // succeeded by the time onApplied fires.
+                      setItems((prev) =>
+                        prev
+                          ? prev.map((x) => (x.id === it.id ? { ...x, default_msic_code: code } : x))
+                          : prev,
+                      );
+                    }}
+                  />
+                )}
               </td>
               <td className="px-3 py-3 font-mono text-slate-600">
                 {it.default_classification_code || <span className="text-slate-400">—</span>}

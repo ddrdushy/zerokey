@@ -39,6 +39,9 @@ urlpatterns = [
     path("api/v1/invoices/", include("apps.submission.urls")),
     path("api/v1/customers/", include("apps.enrichment.urls")),
     path("api/v1/items/", include("apps.enrichment.items_urls")),
+    # Slice 94 — MSIC code suggestion endpoint (catalog-only,
+    # not tenant-scoped — the catalog is the same for everyone).
+    path("api/v1/msic/", include("apps.enrichment.msic_urls")),
     path("api/v1/engines/", include("apps.extraction.urls")),
     path("api/v1/inbox/", include("apps.submission.inbox_urls")),
     path("api/v1/audit/", include("apps.audit.urls")),

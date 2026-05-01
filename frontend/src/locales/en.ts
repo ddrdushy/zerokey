@@ -19,6 +19,7 @@ const en: Record<string, string> = {
   "nav.audit": "Audit log",
   "nav.engines": "Engine activity",
   "nav.settings": "Organization",
+  "nav.help": "Help center",
   "nav.workflow": "Workflow",
   "nav.compliance": "Compliance",
   "nav.settings_group": "Settings",

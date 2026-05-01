@@ -8,6 +8,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   FileText,
+  HelpCircle,
   Inbox,
   LayoutDashboard,
   LogOut,
@@ -70,7 +71,11 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     labelKey: "nav.settings_group",
-    items: [{ labelKey: "nav.settings", href: "/dashboard/settings", icon: Settings }],
+    items: [
+      { labelKey: "nav.settings", href: "/dashboard/settings", icon: Settings },
+      // Slice 93 — help center: LHDN error decoder + ZeroKey rule articles.
+      { labelKey: "nav.help", href: "/dashboard/help", icon: HelpCircle },
+    ],
   },
 ];
 

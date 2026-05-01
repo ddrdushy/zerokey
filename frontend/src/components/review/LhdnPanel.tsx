@@ -19,6 +19,7 @@
 //       credit note for further changes" hint.
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
@@ -266,9 +267,7 @@ export function LhdnPanel({
             polling={busy === "poll"}
           />
         )}
-        {phase === "rejected" && (
-          <RejectedView invoice={invoice} busy={busy === "submit"} onRetry={onSubmit} />
-        )}
+        {phase === "rejected" && <RejectedView invoice={invoice} />}
         {phase === "cancelled" && <CancelledView invoice={invoice} />}
         {phase === "error" && <ErrorView invoice={invoice} />}
 
@@ -468,15 +467,14 @@ function ValidatedView({
   );
 }
 
-function RejectedView({
-  invoice,
-  busy,
-  onRetry,
-}: {
-  invoice: Invoice;
-  busy: boolean;
-  onRetry: () => void;
-}) {
+function RejectedView({ invoice }: { invoice: Invoice }) {
+  // Slice 93 — rework loop. Pull the LHDN error code out of the
+  // rejection message so we can link to its help article. LHDN
+  // codes look like ERR206 / DS302 / CF364; the rejection_message
+  // typically embeds them as the first token. Best-effort: if no
+  // recognized code is found, the help link is just omitted.
+  const errorCodeMatch = (invoice.error_message || "").match(/\b([A-Z]{2,3}\d{3,4})\b/);
+  const lhdnCode = errorCodeMatch ? errorCodeMatch[1] : null;
   return (
     <>
       <div className="flex items-start gap-2 text-2xs">
@@ -486,12 +484,27 @@ function RejectedView({
           <p className="mt-1 whitespace-pre-wrap break-words">
             {invoice.error_message || "No detail provided."}
           </p>
+          <p className="mt-2 text-2xs text-slate-500">
+            <strong>How to fix it:</strong> edit the affected fields below, save,
+            then click <em>Submit to LHDN</em>. Saving an edit on a rejected
+            invoice puts it back in <em>Ready for review</em> — your fix runs
+            through pre-flight validation before the next submission attempt.
+          </p>
+          {lhdnCode && (
+            <p className="mt-1 text-2xs text-slate-500">
+              LHDN error code <code className="rounded bg-slate-100 px-1 font-mono">{lhdnCode}</code>{" "}
+              ·{" "}
+              <Link
+                href={`/dashboard/help#${lhdnCode}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-ink underline-offset-4 hover:underline"
+              >
+                Read what this means
+              </Link>
+            </p>
+          )}
         </div>
-      </div>
-      <div>
-        <Button size="sm" onClick={onRetry} disabled={busy}>
-          {busy ? "Retrying…" : "Fix issues + resubmit"}
-        </Button>
       </div>
     </>
   );
