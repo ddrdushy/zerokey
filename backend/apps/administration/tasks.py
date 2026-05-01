@@ -65,3 +65,30 @@ def refresh_reference_catalogs() -> dict[str, dict[str, int]]:
     }
     logger.info("administration.refresh_reference_catalogs: %s", out)
     return out
+
+
+@shared_task(
+    name="administration.refresh_bnm_rates",
+    queue="low",
+    max_retries=0,
+    acks_late=False,
+)
+def refresh_bnm_rates() -> dict[str, object]:
+    """Pull daily BNM exchange rates + cache them (Slice 96).
+
+    Runs daily on celery beat. Soft-fails on network / parse errors —
+    we log and return so a flaky BNM endpoint doesn't poison the
+    beat tick. The previous-day cache stays authoritative until the
+    next successful fetch.
+    """
+    from . import bnm_rates
+
+    summary = bnm_rates.fetch_and_cache()
+    payload = {
+        "fetched": summary.fetched,
+        "upserted": summary.upserted,
+        "unchanged": summary.unchanged,
+        "failed_reason": summary.failed_reason,
+    }
+    logger.info("administration.refresh_bnm_rates: %s", payload)
+    return payload

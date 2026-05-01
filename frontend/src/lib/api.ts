@@ -275,6 +275,10 @@ export type Invoice = {
   lhdn_qr_code_url: string;
   validation_timestamp: string | null;
   cancellation_timestamp: string | null;
+  // Slice 96 — non-null when the user has scheduled the invoice for
+  // deferred submission. The dispatch beat task picks it up at this
+  // time and fires the submit pipeline.
+  scheduled_submit_at: string | null;
   error_message: string;
   line_items: LineItem[];
   validation_issues: ValidationIssue[];
@@ -892,6 +896,14 @@ export const api = {
     request<{
       results: { code: string; description_en: string; description_bm: string; score: number }[];
     }>(`/msic/suggest/?q=${encodeURIComponent(q)}`),
+  // Slice 96 — switch the user's active organization. Multi-entity
+  // workspaces (accounting firms with several client orgs under one
+  // login) need this to flip context without signing out.
+  switchOrganization: (organization_id: string) =>
+    request<Me>("/identity/switch-organization/", {
+      method: "POST",
+      body: JSON.stringify({ organization_id }),
+    }),
   // Slice 92 — onboarding checklist for new owners.
   getOnboarding: () =>
     request<{
@@ -1428,6 +1440,34 @@ export const api = {
       method: "POST",
       body: JSON.stringify(draft),
     }),
+  // Slice 96 — set or clear deferred submission timestamp.
+  // Pass null to clear (cancel the schedule).
+  scheduleSubmit: (id: string, isoTimestamp: string | null) =>
+    request<Invoice>(`/invoices/${id}/schedule/`, {
+      method: "POST",
+      body: JSON.stringify({ scheduled_submit_at: isoTimestamp }),
+    }),
+  // Slice 96 — compliance posture metrics derived from existing
+  // Invoice rows. Window default is 30 days, ?days=N overrides.
+  compliancePosture: (days = 30) =>
+    request<{
+      window_days: number;
+      counts: {
+        total: number;
+        validated: number;
+        rejected: number;
+        cancelled: number;
+        error: number;
+        in_flight: number;
+        ready_for_review: number;
+      };
+      success_rate: number | null;
+      median_seconds_to_validation: number | null;
+      penalty_window_compliance: number | null;
+      penalty_window_days: number;
+      in_penalty_window: number;
+      out_of_penalty_window: number;
+    }>(`/invoices/compliance/?days=${days}`),
   listCustomers: () => request<{ results: Customer[] }>("/customers/").then((r) => r.results),
   getCustomer: (id: string) => request<Customer>(`/customers/${id}/`),
   updateCustomer: (id: string, updates: Partial<Record<keyof Customer, string>>) =>

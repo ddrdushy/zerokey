@@ -43,6 +43,12 @@ class WebhookEndpoint(TenantScopedModel):
     label = models.CharField(max_length=64)
     url = models.URLField(max_length=2048)
     event_types = models.JSONField(default=list, blank=True)
+    # Slice 96 — payload versioning per API_DESIGN.md §184. New
+    # endpoints default to the current version; older endpoints
+    # stay pinned to the version they were created against until
+    # the customer migrates. Today only "v1" exists; "v2" will
+    # land alongside the first breaking change to a payload shape.
+    api_version = models.CharField(max_length=8, default="v1")
 
     secret_prefix = models.CharField(max_length=16, db_index=True)
     secret_hash = models.CharField(max_length=128)

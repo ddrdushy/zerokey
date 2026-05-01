@@ -65,6 +65,8 @@ const NAV_GROUPS: NavGroup[] = [
   {
     labelKey: "nav.compliance",
     items: [
+      // Slice 96 — compliance posture (success rate, penalty-window %).
+      { labelKey: "nav.compliance_posture", href: "/dashboard/compliance", icon: ShieldCheck },
       { labelKey: "nav.audit", href: "/dashboard/audit", icon: ShieldCheck },
       { labelKey: "nav.engines", href: "/dashboard/engines", icon: Sparkles },
     ],
@@ -291,7 +293,13 @@ function TopBar({
             <ChevronDown className="h-3 w-3 text-slate-400" />
           </button>
           {menuOpen && (
-            <div className="absolute right-0 top-full mt-2 w-56 rounded-md border border-slate-100 bg-white p-1 shadow-md">
+            <div className="absolute right-0 top-full mt-2 w-64 rounded-md border border-slate-100 bg-white p-1 shadow-md">
+              {me && me.memberships.length > 1 && (
+                <>
+                  <WorkspaceSwitcher me={me} />
+                  <div className="my-1 border-t border-slate-100" />
+                </>
+              )}
               <LanguageMenu />
               <div className="my-1 border-t border-slate-100" />
               <button
@@ -308,6 +316,66 @@ function TopBar({
     </header>
   );
 }
+
+// Slice 96 — multi-entity workspace switcher.
+//
+// When a user belongs to >1 organization (typically an accounting
+// firm with several client tenants under one login) we show a
+// list of memberships in the user dropdown. Picking one POSTs to
+// /identity/switch-organization/ and reloads so every tenant-
+// scoped query in the app re-runs against the new active org.
+function WorkspaceSwitcher({ me }: { me: Me }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function onPick(organization_id: string) {
+    if (organization_id === me.active_organization_id) return;
+    setBusy(organization_id);
+    try {
+      await api.switchOrganization(organization_id);
+      // Hard reload so every cached page state re-fetches under
+      // the new tenant. router.refresh() alone leaves the cached
+      // useEffect responses behind.
+      window.location.reload();
+    } catch {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="px-2 pb-1 pt-2">
+      <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+        Workspaces
+      </div>
+      <div className="flex max-h-56 flex-col overflow-y-auto">
+        {me.memberships.map((m) => {
+          const active = m.organization.id === me.active_organization_id;
+          return (
+            <button
+              key={m.organization.id}
+              type="button"
+              onClick={() => onPick(m.organization.id)}
+              disabled={busy != null}
+              className={cn(
+                "flex items-center justify-between rounded-md px-2 py-1.5 text-left text-xs hover:bg-slate-50",
+                active ? "font-medium text-ink" : "text-slate-600",
+              )}
+              title={m.organization.legal_name}
+            >
+              <span className="truncate">{m.organization.legal_name}</span>
+              {busy === m.organization.id ? (
+                <span className="text-2xs text-slate-400">…</span>
+              ) : active ? (
+                <span className="text-2xs text-success">✓</span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 
 // Slice 86 — language switcher in the user dropdown.
 //

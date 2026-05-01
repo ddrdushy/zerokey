@@ -8700,6 +8700,32 @@ Still open (ordered roughly by Phase 5–6 priority):
   page with empty fields and inline "is required" issues.
   A small banner would explain *why* the fields are empty
   rather than letting the user assume the extraction failed.
+- **SSO (SAML 2.0 + OpenID Connect)** — PRODUCT_REQUIREMENTS §113.
+  ``SSOConfiguration`` model exists in ``apps.identity.models``;
+  the SAML/OIDC provider integration does not. Pro-tier value
+  prop, blocks larger procurement-driven sales. Plan when picked
+  up: pull in ``python-saml`` + ``authlib`` (one each for SAML
+  and OIDC), add ``/identity/sso/login/<idp_id>/`` initiate +
+  ACS endpoints, JIT-provision Memberships from IdP attribute
+  mapping. ~3-4d slice including the admin UI to register an
+  IdP. Until then, the model just sits there.
+- **SQL Account + Sage UBS connectors.** Slice 85 shipped
+  AutoCount as the proof-of-concept. The CSV-driven pattern
+  (``apps.connectors.adapters.autocount_adapter``) generalises
+  cleanly to the other two — SQL Account exports as XLSX with
+  fixed column ordering, Sage UBS as CSV with semicolons. Each
+  is a 1d copy-and-rename from the AutoCount adapter. Defer
+  until a customer asks (the most-asked-about of these three is
+  AutoCount, and it's already shipped).
+- **Live validation preview for line-item edits.** Slice 91
+  preview-validates header-field edits only. Same ``run_all_rules``
+  engine handles line items; the only missing piece is the FE
+  passing ``add_line_items`` / ``remove_line_items`` /
+  ``line_items`` shapes through to ``preview_validation``, which
+  needs a small extension on ``apps.validation.services
+  .preview_validation`` to apply line-level drafts to the
+  in-memory invoice copy. ~2h slice; defer until a real user
+  needs live feedback on line-item changes.
 - **Field-level PII encryption.** PRODUCT_REQUIREMENTS §223
   promises "PII stored at rest is encrypted." Today: KMS
   envelope covers customer signing certs (Slice 55) +

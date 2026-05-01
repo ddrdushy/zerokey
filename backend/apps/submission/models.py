@@ -158,6 +158,13 @@ class Invoice(TenantScopedModel):
     signed_xml_s3_key = models.CharField(max_length=1024, blank=True)
     validation_timestamp = models.DateTimeField(null=True, blank=True)
     cancellation_timestamp = models.DateTimeField(null=True, blank=True)
+    # Slice 96 — deferred submission. When non-null, ``scheduled_submit_at``
+    # tells the ``submission.dispatch_scheduled`` beat task to fire the
+    # submit pipeline at or after this time. The user sets this from the
+    # review screen ("Schedule for…"); submission flips back to immediate
+    # the moment they click "Submit to LHDN". Indexed because the beat
+    # query is "WHERE scheduled_submit_at <= now() AND status='ready_for_review'".
+    scheduled_submit_at = models.DateTimeField(null=True, blank=True, db_index=True)
     error_message = models.TextField(blank=True)
 
     # --- Billing reference (CN / DN / RN — required by LHDN) ----------------

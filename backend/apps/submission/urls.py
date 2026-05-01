@@ -14,6 +14,14 @@ urlpatterns = [
         views.validate_preview_view,
         name="validate-preview",
     ),
+    # Slice 96 — set / clear deferred-submit timestamp.
+    path(
+        "<uuid:invoice_id>/schedule/",
+        views.schedule_submit_view,
+        name="schedule-submit",
+    ),
+    # Slice 96 — compliance-posture metrics for the dashboard.
+    path("compliance/", views.compliance_posture_view, name="compliance-posture"),
     # Slice 59B — LHDN lifecycle gestures
     path(
         "<uuid:invoice_id>/submit-to-lhdn/",

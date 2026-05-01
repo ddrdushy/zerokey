@@ -167,6 +167,52 @@ class TaxTypeCode(_ReferenceMeta):
         return f"{self.code} {self.description_en}"
 
 
+class BnmExchangeRate(models.Model):
+    """Daily Bank Negara Malaysia reference exchange rate (Slice 96).
+
+    Powers ``Invoice.myr_equivalent_total`` — when an SME invoices a
+    foreign customer in USD / EUR / SGD, LHDN expects the MYR
+    equivalent computed at the BNM rate on the issue date.
+    Customer-facing today via ``apps.enrichment.currency.compute_myr
+    _equivalent``; refreshed daily via the ``administration.refresh
+    _bnm_rates`` celery beat task that pulls api.bnm.gov.my.
+
+    Not tenant-scoped — the rate is the same for everyone, same as
+    the LHDN reference catalogs above. Compound primary key
+    (rate_date, currency_code) keeps each day's rate rewritable on
+    re-fetch without piling up rows.
+    """
+
+    rate_date = models.DateField()
+    currency_code = models.CharField(max_length=3)  # e.g. USD, SGD, EUR
+    # All three rates BNM publishes. ``middle_rate`` is the most
+    # commonly used reference figure; buying / selling cover the
+    # ~0.5 % spread for callers that want the conservative side.
+    buying_rate = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+    selling_rate = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+    middle_rate = models.DecimalField(max_digits=12, decimal_places=6)
+    # Snapshot of when we fetched this row from BNM, so an audit
+    # reader can tell a stale rate (used when no fresh rate is
+    # available for the issue date) from a fresh one.
+    fetched_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "bnm_exchange_rate"
+        ordering = ["-rate_date", "currency_code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["rate_date", "currency_code"],
+                name="bnm_exchange_rate_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["currency_code", "-rate_date"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.currency_code} @ {self.rate_date}: {self.middle_rate}"
+
+
 class ImpersonationSession(models.Model):
     """A platform-staff impersonation of a tenant.
 

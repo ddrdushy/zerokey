@@ -115,6 +115,189 @@ def _invoice_update(request: Request, organization_id: str, invoice_id: str) -> 
     return Response(InvoiceSerializer(result.invoice).data)
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def compliance_posture_view(request: Request) -> Response:
+    """Slice 96 — compliance posture metrics.
+
+    Derived from the existing Invoice + AuditEvent rows; no new
+    columns, no separate aggregation table. The numbers are honest
+    snapshots, not pre-aggregated; for a tenant with millions of
+    invoices we'd swap in materialised counts. Today's tenants are
+    in the hundreds.
+
+    Window: last 30 days by default; ``?days=90`` overrides.
+
+    Returns:
+      total: count of invoices with issue_date in the window
+      validated: validated by LHDN
+      rejected: rejected by LHDN
+      cancelled, error: terminal but not validated
+      in_flight: ready_for_review / submitting / signing
+      success_rate: validated / (validated + rejected + cancelled + error)
+      median_seconds_to_validation: half of validated invoices took
+        this long or less from creation → validated_timestamp
+      penalty_window_compliance: % of validated invoices submitted
+        within 30 days of issue_date (LHDN's Phase 4 enforcement
+        window)
+    """
+    from datetime import timedelta
+    from statistics import median
+
+    from django.utils import timezone
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        days = int(request.query_params.get("days", "30"))
+    except ValueError:
+        days = 30
+    days = max(1, min(days, 365))
+
+    cutoff = timezone.now() - timedelta(days=days)
+    invoices = Invoice.objects.filter(
+        organization_id=organization_id,
+        created_at__gte=cutoff,
+    ).only(
+        "status",
+        "created_at",
+        "validation_timestamp",
+        "issue_date",
+    )
+
+    counts = {
+        "total": 0,
+        "validated": 0,
+        "rejected": 0,
+        "cancelled": 0,
+        "error": 0,
+        "in_flight": 0,
+        "ready_for_review": 0,
+    }
+    seconds_to_validation: list[float] = []
+    in_window = 0
+    out_of_window = 0
+    PENALTY_DAYS = 30
+
+    for inv in invoices:
+        counts["total"] += 1
+        s = inv.status
+        if s in counts:
+            counts[s] += 1
+        elif s == "submitting" or s == "signing" or s == "awaiting_approval":
+            counts["in_flight"] += 1
+        if s == Invoice.Status.VALIDATED and inv.validation_timestamp and inv.created_at:
+            seconds_to_validation.append(
+                (inv.validation_timestamp - inv.created_at).total_seconds()
+            )
+        if s == Invoice.Status.VALIDATED and inv.validation_timestamp and inv.issue_date:
+            delta_days = (inv.validation_timestamp.date() - inv.issue_date).days
+            if 0 <= delta_days <= PENALTY_DAYS:
+                in_window += 1
+            else:
+                out_of_window += 1
+
+    terminal = counts["validated"] + counts["rejected"] + counts["cancelled"] + counts["error"]
+    success_rate = (counts["validated"] / terminal) if terminal else None
+    penalty_compliance = (
+        (in_window / (in_window + out_of_window)) if (in_window + out_of_window) else None
+    )
+
+    return Response(
+        {
+            "window_days": days,
+            "counts": counts,
+            "success_rate": round(success_rate, 4) if success_rate is not None else None,
+            "median_seconds_to_validation": (
+                round(median(seconds_to_validation), 1) if seconds_to_validation else None
+            ),
+            "penalty_window_compliance": (
+                round(penalty_compliance, 4) if penalty_compliance is not None else None
+            ),
+            "penalty_window_days": PENALTY_DAYS,
+            "in_penalty_window": in_window,
+            "out_of_penalty_window": out_of_window,
+        }
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def schedule_submit_view(request: Request, invoice_id: str) -> Response:
+    """Slice 96 — set / clear an invoice's deferred-submit timestamp.
+
+    Body: ``{"scheduled_submit_at": "2026-05-03T09:00:00Z"}`` to set,
+    or ``{"scheduled_submit_at": null}`` to clear.
+
+    The dispatch beat task (``submission.dispatch_scheduled``) picks
+    up rows whose timestamp has come due AND whose status is
+    ``ready_for_review``. Clearing simply cancels the schedule;
+    the user can still hit Submit immediately.
+    """
+    from datetime import datetime
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+
+    invoice = services.get_invoice(organization_id=organization_id, invoice_id=invoice_id)
+    if invoice is None:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    if invoice.status != Invoice.Status.READY_FOR_REVIEW:
+        return Response(
+            {
+                "detail": (
+                    f"Can only schedule from ready_for_review state; current state "
+                    f"is {invoice.status}."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    body = request.data if isinstance(request.data, dict) else {}
+    raw = body.get("scheduled_submit_at")
+    if raw is None or raw == "":
+        invoice.scheduled_submit_at = None
+    else:
+        if not isinstance(raw, str):
+            return Response(
+                {"detail": "scheduled_submit_at must be an ISO datetime string or null."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            # Normalise Z → +00:00 since fromisoformat in 3.11+ accepts both
+            # but earlier versions don't. We're on 3.12 but be defensive.
+            value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return Response(
+                {"detail": f"scheduled_submit_at is not a valid ISO datetime: {raw!r}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        invoice.scheduled_submit_at = value
+
+    invoice.save(update_fields=["scheduled_submit_at", "updated_at"])
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    record_event(
+        action_type="invoice.scheduled" if invoice.scheduled_submit_at else "invoice.unscheduled",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(request.user.id),
+        organization_id=str(invoice.organization_id),
+        affected_entity_type="Invoice",
+        affected_entity_id=str(invoice.id),
+        payload={
+            "scheduled_submit_at": (
+                invoice.scheduled_submit_at.isoformat() if invoice.scheduled_submit_at else None
+            )
+        },
+    )
+    return Response(InvoiceSerializer(invoice).data)
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def validate_preview_view(request: Request, invoice_id: str) -> Response:

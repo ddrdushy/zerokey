@@ -211,6 +211,36 @@ def send_test_delivery(
     return _delivery_dict(delivery)
 
 
+def _shape_for_version(
+    *,
+    payload: dict[str, Any],
+    event_type: str,
+    api_version: str,
+) -> dict[str, Any]:
+    """Wrap an event payload in a versioned envelope (Slice 96).
+
+    Today only ``v1`` exists, so this is a passthrough that adds the
+    envelope. The shape:
+
+      {
+        "api_version": "v1",
+        "event_type": "invoice.validated",
+        "data": <whatever the dispatcher passed>,
+      }
+
+    When v2 lands, branch on ``api_version`` here and emit the v2
+    shape only for endpoints pinned to v2 — endpoints pinned to v1
+    keep getting v1 forever, even after we've added v2 elsewhere.
+    That's the whole point of versioning: receivers don't have to
+    keep up with us.
+    """
+    return {
+        "api_version": api_version or "v1",
+        "event_type": event_type,
+        "data": payload,
+    }
+
+
 def fan_out_event(
     *,
     organization_id: uuid.UUID | str,
@@ -245,11 +275,21 @@ def fan_out_event(
             subscribed = list(endpoint.event_types or [])
             if event_type not in subscribed:
                 continue
+            # Slice 96 — version the payload at fan-out time. The
+            # outer envelope carries ``api_version`` so receivers can
+            # gate their parsing on a stable contract; the inner
+            # ``data`` is the same shape dispatch_event passed in,
+            # adapted by ``_shape_for_version`` if we ever ship v2.
+            versioned_payload = _shape_for_version(
+                payload=payload,
+                event_type=event_type,
+                api_version=endpoint.api_version or "v1",
+            )
             delivery = WebhookDelivery.objects.create(
                 organization_id=organization_id,
                 endpoint=endpoint,
                 event_type=event_type,
-                payload=payload,
+                payload=versioned_payload,
                 attempt=1,
                 outcome=WebhookDelivery.Outcome.PENDING,
             )

@@ -172,6 +172,57 @@ SWEEP_MAX_PER_RUN = 100  # Safety cap. A backlog past this is its
 
 
 @shared_task(
+    name="submission.dispatch_scheduled",
+    queue="low",
+    acks_late=True,
+)
+def dispatch_scheduled() -> dict[str, object]:
+    """Slice 96 — fire submit on invoices whose ``scheduled_submit_at`` is due.
+
+    Runs on a 1-minute beat schedule. Picks up rows where:
+      - ``scheduled_submit_at`` is non-null AND in the past,
+      - ``status`` is ``ready_for_review`` (not already in flight,
+        not validated, not rejected).
+
+    For each match, clears ``scheduled_submit_at`` (so a re-run
+    doesn't double-fire even if the submit is still queued) and
+    queues the submit task. The submit pipeline runs the same
+    pre-flight validation it always does — if the invoice has
+    drifted out of submittable state, it'll surface the issues
+    cleanly rather than silently fail.
+    """
+    from datetime import timezone as _tz
+
+    from django.utils import timezone
+
+    from apps.identity.tenancy import super_admin_context
+
+    from .models import Invoice
+
+    now = timezone.now().astimezone(_tz.utc)
+    dispatched: list[str] = []
+    with super_admin_context(reason="submission.dispatch_scheduled"):
+        due = list(
+            Invoice.objects.filter(
+                status=Invoice.Status.READY_FOR_REVIEW,
+                scheduled_submit_at__isnull=False,
+                scheduled_submit_at__lte=now,
+            ).order_by("scheduled_submit_at")[:50]
+        )
+        for inv in due:
+            inv.scheduled_submit_at = None
+            inv.save(update_fields=["scheduled_submit_at", "updated_at"])
+            # Queue the existing per-invoice submit task — same path
+            # the user-clicked submit takes, so signing + LHDN call
+            # + audit all run identically.
+            submit_to_lhdn.delay(str(inv.id))
+            dispatched.append(str(inv.id))
+    if dispatched:
+        logger.info("submission.dispatch_scheduled.fired", extra={"count": len(dispatched)})
+    return {"dispatched": len(dispatched)}
+
+
+@shared_task(
     name="submission.sweep_inflight_polls",
     queue="low",
     acks_late=True,

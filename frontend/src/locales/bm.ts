@@ -14,6 +14,7 @@ const bm: Record<string, string> = {
   "nav.customers": "Pelanggan",
   "nav.items": "Barang",
   "nav.connectors": "Penyambung",
+  "nav.compliance_posture": "Postur Pematuhan",
   "nav.audit": "Log Audit",
   "nav.engines": "Aktiviti Enjin",
   "nav.settings": "Organisasi",

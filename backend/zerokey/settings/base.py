@@ -243,6 +243,10 @@ SUBMISSION_SWEEP_SECONDS = env.int("SUBMISSION_SWEEP_SECONDS", default=60)
 # wastes operator review cycles on no-op runs.
 CATALOG_REFRESH_SECONDS = env.int("CATALOG_REFRESH_SECONDS", default=30 * 24 * 60 * 60)
 
+# Daily BNM exchange-rate refresh (Slice 96). 24h is the right cadence —
+# BNM publishes once per business day.
+BNM_RATES_REFRESH_SECONDS = env.int("BNM_RATES_REFRESH_SECONDS", default=24 * 60 * 60)
+
 # How often to sweep for IngestionJobs stranded in non-terminal states
 # (Slice 90 fixed the Slice-60 IntegrityError that produced the original
 # stuck-extracting backlog; the sweep keeps any future strandings from
@@ -267,9 +271,23 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": float(EXTRACTION_SWEEP_SECONDS),
         "options": {"queue": "low"},
     },
+    # Slice 96 — fires submission on invoices whose
+    # scheduled_submit_at has come due. 1-min cadence is fine
+    # because the user-set schedule resolution is already
+    # rounded to the minute by the FE picker.
+    "submission.dispatch_scheduled": {
+        "task": "submission.dispatch_scheduled",
+        "schedule": 60.0,
+        "options": {"queue": "low"},
+    },
     "administration.refresh_reference_catalogs": {
         "task": "administration.refresh_reference_catalogs",
         "schedule": float(CATALOG_REFRESH_SECONDS),
+        "options": {"queue": "low"},
+    },
+    "administration.refresh_bnm_rates": {
+        "task": "administration.refresh_bnm_rates",
+        "schedule": float(BNM_RATES_REFRESH_SECONDS),
         "options": {"queue": "low"},
     },
 }

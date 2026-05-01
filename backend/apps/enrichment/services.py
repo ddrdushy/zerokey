@@ -97,8 +97,9 @@ def enrich_invoice(invoice_id: UUID | str) -> EnrichmentResult:
         customer = _enrich_customer(invoice)
         autofilled = _autofill_buyer(invoice, customer.master) if customer.master else []
         items_matched, items_created = _enrich_line_items(invoice)
+        myr_filled = _apply_myr_equivalent(invoice)
 
-        if autofilled:
+        if autofilled or myr_filled:
             invoice.save()
 
         record_event(
@@ -148,6 +149,43 @@ class _CustomerOutcome:
     master: CustomerMaster | None
     matched: bool
     created: bool
+
+
+def _apply_myr_equivalent(invoice: Invoice) -> bool:
+    """Slice 96 — fill ``Invoice.myr_equivalent_total`` from BNM rates.
+
+    LHDN expects foreign-currency invoices to carry the MYR equivalent
+    at the BNM reference rate on the issue date. We apply this here
+    rather than at the validation layer because the value is derived
+    data, not a user-correctable field.
+
+    Skipped silently when:
+      - currency_code is empty / MYR (no conversion needed),
+      - issue_date is missing (can't pick the right rate),
+      - grand_total is missing (nothing to convert),
+      - no BNM rate available within the 14-day lookback window
+        (the cache may be empty in dev / unconfigured envs).
+
+    Returns True iff the invoice was updated, so the caller knows
+    to save.
+    """
+    from decimal import Decimal as _D
+
+    from apps.administration.bnm_rates import lookup_rate
+
+    currency = (invoice.currency_code or "").upper()
+    if not currency or currency == "MYR":
+        return False
+    if invoice.issue_date is None or invoice.grand_total is None:
+        return False
+    rate = lookup_rate(currency_code=currency, on_or_before=invoice.issue_date)
+    if rate is None:
+        return False
+    new_value = (invoice.grand_total * rate.middle_rate).quantize(_D("0.01"))
+    if invoice.myr_equivalent_total == new_value:
+        return False
+    invoice.myr_equivalent_total = new_value
+    return True
 
 
 def _enrich_customer(invoice: Invoice) -> _CustomerOutcome:

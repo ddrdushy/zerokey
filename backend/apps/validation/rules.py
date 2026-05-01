@@ -721,6 +721,77 @@ def rule_sst_consistency(invoice: Invoice) -> list[Issue]:
     return []
 
 
+# --- Self-billed detection (Slice 96 — P1) ------------------------------------
+
+
+_SELF_BILLED_TYPES = frozenset(
+    {
+        Invoice.InvoiceType.SELF_BILLED_INVOICE,
+        Invoice.InvoiceType.SELF_BILLED_CREDIT_NOTE,
+        Invoice.InvoiceType.SELF_BILLED_DEBIT_NOTE,
+        Invoice.InvoiceType.SELF_BILLED_REFUND_NOTE,
+        # Legacy alias (pre-Slice-60 data may still use this).
+        "self_billed",
+    }
+)
+
+
+def rule_self_billed_detection(invoice: Invoice) -> list[Issue]:
+    """Flag invoices that look like they should be self-billed.
+
+    LHDN's self-billed types (11–14) apply when the BUYER is the one
+    creating the invoice (typically Malaysian SME paying a foreign
+    supplier who can't issue an LHDN-compliant invoice). The two
+    signals: ``supplier_tin`` is blank AND ``buyer_country_code`` is
+    "MY" (or empty — defaults to MY) AND the invoice type is not
+    already one of the self-billed variants.
+
+    Severity: WARNING. We never silently flip the type — that would
+    change the LHDN doc-type code that gets submitted, which has
+    real legal meaning. Surface the suggestion; let the user
+    confirm with one click.
+
+    The ``detail`` payload tells the frontend which type to flip to:
+    if the current type is ``standard`` → ``self_billed_invoice``,
+    ``credit_note`` → ``self_billed_credit_note``, etc.
+    """
+    if _is_blank(invoice.supplier_tin) is False:
+        return []  # supplier has a TIN, normal invoice
+    if invoice.invoice_type in _SELF_BILLED_TYPES:
+        return []  # already self-billed; nothing to flag
+    # Buyer must be Malaysian for self-billed to apply (it's a Malaysian
+    # tax filing concept). Empty country code defaults to MY by convention.
+    buyer_country = (invoice.buyer_country_code or "MY").upper()
+    if buyer_country != "MY":
+        return []
+
+    # Map standard types to their self-billed counterparts.
+    self_billed_map = {
+        Invoice.InvoiceType.STANDARD: Invoice.InvoiceType.SELF_BILLED_INVOICE,
+        Invoice.InvoiceType.CREDIT_NOTE: Invoice.InvoiceType.SELF_BILLED_CREDIT_NOTE,
+        Invoice.InvoiceType.DEBIT_NOTE: Invoice.InvoiceType.SELF_BILLED_DEBIT_NOTE,
+        Invoice.InvoiceType.REFUND_NOTE: Invoice.InvoiceType.SELF_BILLED_REFUND_NOTE,
+    }
+    suggested = self_billed_map.get(invoice.invoice_type)
+
+    return [
+        Issue(
+            code="invoice_type.self_billed_suggested",
+            severity=SEVERITY_WARNING,
+            field_path="invoice_type",
+            message=(
+                "The supplier has no Malaysian TIN — this looks like a self-billed "
+                "invoice (a Malaysian buyer paying a foreign or unregistered "
+                "supplier). Confirm the invoice type before submitting."
+            ),
+            detail={
+                "current_type": str(invoice.invoice_type),
+                "suggested_type": str(suggested) if suggested else "",
+            },
+        )
+    ]
+
+
 # --- Invoice number uniqueness within supplier namespace -----------------------
 
 
@@ -782,6 +853,7 @@ RULES: list[RuleFn] = [
     rule_invoice_total_arithmetic,
     rule_rm10k_threshold,
     rule_sst_consistency,
+    rule_self_billed_detection,
     rule_invoice_number_uniqueness,
 ]
 

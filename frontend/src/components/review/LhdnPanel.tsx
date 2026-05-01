@@ -252,6 +252,7 @@ export function LhdnPanel({
             blockingIssues={blockingIssues}
             busy={busy === "submit"}
             onSubmit={onSubmit}
+            onScheduleChanged={onInvoiceChanged}
           />
         )}
         {phase === "in_flight" && (
@@ -340,13 +341,38 @@ function PreflightView({
   blockingIssues,
   busy,
   onSubmit,
+  onScheduleChanged,
 }: {
   invoice: Invoice;
   blockingIssues: number;
   busy: boolean;
   onSubmit: () => void;
+  onScheduleChanged: (next: Invoice) => void;
 }) {
   const blocked = blockingIssues > 0 || !invoice.invoice_number;
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleValue, setScheduleValue] = useState<string>(
+    invoice.scheduled_submit_at
+      ? new Date(invoice.scheduled_submit_at).toISOString().slice(0, 16)
+      : "",
+  );
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+
+  async function applySchedule(iso: string | null) {
+    setSavingSchedule(true);
+    setScheduleError(null);
+    try {
+      const updated = await api.scheduleSubmit(invoice.id, iso);
+      onScheduleChanged(updated);
+      if (!iso) setScheduleOpen(false);
+    } catch (err) {
+      setScheduleError(err instanceof Error ? err.message : "Schedule failed.");
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
   return (
     <>
       <p className="text-2xs text-slate-500">
@@ -362,7 +388,24 @@ function PreflightView({
           before submitting.
         </div>
       )}
-      <div>
+      {invoice.scheduled_submit_at && (
+        // Slice 96 — current schedule visible alongside the manual
+        // Submit button. User can clear without retyping a date.
+        <div className="rounded-md border border-info/30 bg-info/5 px-3 py-2 text-2xs text-slate-700">
+          <div className="font-medium">
+            Scheduled to submit at {new Date(invoice.scheduled_submit_at).toLocaleString()}.
+          </div>
+          <button
+            type="button"
+            onClick={() => applySchedule(null)}
+            disabled={savingSchedule}
+            className="mt-1 text-ink underline-offset-4 hover:underline"
+          >
+            {savingSchedule ? "Cancelling…" : "Cancel schedule"}
+          </button>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
         <Button onClick={onSubmit} disabled={busy || blocked}>
           {busy ? (
             <>
@@ -376,7 +419,47 @@ function PreflightView({
             </>
           )}
         </Button>
+        {!invoice.scheduled_submit_at && (
+          <Button
+            variant="outline"
+            size="md"
+            disabled={blocked}
+            onClick={() => setScheduleOpen(!scheduleOpen)}
+          >
+            Schedule…
+          </Button>
+        )}
       </div>
+      {scheduleOpen && !invoice.scheduled_submit_at && (
+        <div className="rounded-md border border-slate-200 bg-white px-3 py-3 text-2xs">
+          <label className="flex flex-col gap-1.5">
+            <span className="font-medium uppercase tracking-wider text-slate-500">
+              Submit at
+            </span>
+            <input
+              type="datetime-local"
+              value={scheduleValue}
+              onChange={(e) => setScheduleValue(e.target.value)}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-base text-ink focus:border-ink focus:outline-none"
+            />
+          </label>
+          <div className="mt-3 flex gap-2">
+            <Button
+              size="sm"
+              disabled={!scheduleValue || savingSchedule}
+              onClick={() => applySchedule(new Date(scheduleValue).toISOString())}
+            >
+              {savingSchedule ? "Saving…" : "Schedule"}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setScheduleOpen(false)}>
+              Cancel
+            </Button>
+          </div>
+          {scheduleError && (
+            <p className="mt-2 text-error">{scheduleError}</p>
+          )}
+        </div>
+      )}
     </>
   );
 }

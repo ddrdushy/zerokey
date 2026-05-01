@@ -169,6 +169,8 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "lhdn_qr_code_url",
             "validation_timestamp",
             "cancellation_timestamp",
+            # Slice 96 — deferred-submit timestamp; null when not scheduled.
+            "scheduled_submit_at",
             # Amendment fields (Slice 60/61)
             "original_invoice_uuid",
             "original_invoice_internal_id",

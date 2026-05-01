@@ -237,6 +237,19 @@ export const HELP_ARTICLES: Record<string, HelpArticle> = {
   },
 
   // -- Special cases -------------------------------------------------------
+  "invoice_type.self_billed_suggested": {
+    code: "invoice_type.self_billed_suggested",
+    title: "This looks like a self-billed invoice",
+    summary:
+      "The supplier has no Malaysian TIN — usually means the buyer (you) is paying a foreign or unregistered supplier and needs to issue the invoice on their behalf.",
+    why: "LHDN treats self-billed invoices differently — they use doc types 11–14 instead of 01–04. Submitting a foreign-supplier transaction as a regular invoice (type 01) misrepresents who's responsible for the tax filing.",
+    howToFix: [
+      "If the supplier really is foreign / unregistered → change the Invoice type to the matching Self-Billed variant (Invoice → Self-Billed Invoice; Credit Note → Self-Billed Credit Note; etc.).",
+      "If the supplier IS Malaysian and you just don't have their TIN yet → ask them for it. LHDN won't accept the submission without one.",
+      "If the supplier is government / exempt → you may need a different doc-type. Check LHDN's e-Invoice Guideline §5.",
+    ],
+    reference: "LHDN e-Invoice Guideline §5 (Document types)",
+  },
   "invoice_number.duplicate": {
     code: "invoice_number.duplicate",
     title: "Invoice number already exists",
