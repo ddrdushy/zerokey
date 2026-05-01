@@ -382,6 +382,22 @@ def _materialise_line_items(invoice: Invoice, raw: Any) -> int:
     for index, raw_line in enumerate(parsed[:MAX_LINE_ITEMS], start=1):
         if not isinstance(raw_line, dict):
             continue
+        subtotal = _parse_decimal(str(raw_line.get("line_subtotal_excl_tax", "")))
+        tax_rate = _parse_decimal(str(raw_line.get("tax_rate", "")))
+        tax_amount = _parse_decimal(str(raw_line.get("tax_amount", "")))
+        line_total = _parse_decimal(str(raw_line.get("line_total_incl_tax", "")))
+        # The structurer often returns tax_rate but leaves tax_amount and
+        # line_total_incl_tax blank — the user-facing invoice prints the
+        # rate but not the per-line absolute tax. Without these, the
+        # validation rules ``totals.tax.mismatch`` and
+        # ``line.total.mismatch`` fire spuriously even when the math IS
+        # correct (header total_tax matches; we just can't reconcile
+        # against missing line columns). Derive both when the inputs
+        # are unambiguous so the rule engine sees consistent data.
+        if tax_amount is None and subtotal is not None and tax_rate is not None:
+            tax_amount = (subtotal * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+        if line_total is None and subtotal is not None:
+            line_total = (subtotal + (tax_amount or Decimal("0.00"))).quantize(Decimal("0.01"))
         LineItem.objects.create(
             organization_id=invoice.organization_id,
             invoice=invoice,
@@ -390,11 +406,11 @@ def _materialise_line_items(invoice: Invoice, raw: Any) -> int:
             unit_of_measurement=str(raw_line.get("unit_of_measurement", ""))[:16],
             quantity=_parse_decimal(str(raw_line.get("quantity", ""))),
             unit_price_excl_tax=_parse_decimal(str(raw_line.get("unit_price_excl_tax", ""))),
-            line_subtotal_excl_tax=_parse_decimal(str(raw_line.get("line_subtotal_excl_tax", ""))),
+            line_subtotal_excl_tax=subtotal,
             tax_type_code=str(raw_line.get("tax_type_code", ""))[:16],
-            tax_rate=_parse_decimal(str(raw_line.get("tax_rate", ""))),
-            tax_amount=_parse_decimal(str(raw_line.get("tax_amount", ""))),
-            line_total_incl_tax=_parse_decimal(str(raw_line.get("line_total_incl_tax", ""))),
+            tax_rate=tax_rate,
+            tax_amount=tax_amount,
+            line_total_incl_tax=line_total,
             classification_code=str(raw_line.get("classification_code", ""))[:16],
         )
         count += 1
