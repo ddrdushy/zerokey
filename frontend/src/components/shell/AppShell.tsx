@@ -5,6 +5,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   ChevronDown,
+  ChevronsLeft,
+  ChevronsRight,
   FileText,
   Inbox,
   LayoutDashboard,
@@ -72,18 +74,39 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+// Persist sidebar collapsed state across reloads + tabs. Reading
+// localStorage during render would force "use client" anyway (we
+// already are), but the initial render runs server-side once and
+// localStorage is undefined there — so default to expanded and
+// hydrate on mount.
+const SIDEBAR_KEY = "zerokey:sidebar-collapsed";
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      setCollapsed(window.localStorage.getItem(SIDEBAR_KEY) === "1");
+    }
     api
       .me()
       .then(setMe)
       .catch(() => router.replace("/sign-in"));
   }, [router]);
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(SIDEBAR_KEY, next ? "1" : "0");
+      }
+      return next;
+    });
+  }
 
   async function onLogout() {
     await api.logout().catch(() => {});
@@ -94,7 +117,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen flex-col bg-paper">
       {me?.impersonation && <ImpersonationBanner ctx={me.impersonation} />}
       <div className="flex min-h-0 flex-1">
-        <Sidebar />
+        <Sidebar collapsed={collapsed} onToggle={toggleCollapsed} />
         <div className="flex flex-1 flex-col">
           <TopBar me={me} menuOpen={menuOpen} setMenuOpen={setMenuOpen} onLogout={onLogout} />
           {me && <CertExpiryBanner />}
@@ -112,21 +135,49 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Sidebar() {
+function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const pathname = usePathname();
   const t = useT();
   return (
-    <aside className="hidden w-60 flex-col border-r border-slate-800 bg-ink text-paper md:flex">
-      <Link
-        href="/dashboard"
-        className="flex items-center gap-2 px-6 py-5 font-display text-xl font-bold tracking-tight"
-      >
-        ZeroKey
-      </Link>
-      <nav className="flex-1 overflow-y-auto px-3 py-2">
+    <aside
+      className={cn(
+        "hidden flex-col border-r border-slate-800 bg-ink text-paper transition-[width] duration-ack ease-zk md:flex",
+        collapsed ? "w-16" : "w-60",
+      )}
+    >
+      <div className={cn("flex items-center", collapsed ? "justify-center px-2 py-5" : "justify-between px-6 py-5")}>
+        <Link
+          href="/dashboard"
+          className="font-display text-xl font-bold tracking-tight"
+          aria-label="ZeroKey home"
+        >
+          {collapsed ? "Z" : "ZeroKey"}
+        </Link>
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label="Collapse sidebar"
+            className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-slate-800/50 hover:text-paper"
+          >
+            <ChevronsLeft className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+      {collapsed && (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label="Expand sidebar"
+          className="mx-2 mb-2 grid h-7 place-items-center rounded-md text-slate-400 hover:bg-slate-800/50 hover:text-paper"
+        >
+          <ChevronsRight className="h-4 w-4" />
+        </button>
+      )}
+      <nav className={cn("flex-1 overflow-y-auto py-2", collapsed ? "px-2" : "px-3")}>
         {NAV_GROUPS.map((group, idx) => (
           <div key={idx} className="mb-6">
-            {group.labelKey && (
+            {group.labelKey && !collapsed && (
               <div className="px-3 py-2 text-2xs font-semibold uppercase tracking-wider text-slate-400">
                 {t(group.labelKey)}
               </div>
@@ -137,7 +188,8 @@ function Sidebar() {
                 const Icon = item.icon;
                 const label = t(item.labelKey);
                 const className = cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-xs font-medium transition-colors duration-ack ease-zk",
+                  "flex items-center rounded-md text-xs font-medium transition-colors duration-ack ease-zk",
+                  collapsed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2",
                   active
                     ? "bg-slate-800 text-paper"
                     : "text-slate-400 hover:bg-slate-800/50 hover:text-paper",
@@ -146,21 +198,25 @@ function Sidebar() {
                 if (item.disabled || !item.href) {
                   return (
                     <li key={item.labelKey}>
-                      <span className={className} aria-disabled="true">
+                      <span className={className} aria-disabled="true" title={collapsed ? label : undefined}>
                         <Icon className="h-4 w-4" />
-                        {label}
-                        <span className="ml-auto text-2xs uppercase tracking-wider text-slate-500">
-                          soon
-                        </span>
+                        {!collapsed && (
+                          <>
+                            {label}
+                            <span className="ml-auto text-2xs uppercase tracking-wider text-slate-500">
+                              soon
+                            </span>
+                          </>
+                        )}
                       </span>
                     </li>
                   );
                 }
                 return (
                   <li key={item.labelKey}>
-                    <Link href={item.href} className={className}>
+                    <Link href={item.href} className={className} title={collapsed ? label : undefined}>
                       <Icon className="h-4 w-4" />
-                      {label}
+                      {!collapsed && label}
                     </Link>
                   </li>
                 );
@@ -169,9 +225,11 @@ function Sidebar() {
           </div>
         ))}
       </nav>
-      <div className="border-t border-slate-800 px-6 py-4 text-2xs text-slate-400">
-        Phase 2 build · pre-GA
-      </div>
+      {!collapsed && (
+        <div className="border-t border-slate-800 px-6 py-4 text-2xs text-slate-400">
+          Phase 2 build · pre-GA
+        </div>
+      )}
     </aside>
   );
 }

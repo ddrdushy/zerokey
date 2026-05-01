@@ -28,25 +28,45 @@ const TONE = {
 export function IssuePill({
   issue,
   compact = false,
+  stale = false,
 }: {
   issue: ValidationIssue;
   compact?: boolean;
+  /**
+   * The user has edited the field this issue is attached to but
+   * hasn't saved yet — the issue is likely no longer accurate.
+   * Render dimmed + struck-through with a "will revalidate on save"
+   * affordance so the user gets immediate feedback that their edit
+   * was acknowledged, without us pretending to know the new state.
+   */
+  stale?: boolean;
 }) {
   const tone = TONE[issue.severity];
   const Icon = tone.Icon;
   return (
     <span
       role="note"
-      aria-label={`${issue.severity}: ${issue.message}`}
+      aria-label={`${issue.severity}: ${issue.message}${stale ? " (revalidating on save)" : ""}`}
       title={`${issue.code}: ${issue.message}`}
       className={cn(
-        "inline-flex items-center gap-1 rounded-md font-medium",
+        "inline-flex max-w-full items-start gap-1 rounded-md font-medium",
         compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-2xs",
         tone.container,
+        stale && "opacity-50",
       )}
     >
-      <Icon className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
-      {!compact && <span className="truncate">{issue.message}</span>}
+      <Icon
+        className={cn(compact ? "h-3 w-3" : "h-3.5 w-3.5", "mt-px shrink-0")}
+        aria-hidden="true"
+      />
+      {!compact && (
+        // No truncate: validation messages are intentionally written
+        // to fit one line when the layout is wide, but we'd rather
+        // wrap on a narrow viewport than hide the actionable detail.
+        <span className={cn("whitespace-normal break-words", stale && "line-through")}>
+          {issue.message}
+        </span>
+      )}
     </span>
   );
 }
