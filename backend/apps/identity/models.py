@@ -24,6 +24,8 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
 from django.utils import timezone
 
+from apps.administration.fields import EncryptedTextField
+
 from .managers import UserManager
 
 
@@ -554,3 +556,98 @@ class APIKey(TenantScopedModel):
 
     def __str__(self) -> str:
         return f"{self.label} ({self.key_prefix}…)"
+
+
+class OidcProvider(TenantScopedModel):
+    """Per-organisation OIDC identity provider configuration (Slice 97).
+
+    Closes the SSO P1 from PRODUCT_REQUIREMENTS §113 — Pro-tier
+    customers (accounting firms / mid-market with Okta / Auth0 /
+    Google Workspace / Azure AD) want to delegate auth to their
+    existing IdP rather than maintain a separate ZeroKey password.
+
+    v1 ships OIDC only (modern, simpler, growing in MY) — SAML lands
+    in v2 if a customer specifically asks. Same model can hold both
+    by adding a ``protocol`` discriminator later; not adding it now
+    so we don't pre-build a generality we don't need.
+
+    One row per organisation today; the unique constraint enforces
+    that. If a future customer needs multiple IdPs (e.g. employees
+    via Okta + contractors via Google), drop the unique constraint
+    and add a ``label`` field — schema-compatible upgrade.
+
+    Credential field encryption: ``client_secret`` rides on
+    ``EncryptedTextField`` (Slice 95) so disk-at-rest exposure
+    doesn't leak it. ``client_id`` is public per OIDC spec (it's in
+    every authorize URL) so it stays plaintext for indexability.
+
+    Why TenantScopedModel: an admin at one tenant must NOT be able
+    to read / change another tenant's IdP settings. RLS policy
+    enforces it the same way every other tenant-scoped table does.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # Operator-friendly label shown in the Settings UI ("Okta",
+    # "Google Workspace", etc.). Not a stable identifier — use ``id``
+    # for that. Free-text so the admin can write what makes sense.
+    label = models.CharField(max_length=64, default="OIDC SSO")
+
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    # OIDC discovery starts here. We GET ``{issuer}/.well-known/
+    # openid-configuration`` at login time and cache the response
+    # in-process for the request. Issuer must NOT include the
+    # well-known suffix — authlib appends it.
+    issuer = models.URLField(max_length=512)
+
+    # Public per OIDC spec — surfaces in every authorize-redirect URL.
+    client_id = models.CharField(max_length=255)
+
+    # Slice 97 + 95 — client secret is the only credential here.
+    # Encrypted at rest via Fernet through EncryptedTextField.
+    # Empty when the IdP uses PKCE-only flow (rare in business OIDC
+    # but allowed by spec).
+    client_secret = EncryptedTextField(blank=True, default="")
+
+    # OIDC scopes to request. ``openid`` is mandatory; ``email`` +
+    # ``profile`` give us the email + display name we JIT-provision
+    # on. Customers can extend with custom scopes via the admin UI.
+    scopes = models.CharField(max_length=512, default="openid email profile")
+
+    # Optional allowlist of email domains. Empty = any email returned
+    # by the IdP is accepted. Non-empty = only emails ending in one
+    # of the listed domains can SSO. Useful for IdPs that span
+    # multiple organisations (e.g. Google Workspace tenants).
+    allowed_email_domains = models.JSONField(default=list, blank=True)
+
+    # JIT-provisioning toggle. When True (default), an SSO login by
+    # an email that has no User row creates one + a Membership in
+    # this organisation. When False, the login is rejected unless
+    # the email already maps to an existing Membership in this org.
+    jit_provision = models.BooleanField(default=True)
+
+    # Default role assigned to JIT-provisioned new users. Owners
+    # rarely want SSO-onboarded users to land as Owner; "submitter"
+    # is the safe default and matches the manual-invite default.
+    default_role = models.ForeignKey(
+        "identity.Role",
+        on_delete=models.PROTECT,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+
+    last_login_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "identity_oidc_provider"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization"], name="uniq_oidc_provider_per_org"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.label} for {self.organization_id}"

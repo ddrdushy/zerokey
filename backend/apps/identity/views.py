@@ -100,6 +100,177 @@ def login_view(request: Request) -> Response:
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+def sso_initiate_view(request: Request) -> Response:
+    """Slice 97 — start the OIDC dance for ``email``.
+
+    Body: ``{"email": "user@example.com"}``. Returns the authorize
+    URL the FE should redirect to. State / nonce / provider id are
+    stashed in the session for the callback to verify.
+    """
+    from . import sso
+
+    email = (request.data.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return Response(
+            {"detail": "email is required."}, status=status.HTTP_400_BAD_REQUEST
+        )
+    try:
+        info = sso.initiate(email=email, request=request)
+    except sso.SsoError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({"redirect_url": info.url, "state": info.state})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def sso_callback_view(request: Request) -> Response:
+    """Slice 97 — exchange ``code``, JIT-provision, complete login.
+
+    Body: ``{"code": "<>", "state": "<>"}``. The FE collects these
+    from the IdP's redirect query string and POSTs them here so we
+    can complete the login under our own session machinery.
+    """
+    from django.contrib.auth import login as django_login
+
+    from . import sso
+
+    code = (request.data.get("code") or "").strip()
+    state = (request.data.get("state") or "").strip()
+    if not code or not state:
+        return Response(
+            {"detail": "code and state are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        user = sso.complete(request=request, code=code, state=state)
+    except sso.SsoError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Pin the active org to the IdP's org (the user JIT-provisioned
+    # there) so the next /me/ call returns the right tenant context.
+    memberships = services.memberships_for(user)
+    if memberships:
+        request.session["organization_id"] = str(memberships[0].organization_id)
+    django_login(request, user)
+    return Response(UserSerializer(user, context={"request": request}).data)
+
+
+@api_view(["GET", "POST", "PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def sso_provider_view(request: Request) -> Response:
+    """Slice 97 — manage the active org's OIDC provider.
+
+    Owner / Admin only — others 403. One provider per org today
+    (unique constraint), so:
+
+      GET     returns the current provider or null
+      POST    creates a provider (409 if one already exists)
+      PATCH   updates the existing provider
+      DELETE  removes the provider (re-enables password auth only)
+
+    ``client_secret`` is write-only — the GET response returns
+    presence-only ("set" / "unset") rather than the plaintext.
+    """
+    from .models import OidcProvider
+
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+
+    membership = (
+        request.user.memberships.filter(organization_id=organization_id).first()
+    )
+    if membership is None or membership.role.name not in {"owner", "admin"}:
+        return Response(
+            {"detail": "Only owners or admins can manage SSO."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    provider = OidcProvider.objects.filter(organization_id=organization_id).first()
+
+    def serialize(p: OidcProvider | None) -> dict:
+        if p is None:
+            return {"provider": None}
+        return {
+            "provider": {
+                "id": str(p.id),
+                "label": p.label,
+                "is_active": p.is_active,
+                "issuer": p.issuer,
+                "client_id": p.client_id,
+                "client_secret_set": bool(p.client_secret),
+                "scopes": p.scopes,
+                "allowed_email_domains": list(p.allowed_email_domains or []),
+                "jit_provision": p.jit_provision,
+                "default_role": p.default_role.name if p.default_role else None,
+                "last_login_at": p.last_login_at.isoformat() if p.last_login_at else None,
+            }
+        }
+
+    if request.method == "GET":
+        return Response(serialize(provider))
+
+    body = request.data if isinstance(request.data, dict) else {}
+
+    if request.method == "DELETE":
+        if provider is None:
+            return Response({"provider": None})
+        provider.delete()
+        return Response({"provider": None})
+
+    if request.method == "POST":
+        if provider is not None:
+            return Response(
+                {"detail": "A provider already exists for this organization. Use PATCH."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        from .models import Role
+
+        role = None
+        role_name = body.get("default_role") or "submitter"
+        role = Role.objects.filter(name=role_name).first()
+        provider = OidcProvider.objects.create(
+            organization_id=organization_id,
+            label=str(body.get("label") or "OIDC SSO")[:64],
+            is_active=bool(body.get("is_active", True)),
+            issuer=str(body.get("issuer") or "")[:512],
+            client_id=str(body.get("client_id") or "")[:255],
+            client_secret=str(body.get("client_secret") or ""),
+            scopes=str(body.get("scopes") or "openid email profile")[:512],
+            allowed_email_domains=list(body.get("allowed_email_domains") or []),
+            jit_provision=bool(body.get("jit_provision", True)),
+            default_role=role,
+        )
+        return Response(serialize(provider), status=status.HTTP_201_CREATED)
+
+    # PATCH
+    if provider is None:
+        return Response({"detail": "No provider configured. POST first."}, status=status.HTTP_404_NOT_FOUND)
+    for field in ("label", "issuer", "client_id", "scopes"):
+        if field in body and body[field] is not None:
+            setattr(provider, field, str(body[field])[:512])
+    if "client_secret" in body and body["client_secret"] is not None:
+        # Empty string clears the secret (PKCE-only flows); non-empty
+        # rotates it.
+        provider.client_secret = str(body["client_secret"])
+    if "is_active" in body:
+        provider.is_active = bool(body["is_active"])
+    if "jit_provision" in body:
+        provider.jit_provision = bool(body["jit_provision"])
+    if "allowed_email_domains" in body and isinstance(body["allowed_email_domains"], list):
+        provider.allowed_email_domains = list(body["allowed_email_domains"])
+    if "default_role" in body and body["default_role"]:
+        from .models import Role
+
+        role = Role.objects.filter(name=body["default_role"]).first()
+        if role:
+            provider.default_role = role
+    provider.save()
+    return Response(serialize(provider))
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
 def login_2fa_view(request: Request) -> Response:
     """Complete login after a TOTP / recovery-code challenge (Slice 89)."""
     from .models import User

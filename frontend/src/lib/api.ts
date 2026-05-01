@@ -890,6 +890,53 @@ async function uploadAutoCountSync(args: {
 
 export const api = {
   ensureCsrf: () => request<{ detail: string }>("/identity/csrf/"),
+  // Slice 97 — OIDC SSO.
+  ssoInitiate: (email: string) =>
+    request<{ redirect_url: string; state: string }>("/identity/sso/initiate/", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  ssoCallback: (code: string, state: string) =>
+    request<Me>("/identity/sso/callback/", {
+      method: "POST",
+      body: JSON.stringify({ code, state }),
+    }),
+  getOidcProvider: () =>
+    request<{
+      provider: {
+        id: string;
+        label: string;
+        is_active: boolean;
+        issuer: string;
+        client_id: string;
+        client_secret_set: boolean;
+        scopes: string;
+        allowed_email_domains: string[];
+        jit_provision: boolean;
+        default_role: string | null;
+        last_login_at: string | null;
+      } | null;
+    }>("/identity/sso/provider/"),
+  upsertOidcProvider: (
+    body: {
+      label?: string;
+      is_active?: boolean;
+      issuer?: string;
+      client_id?: string;
+      client_secret?: string;
+      scopes?: string;
+      allowed_email_domains?: string[];
+      jit_provision?: boolean;
+      default_role?: string;
+    },
+    method: "POST" | "PATCH" = "PATCH",
+  ) =>
+    request<{ provider: unknown }>("/identity/sso/provider/", {
+      method,
+      body: JSON.stringify(body),
+    }),
+  deleteOidcProvider: () =>
+    request<{ provider: null }>("/identity/sso/provider/", { method: "DELETE" }),
   // Slice 94 — MSIC code suggestion ranked against the catalog.
   // Empty / stop-word-only queries return ``[]`` not the full catalog.
   suggestMsic: (q: string) =>

@@ -129,6 +129,29 @@ export default function SignInPage() {
         </Button>
       </form>
 
+      {!needs2fa && (
+        // Slice 97 — SSO entry point. We don't list IdPs here; the
+        // user enters their email and we look up the matching
+        // OIDC provider by allowed-domain. If none matches, the
+        // backend returns a clean error.
+        <button
+          type="button"
+          disabled={!email || submitting}
+          onClick={async () => {
+            setError(null);
+            try {
+              const result = await api.ssoInitiate(email);
+              window.location.href = result.redirect_url;
+            } catch (err) {
+              setError(err instanceof ApiError ? err.message : "SSO failed.");
+            }
+          }}
+          className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm text-ink hover:border-ink disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Sign in with SSO
+        </button>
+      )}
+
       <p className="text-xs text-slate-400">
         Need an account?{" "}
         <Link href="/sign-up" className="text-ink underline-offset-4 hover:underline">

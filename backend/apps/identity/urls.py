@@ -22,6 +22,11 @@ urlpatterns = [
     path("login/", views.login_view, name="login"),
     # Slice 89 — TOTP second factor on login.
     path("login/2fa/", views.login_2fa_view, name="login-2fa"),
+    # Slice 97 — SSO via OpenID Connect.
+    path("sso/initiate/", views.sso_initiate_view, name="sso-initiate"),
+    path("sso/callback/", views.sso_callback_view, name="sso-callback"),
+    # Owner/Admin-only configuration of the active org's OIDC provider.
+    path("sso/provider/", views.sso_provider_view, name="sso-provider"),
     path("logout/", views.logout_view, name="logout"),
     path("me/", views.me, name="me"),
     # Slice 86 — UI preferences (preferred_language for now).

@@ -19,6 +19,11 @@ dependencies = [
     "boto3>=1.35,<2.0",
     "pdfplumber>=0.11,<1.0",
     "anthropic>=0.39,<1.0",
+    # Slice 97 — SSO via OpenID Connect. authlib provides JOSE-spec
+    # JWT verification (RS256/EC) + OIDC discovery + token exchange
+    # so we don't hand-roll. Small dependency, dominant Python OIDC
+    # client.
+    "authlib>=1.3,<2.0",
     # EasyOCR for image / scanned-PDF text extraction (Slice 31). Pulls in
     # torch (CPU) + opencv-python-headless + Pillow as transitive deps; the
     # CPU torch wheel is ~200MB and EasyOCR's English language model is
