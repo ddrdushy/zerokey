@@ -26,6 +26,8 @@ urlpatterns = [
     path("me/", views.me, name="me"),
     # Slice 86 — UI preferences (preferred_language for now).
     path("me/preferences/", views.update_preferences, name="me-preferences"),
+    # Slice 92 — post-signup onboarding checklist (GET state, POST dismiss).
+    path("me/onboarding/", views.onboarding_view, name="me-onboarding"),
     # Slice 89 — TOTP enrollment / disable.
     path("me/2fa/enroll/", views.two_factor_enroll, name="me-2fa-enroll"),
     path("me/2fa/confirm/", views.two_factor_confirm, name="me-2fa-confirm"),

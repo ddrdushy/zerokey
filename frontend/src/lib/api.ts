@@ -886,6 +886,23 @@ async function uploadAutoCountSync(args: {
 
 export const api = {
   ensureCsrf: () => request<{ detail: string }>("/identity/csrf/"),
+  // Slice 92 — onboarding checklist for new owners.
+  getOnboarding: () =>
+    request<{
+      dismissed_at: string | null;
+      steps: {
+        key: string;
+        title: string;
+        why: string;
+        where: string;
+        done: boolean;
+      }[];
+    }>("/identity/me/onboarding/"),
+  dismissOnboarding: () =>
+    request<{ dismissed_at: string }>("/identity/me/onboarding/", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
   me: () => request<Me>("/identity/me/"),
   login: (email: string, password: string) =>
     // Slice 89 — login may return a needs_2fa challenge instead

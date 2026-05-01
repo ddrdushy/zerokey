@@ -147,6 +147,95 @@ def logout_view(request: Request) -> Response:
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def onboarding_view(request: Request) -> Response:
+    """Get + dismiss the post-signup onboarding checklist (Slice 92).
+
+    GET returns the checklist state: which items are already done
+    (derived from real data — uploaded a certificate, configured
+    inbox token, has invited a teammate, has any IngestionJob),
+    plus whether the user has dismissed the checklist.
+
+    POST dismisses it. The checklist hides for this user from now on
+    even if not every step is done — power users want to get rid of
+    it.
+    """
+    from datetime import datetime, timezone as _tz
+
+    from apps.ingestion.models import IngestionJob
+
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+
+    org = services.get_organization(organization_id=organization_id)
+    if org is None:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "POST":
+        if request.user.onboarding_dismissed_at is None:
+            request.user.onboarding_dismissed_at = datetime.now(_tz.utc)
+            request.user.save(update_fields=["onboarding_dismissed_at"])
+        return Response({"dismissed_at": request.user.onboarding_dismissed_at.isoformat()})
+
+    # Derive each step's done-state from existing data so the checklist
+    # never goes stale. No new "is_done" columns to maintain.
+    has_certificate = bool(org.certificate_uploaded)
+    has_inbox_token = bool(org.inbox_token)
+    member_count = len(services.list_organization_members(organization_id=organization_id))
+    has_invited = member_count > 1
+    has_uploaded = IngestionJob.objects.filter(organization_id=organization_id).exists()
+    has_2fa = bool(request.user.two_factor_enabled)
+
+    return Response(
+        {
+            "dismissed_at": (
+                request.user.onboarding_dismissed_at.isoformat()
+                if request.user.onboarding_dismissed_at
+                else None
+            ),
+            "steps": [
+                {
+                    "key": "upload_certificate",
+                    "title": "Upload your LHDN signing certificate",
+                    "why": "ZeroKey signs every invoice with your LHDN-issued certificate before submission. Without it, we can't talk to MyInvois on your behalf.",
+                    "where": "/dashboard/settings",
+                    "done": has_certificate,
+                },
+                {
+                    "key": "configure_inbox",
+                    "title": "Set up your inbox-forward address",
+                    "why": "Forward supplier invoices to a unique ZeroKey email address and they land in your dashboard automatically — no upload step needed.",
+                    "where": "/dashboard/settings",
+                    "done": has_inbox_token,
+                },
+                {
+                    "key": "first_upload",
+                    "title": "Upload your first invoice",
+                    "why": "See the full pipeline in action: extraction, validation, signing, submission. The dashboard's drop zone accepts PDF, image, Excel, CSV, or ZIP.",
+                    "where": "/dashboard",
+                    "done": has_uploaded,
+                },
+                {
+                    "key": "invite_teammate",
+                    "title": "Invite a teammate",
+                    "why": "Most businesses don't have one person handling everything. Invite an Approver or Submitter so submissions don't bottleneck on you.",
+                    "where": "/dashboard/settings",
+                    "done": has_invited,
+                },
+                {
+                    "key": "enable_2fa",
+                    "title": "Turn on two-factor authentication",
+                    "why": "Your account holds an LHDN signing certificate — anyone with your password could submit invoices in your company's name. Add a second factor.",
+                    "where": "/dashboard/settings",
+                    "done": has_2fa,
+                },
+            ],
+        }
+    )
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def me(request: Request) -> Response:

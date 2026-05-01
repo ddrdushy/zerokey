@@ -81,6 +81,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     preferred_language = models.CharField(max_length=10, default="en-MY")
     preferred_timezone = models.CharField(max_length=64, default="Asia/Kuala_Lumpur")
 
+    # Slice 92 — onboarding checklist dismissal. The dashboard surfaces
+    # a "get started" checklist for new owners (cert upload, inbox
+    # forward, invite teammates, first upload). Once the user dismisses
+    # it they don't see it again, regardless of whether every item was
+    # completed. Per-user (not per-org) so a second member of the same
+    # org sees their own first-time experience.
+    onboarding_dismissed_at = models.DateTimeField(null=True, blank=True)
+
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     # ZeroKey internal staff (super-admin console access). Logged whenever they

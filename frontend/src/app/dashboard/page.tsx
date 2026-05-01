@@ -16,6 +16,7 @@ import {
 import { AppShell } from "@/components/shell/AppShell";
 import { DropZone } from "@/components/DropZone";
 import { HeroCard } from "@/components/dashboard/HeroCard";
+import { OnboardingChecklist } from "@/components/dashboard/OnboardingChecklist";
 import { StatsStrip, type Stat } from "@/components/dashboard/StatsStrip";
 import { ThroughputChart } from "@/components/dashboard/ThroughputChart";
 import { CompliancePosture } from "@/components/dashboard/CompliancePosture";
@@ -128,6 +129,10 @@ export default function DashboardPage() {
     <AppShell>
       <div className="flex flex-col gap-6">
         <HeroCard organizationName={orgName} validatedThisMonth={validated} />
+
+        {/* Onboarding checklist hides itself once dismissed or when
+            its endpoint fails. Returning-user dashboards never see it. */}
+        <OnboardingChecklist />
 
         {/* DropZone right after the hero so the action lives next to the
             invitation. Stats + charts are monitoring views and belong
