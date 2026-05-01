@@ -243,6 +243,14 @@ SUBMISSION_SWEEP_SECONDS = env.int("SUBMISSION_SWEEP_SECONDS", default=60)
 # wastes operator review cycles on no-op runs.
 CATALOG_REFRESH_SECONDS = env.int("CATALOG_REFRESH_SECONDS", default=30 * 24 * 60 * 60)
 
+# How often to sweep for IngestionJobs stranded in non-terminal states
+# (Slice 90 fixed the Slice-60 IntegrityError that produced the original
+# stuck-extracting backlog; the sweep keeps any future strandings from
+# pretending to be in-flight forever). 2 minutes is fast enough that a
+# real user notices their job in error state quickly + cheap enough not
+# to thrash the DB.
+EXTRACTION_SWEEP_SECONDS = env.int("EXTRACTION_SWEEP_SECONDS", default=120)
+
 CELERY_BEAT_SCHEDULE = {
     "audit.verify_audit_chain": {
         "task": "audit.verify_audit_chain",
@@ -252,6 +260,11 @@ CELERY_BEAT_SCHEDULE = {
     "submission.sweep_inflight_polls": {
         "task": "submission.sweep_inflight_polls",
         "schedule": float(SUBMISSION_SWEEP_SECONDS),
+        "options": {"queue": "low"},
+    },
+    "extraction.sweep_stuck_jobs": {
+        "task": "extraction.sweep_stuck_jobs",
+        "schedule": float(EXTRACTION_SWEEP_SECONDS),
         "options": {"queue": "low"},
     },
     "administration.refresh_reference_catalogs": {

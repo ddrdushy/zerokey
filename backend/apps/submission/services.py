@@ -327,6 +327,44 @@ def _parse_decimal(value: str) -> Decimal | None:
         return None
 
 
+def _clean_description(raw: str) -> str:
+    """Strip prepended-header duplication out of an LLM line description.
+
+    The structurer occasionally produces "Foo Foo Bar Baz" when the
+    source PDF has the same noun phrase as a column / section header
+    AND in the row's own description text. We tightened the prompt
+    (apps.extraction.prompts) but defense-in-depth: detect a
+    duplicated leading phrase up to 4 words and collapse it. Length-1
+    duplicates ("Item Item Lorem") are conservative — common enough
+    to be worth catching, rare enough to false-positive on legitimate
+    descriptions like "tea tea bag" (we only collapse when the phrase
+    is followed by other content, not when the whole string repeats).
+
+    Examples:
+      "Dependent Pass Dependent Pass Fees to Mdec"
+        → "Dependent Pass Fees to Mdec"
+      "Employment Pass Employment Pass processing fees to Mdec."
+        → "Employment Pass processing fees to Mdec."
+      "Software consulting services" (no dup) → unchanged.
+    """
+    cleaned = (raw or "").strip()
+    if not cleaned:
+        return cleaned
+    words = cleaned.split()
+    # Try the longest plausible prefix first (4 words → 2 words). Stop
+    # at the first match — collapsing once is enough.
+    for prefix_len in (4, 3, 2, 1):
+        if len(words) < 2 * prefix_len + 1:
+            continue  # need at least prefix + dup + one more word
+        prefix = words[:prefix_len]
+        next_window = words[prefix_len : 2 * prefix_len]
+        if [w.lower() for w in prefix] == [w.lower() for w in next_window]:
+            words = prefix + words[2 * prefix_len :]
+            cleaned = " ".join(words)
+            break
+    return cleaned
+
+
 def _materialise_line_items(invoice: Invoice, raw: Any) -> int:
     """Parse a JSON array of line items from the structured payload."""
     if not raw:
@@ -348,7 +386,7 @@ def _materialise_line_items(invoice: Invoice, raw: Any) -> int:
             organization_id=invoice.organization_id,
             invoice=invoice,
             line_number=index,
-            description=str(raw_line.get("description", ""))[:8000],
+            description=_clean_description(str(raw_line.get("description", "")))[:8000],
             unit_of_measurement=str(raw_line.get("unit_of_measurement", ""))[:16],
             quantity=_parse_decimal(str(raw_line.get("quantity", ""))),
             unit_price_excl_tax=_parse_decimal(str(raw_line.get("unit_price_excl_tax", ""))),

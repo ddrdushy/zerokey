@@ -56,6 +56,63 @@ def structure_invoice(invoice_id: str) -> dict[str, str | float | int]:
     }
 
 
+SWEEP_STUCK_AFTER_SECONDS = 300  # 5 minutes
+SWEEP_MAX_PER_RUN = 100  # Same safety cap as the SUBMITTING sweep.
+
+# States a job can land in mid-pipeline. If a job sits in any of
+# these for ``SWEEP_STUCK_AFTER_SECONDS`` it's almost certainly
+# stranded — the worker crashed (e.g. the Slice 60 amendment-column
+# IntegrityError that Slice 90 fixed) and the job will never
+# advance on its own. The sweep transitions it to ``error`` with
+# an explanatory message so the inbox / dashboard reflects reality
+# instead of pretending the job is still in flight.
+_STUCK_STATES = ("received", "classifying", "extracting", "enriching", "validating")
+
+
+@shared_task(
+    name="extraction.sweep_stuck_jobs",
+    queue="low",
+    acks_late=True,
+)
+def sweep_stuck_jobs() -> dict[str, object]:
+    """Mark IngestionJobs stranded in non-terminal states as ``error``.
+
+    Idempotent: once a job is in a terminal state the sweep never
+    touches it. Runs on celery beat every couple of minutes —
+    cheap query, only writes when something is actually stuck.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.identity.tenancy import super_admin_context
+    from apps.ingestion.models import IngestionJob
+
+    cutoff = timezone.now() - timedelta(seconds=SWEEP_STUCK_AFTER_SECONDS)
+    with super_admin_context(reason="extraction.sweep_stuck"):
+        stuck = list(
+            IngestionJob.objects.filter(
+                status__in=_STUCK_STATES,
+                updated_at__lte=cutoff,
+            ).order_by("updated_at")[:SWEEP_MAX_PER_RUN]
+        )
+        for job in stuck:
+            prior_status = job.status
+            job.status = IngestionJob.Status.ERROR
+            job.error_message = (
+                f"Stuck in {prior_status} for >{SWEEP_STUCK_AFTER_SECONDS // 60} min — "
+                f"swept by extraction.sweep_stuck_jobs"
+            )[:8000]
+            job.save(update_fields=["status", "error_message", "updated_at"])
+
+    if stuck:
+        logger.warning(
+            "extraction.sweep_stuck_jobs.swept",
+            extra={"count": len(stuck), "ids": [str(j.id) for j in stuck]},
+        )
+    return {"swept": len(stuck)}
+
+
 @shared_task(
     name="extraction.extract_invoice",
     queue="high",

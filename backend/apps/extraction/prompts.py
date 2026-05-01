@@ -26,7 +26,20 @@ from __future__ import annotations
 # extraction app must not import submission models — services-only is
 # the rule, and this is a documentation contract, not a model relation.
 _LINE_ITEM_FIELDS = [
-    ("description", "free-text description of the item"),
+    (
+        "description",
+        # The duplication clause is non-obvious but load-bearing: when the
+        # model is parsing a table where the column header AND the row's
+        # own description both contain the same noun phrase (e.g.
+        # "Dependent Pass" as a section header above a row labeled
+        # "Dependent Pass Fees to Mdec"), it tends to concatenate them
+        # and produce "Dependent Pass Dependent Pass Fees to Mdec". Same
+        # for embedding the qty / unit price into the description text.
+        "free-text description of the item, exactly as written for that "
+        "row. Do NOT repeat section headers or prepend the column "
+        "header to the row text. Do NOT include quantity, unit price, "
+        "or totals — those go in their own keys.",
+    ),
     ("quantity", 'decimal as string, e.g. "2.000"'),
     ("unit_of_measurement", "e.g. EA, KG, HOUR; empty if unspecified"),
     ("unit_price_excl_tax", "decimal as string, before tax"),
