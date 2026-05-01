@@ -84,7 +84,12 @@ def super_admin_context(reason: str) -> Iterator[None]:
     prior_tenant: str | None = None
     if connection.vendor == "postgresql":
         with connection.cursor() as cursor:
-            cursor.execute(f"SHOW {TENANT_VAR};")
+            # ``current_setting(name, true)`` returns NULL when the GUC has
+            # never been SET on the session — required for worker contexts
+            # where this elevation is the FIRST tenancy call on a fresh
+            # connection. ``SHOW`` raises ``unrecognized configuration
+            # parameter`` in that case, which broke the extraction worker.
+            cursor.execute("SELECT current_setting(%s, true);", [TENANT_VAR])
             row = cursor.fetchone()
             value = row[0] if row else ""
             prior_tenant = value or None

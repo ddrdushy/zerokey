@@ -118,9 +118,8 @@ def structure_invoice(invoice_id: UUID | str) -> StructuringResult:
     """
     # Lazy import to avoid extraction → submission cycle at module load.
     from apps.extraction.capabilities import EngineUnavailable
-    from apps.extraction.models import Engine, EngineCall
+    from apps.extraction.models import Engine, EngineCall, EngineRoutingRule
     from apps.extraction.registry import get_adapter
-    from apps.extraction.router import NoRouteFound, pick_engine
 
     invoice = Invoice.objects.get(id=invoice_id)
 
@@ -132,73 +131,103 @@ def structure_invoice(invoice_id: UUID | str) -> StructuringResult:
     if _is_ocr_only_org(invoice.organization_id):
         return _structure_via_regex_floor(invoice=invoice)
 
-    try:
-        decision = pick_engine(
-            capability=Engine.Capability.FIELD_STRUCTURE,
-            mime_type="text/plain",
-        )
-    except NoRouteFound as exc:
-        return finalize_invoice_without_structuring(invoice=invoice, reason=str(exc))
-
     target_schema = [*INVOICE_HEADER_FIELDS, LINE_ITEMS_KEY]
-    started_at = timezone.now()
-    started_perf = time.perf_counter()
+    last_failure_reason: str | None = None
 
-    try:
-        adapter = get_adapter(decision.engine.name)
-        result = adapter.structure_fields(
-            text=invoice.raw_extracted_text, target_schema=target_schema
+    # Walk the routing chain in priority order. Without this, a
+    # cheap-first-route (e.g. local Ollama at priority 50) being down
+    # leaves the invoice with empty fields even when the paid fallback
+    # (Anthropic at priority 100) would have worked. The user then
+    # sees a "ready_for_review" invoice with every field blank — the
+    # opposite of what we promise.
+    #
+    # Resolve the chain ONCE up front so we never loop back to an
+    # engine we already tried. ``pick_fallback_engine``'s single-id
+    # exclusion can't express "skip everything tried so far".
+    candidate_rules = list(
+        EngineRoutingRule.objects.filter(
+            capability=Engine.Capability.FIELD_STRUCTURE,
+            is_active=True,
+            engine__status=Engine.Status.ACTIVE,
         )
-    except EngineUnavailable as exc:
-        EngineCall.objects.create(
-            engine=decision.engine,
-            request_id=invoice.id,
-            organization_id=invoice.organization_id,
-            started_at=started_at,
-            duration_ms=int((time.perf_counter() - started_perf) * 1000),
-            outcome=EngineCall.Outcome.UNAVAILABLE,
-            error_class=type(exc).__name__,
-            cost_micros=0,
-            confidence=None,
-            diagnostics={"detail": str(exc)},
-        )
-        return finalize_invoice_without_structuring(invoice=invoice, reason=str(exc))
-    except Exception as exc:
-        EngineCall.objects.create(
-            engine=decision.engine,
-            request_id=invoice.id,
-            organization_id=invoice.organization_id,
-            started_at=started_at,
-            duration_ms=int((time.perf_counter() - started_perf) * 1000),
-            outcome=EngineCall.Outcome.FAILURE,
-            error_class=type(exc).__name__,
-            cost_micros=0,
-            confidence=None,
-            diagnostics={"detail": str(exc)[:500]},
-        )
-        return finalize_invoice_without_structuring(
-            invoice=invoice, reason=f"{type(exc).__name__}: {exc}"
-        )
-
-    EngineCall.objects.create(
-        engine=decision.engine,
-        request_id=invoice.id,
-        organization_id=invoice.organization_id,
-        started_at=started_at,
-        duration_ms=int((time.perf_counter() - started_perf) * 1000),
-        outcome=EngineCall.Outcome.SUCCESS,
-        error_class="",
-        cost_micros=result.cost_micros,
-        confidence=result.overall_confidence,
-        diagnostics=result.diagnostics,
+        .select_related("engine")
+        .order_by("priority", "created_at")
     )
 
-    return apply_structured_fields(
+    if not candidate_rules:
+        return finalize_invoice_without_structuring(
+            invoice=invoice,
+            reason="No active routing rule for FieldStructure",
+        )
+
+    for rule in candidate_rules:
+        engine = rule.engine
+        started_at = timezone.now()
+        started_perf = time.perf_counter()
+
+        try:
+            adapter = get_adapter(engine.name)
+            result = adapter.structure_fields(
+                text=invoice.raw_extracted_text, target_schema=target_schema
+            )
+        except EngineUnavailable as exc:
+            EngineCall.objects.create(
+                engine=engine,
+                request_id=invoice.id,
+                organization_id=invoice.organization_id,
+                started_at=started_at,
+                duration_ms=int((time.perf_counter() - started_perf) * 1000),
+                outcome=EngineCall.Outcome.UNAVAILABLE,
+                error_class=type(exc).__name__,
+                cost_micros=0,
+                confidence=None,
+                diagnostics={"detail": str(exc)},
+            )
+            last_failure_reason = f"{engine.name} unavailable: {exc}"
+            continue
+        except Exception as exc:
+            EngineCall.objects.create(
+                engine=engine,
+                request_id=invoice.id,
+                organization_id=invoice.organization_id,
+                started_at=started_at,
+                duration_ms=int((time.perf_counter() - started_perf) * 1000),
+                outcome=EngineCall.Outcome.FAILURE,
+                error_class=type(exc).__name__,
+                cost_micros=0,
+                confidence=None,
+                diagnostics={"detail": str(exc)[:500]},
+            )
+            return finalize_invoice_without_structuring(
+                invoice=invoice, reason=f"{type(exc).__name__}: {exc}"
+            )
+
+        EngineCall.objects.create(
+            engine=engine,
+            request_id=invoice.id,
+            organization_id=invoice.organization_id,
+            started_at=started_at,
+            duration_ms=int((time.perf_counter() - started_perf) * 1000),
+            outcome=EngineCall.Outcome.SUCCESS,
+            error_class="",
+            cost_micros=result.cost_micros,
+            confidence=result.overall_confidence,
+            diagnostics=result.diagnostics,
+        )
+
+        return apply_structured_fields(
+            invoice=invoice,
+            engine_name=engine.name,
+            fields=result.fields,
+            per_field_confidence=result.per_field_confidence,
+            overall_confidence=result.overall_confidence,
+        )
+
+    # Every engine in the chain was unavailable. Finalize empty so
+    # the user can hand-edit, with the reason from the last attempt.
+    return finalize_invoice_without_structuring(
         invoice=invoice,
-        engine_name=decision.engine.name,
-        fields=result.fields,
-        per_field_confidence=result.per_field_confidence,
-        overall_confidence=result.overall_confidence,
+        reason=last_failure_reason or "All structuring engines unavailable",
     )
 
 

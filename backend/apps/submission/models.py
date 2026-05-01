@@ -161,11 +161,11 @@ class Invoice(TenantScopedModel):
     # ORIGINAL invoice it amends. LHDN requires the original document's
     # UUID + internal-id be embedded in the BillingReference block;
     # otherwise the CN/DN won't link correctly in MyInvois reporting.
-    original_invoice_uuid = models.CharField(max_length=64, blank=True)
-    original_invoice_internal_id = models.CharField(max_length=128, blank=True)
+    original_invoice_uuid = models.CharField(max_length=64, blank=True, default="")
+    original_invoice_internal_id = models.CharField(max_length=128, blank=True, default="")
     # Optional — describes WHY the CN/DN was issued (refund, return,
     # discount adjustment, etc.). Surfaced in LHDN's portal.
-    adjustment_reason = models.TextField(blank=True)
+    adjustment_reason = models.TextField(blank=True, default="")
 
     class Meta:
         db_table = "invoice"
