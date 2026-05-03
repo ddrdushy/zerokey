@@ -67,10 +67,11 @@ export default function DashboardPage() {
   }, [jobs]);
 
   function onUploaded(job: IngestionJob) {
-    setJobs((prev) => [job, ...prev]);
-    // The new upload writes audit events and pushes the throughput series; pull
-    // fresh data so tiles and chart reflect it on the next paint.
-    refreshDashboardData();
+    // Drop the user straight into the review surface — the dashboard
+    // is for monitoring, but the moment after an upload they want to
+    // see the extracted fields. The review page polls until the job
+    // settles, so it works whether structuring takes 1s or 30s.
+    router.push(`/dashboard/jobs/${job.id}`);
   }
 
   if (loading || !me) {

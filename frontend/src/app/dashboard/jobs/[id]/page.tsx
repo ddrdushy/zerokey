@@ -98,13 +98,27 @@ export default function JobDetailPage() {
         if (cancelled) return;
         setJob(data);
         setLoading(false);
+        let inv: Invoice | null = null;
         if (data.status === "ready_for_review" || TERMINAL.has(data.status)) {
-          api
-            .getInvoiceForJob(params.id)
-            .then((inv) => !cancelled && setInvoice(inv))
-            .catch(() => {});
+          try {
+            inv = await api.getInvoiceForJob(params.id);
+            if (!cancelled) setInvoice(inv);
+          } catch {
+            // best-effort — fall through to next poll tick
+          }
         }
-        if (!TERMINAL.has(data.status)) {
+        // Job-level transitions (received → extracting → ready_for_review)
+        // happen quickly; the LLM structurer runs separately on the
+        // Invoice and can take 10–30s. Keep polling until structuring
+        // has actually populated the invoice — i.e. until we either see
+        // an engine name OR the user has dismissed the empty state by
+        // editing. Without this, an upload lands on the review surface
+        // with every field blank for the duration of the LLM call.
+        const structuringPending =
+          data.status === "ready_for_review" &&
+          inv !== null &&
+          !inv.structuring_engine;
+        if (!TERMINAL.has(data.status) || structuringPending) {
           timer = setTimeout(load, 2000);
         }
       } catch (err) {
@@ -503,6 +517,13 @@ function ReviewPanel({
   const structuringSkipped =
     !invoice.structuring_engine && invoice.error_message?.startsWith("Auto-structuring skipped");
 
+  // Engine has not run yet (no engine name, no skip stamp) — the
+  // structurer is still working in the background. Show a friendly
+  // "extracting" state so the empty fields aren't read as failure
+  // during the 10–30s the LLM is thinking.
+  const structuringPending =
+    !invoice.structuring_engine && !structuringSkipped;
+
   return (
     <>
       {structuringSkipped && (
@@ -512,6 +533,16 @@ function ReviewPanel({
             We couldn&apos;t reach a structuring engine for this upload, so the
             fields below are blank. Fill them in manually — validation will
             still run on save and the audit log captures the skip reason.
+          </p>
+        </div>
+      )}
+
+      {structuringPending && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs">
+          <div className="font-medium text-ink">Extracting fields…</div>
+          <p className="mt-1 text-slate-600">
+            The structuring engine is reading your document. Fields will
+            populate here in a few seconds — no need to refresh.
           </p>
         </div>
       )}

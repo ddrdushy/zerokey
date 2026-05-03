@@ -7720,6 +7720,133 @@ hand-edit `SystemSetting` from `/django-admin/`):
 
 ---
 
+### Slice 99 — Admin gap closure: plans, flags, support tools, routing rules, system health
+
+Closes every P0 + P1 gap from PRODUCT_REQUIREMENTS Domain 11
+("Super-admin / internal operations") that wasn't already shipped.
+Before this slice the platform had Plan + Subscription **models**
+but no admin editor for them, no per-tenant feature-flag override
+mechanism, no system health surface, no routing-rule editor, and
+no support actions for the three workflows the spec lists by name
+(reset 2FA, retry stuck invoice, waive overage).
+
+Backend:
+
+- **`apps/billing/models.py`** — added `FeatureFlag` (platform-
+  global declaration, `default_enabled` is the resolution
+  fallback), `FeatureFlagOverride` (tenant-scoped, unique per
+  org+flag, optional `expires_at`), `OverageWaiver` (tenant-scoped,
+  pinned to a Subscription + billing period). Migrations 0005
+  (model), 0006 (seed 16 launch flags grouped by category), 0007
+  (RLS on the two tenant-scoped tables — same `tenant_isolation`
+  policy template the rest of the billing app uses).
+- **`apps/billing/services.is_feature_enabled(organization_id, flag_slug)`**
+  — three-layer resolver: per-org override → `Plan.features[slug]`
+  → `FeatureFlag.default_enabled`. Fails closed on undeclared
+  slugs. Companion `resolved_feature_flags()` returns the full
+  `{slug: bool}` map for the customer-facing endpoint.
+- **`apps/administration/services.py`** — added
+  `list_plans_for_admin`, `admin_revise_plan` (creates v=N+1,
+  flips the previous row inactive — never edits a published plan
+  in place), `list_feature_flags_for_admin`,
+  `admin_update_feature_flag_default`,
+  `admin_set_feature_flag_override`,
+  `admin_clear_feature_flag_override`,
+  `list_feature_flag_overrides_for_org`,
+  `admin_assign_plan_to_tenant` (marks prior actives `replaced`,
+  per BUSINESS_MODEL "history is preserved, never deleted"),
+  `admin_reset_user_2fa`, `admin_retry_stuck_invoice`,
+  `admin_waive_overage`, `list_routing_rules_for_admin`,
+  `admin_update_routing_rule`, `system_health_snapshot` (probes
+  postgres, celery queue depth via Redis broker, LHDN, Stripe;
+  reports per-engine avg latency over the last 60 min). Every
+  write emits an `admin.*` audit event with the actor user and
+  reason.
+- **`apps/administration/views.py` + `urls.py`** — 14 new admin
+  endpoints under `/api/v1/admin/` (plans, flags, overrides,
+  assign-plan, reset-2fa, retry-invoice, waive-overage, routing
+  rules, health).
+- **`apps/identity/views.feature_flags_view`** — new customer-
+  facing `GET /api/v1/identity/feature-flags/` returning
+  `{flags: {slug: bool}}` resolved against the active org.
+
+Frontend:
+
+- **`/admin/plans`** — list every plan-family with current
+  version + version history + a "Revise" dialog that publishes
+  v=N+1.
+- **`/admin/flags`** — flag declarations grouped by category with
+  inline default-toggle.
+- **`/admin/routing`** — routing-rule editor; priority is an
+  inline number input (commits on blur), is_active toggles via
+  button.
+- **`/admin/health`** — subsystem cards (pg, celery, lhdn,
+  stripe), queue-depth tiles, per-engine latency table, polls
+  every 5s.
+- **`/admin/tenants/[id]`** — added `SubscriptionAndOverridesSection`
+  (assign plan + waive overage button + per-org flag override
+  matrix) and a "Retry" button on each stuck-state row in the
+  recent-invoices table. `MemberActions` got a "Reset 2FA" button
+  (audited, reason-required like the rest).
+- **`SettingsTabs.tsx`** — fetches `api.featureFlags()` on mount
+  and hides tabs whose `flag` doesn't resolve true (api-keys
+  gated by `api_ingestion`, webhooks by `webhooks`, sso by `sso`).
+
+Verified end-to-end in Playwright with both a staff session and a
+customer session (`dushy@symprio.com`):
+
+- All four new admin pages render with content (plans + 16 flags +
+  8 routing rules + 4 subsystems).
+- Tenant detail shows the new subscription/overrides section with
+  Assign + Waive overage buttons + the override matrix.
+- Customer SSO/Webhooks/API-keys tabs are hidden by default
+  (matching the seeded flag defaults).
+- Setting a per-org override `sso=on` for the customer's org
+  makes the SSO tab appear; clearing the override hides it again.
+- Backend smoke test: `is_feature_enabled` returns 16 flags
+  resolved (2 on / 14 off matching the global defaults).
+
+What this does NOT include and is deliberate follow-up:
+
+- **Stripe sync on `admin_assign_plan_to_tenant`** — the admin
+  path mutates only ZeroKey's subscription row. Stripe-managed
+  subs change via the customer portal; this path is for the
+  operator-override / custom-plan scenarios spec'd in
+  BUSINESS_MODEL.
+- **Bill calculator reading `OverageWaiver`** — the waiver row
+  is recorded; the (not-yet-shipped) invoice generator must read
+  this table when it next lands. Marked with the audit event so
+  the manual reconciliation path is unambiguous in the meantime.
+- **Per-plan engine routing eligibility** — the routing-rule
+  editor surfaces priority + active flag; per-tier engine
+  restrictions (`enterprise can use vision; growth cannot`) need
+  a `plan_tier` column on `EngineRoutingRule`. Defer until a
+  customer asks.
+- **Billing operations P1** (refunds / credits / invoice
+  adjustments) — these depend on the bill-generator landing
+  first, so the model + UI for them comes one slice later.
+
+Files: `backend/apps/billing/models.py`,
+`backend/apps/billing/services.py`,
+`backend/apps/billing/migrations/0005_*.py`,
+`backend/apps/billing/migrations/0006_seed_feature_flags.py`,
+`backend/apps/billing/migrations/0007_rls_new_tenant_tables.py`,
+`backend/apps/administration/services.py`,
+`backend/apps/administration/views.py`,
+`backend/apps/administration/urls.py`,
+`backend/apps/identity/views.py`,
+`backend/apps/identity/urls.py`,
+`frontend/src/lib/api.ts`,
+`frontend/src/components/admin/AdminShell.tsx`,
+`frontend/src/components/settings/SettingsTabs.tsx`,
+`frontend/src/app/admin/plans/page.tsx` (new),
+`frontend/src/app/admin/flags/page.tsx` (new),
+`frontend/src/app/admin/routing/page.tsx` (new),
+`frontend/src/app/admin/health/page.tsx` (new),
+`frontend/src/app/admin/tenants/[id]/page.tsx`.
+
+---
+
 ### Slice 90 — Core-flow unblock: extraction works end-to-end again
 
 A UX-audit walkthrough as a fresh user uncovered three regressions

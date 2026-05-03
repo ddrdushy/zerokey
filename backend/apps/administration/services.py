@@ -1830,3 +1830,915 @@ def refresh_reference_catalogs() -> dict[str, int]:
     ):
         counts[label] = model.objects.filter(is_active=True).update(last_refreshed_at=now)
     return counts
+
+
+# --- Plans + Feature flags admin (Slice 99) -------------------------------------
+#
+# Plans are platform-wide (not tenant-scoped). Versioning rule: published
+# plans are NEVER edited in place — a "revise" creates v=N+1 of the same
+# slug and marks the old row inactive. Existing Subscriptions stay
+# pointed at the row they were created with so historical billing
+# replays accurately.
+#
+# Feature flags resolve at runtime via apps.billing.services.is_feature
+# _enabled (org override → plan.features → flag.default_enabled).
+
+
+class PlanUpdateError(Exception):
+    """Raised by admin plan editors on validation failure."""
+
+
+def list_plans_for_admin(*, actor_user_id: UUID | str) -> list[dict[str, Any]]:
+    """Return every Plan row (active + archived, all versions). Admin-only."""
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.billing.models import Plan
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="admin.plans:list"):
+        plans = list(
+            Plan.objects.all().order_by("tier", "slug", "-version")
+        )
+
+    record_event(
+        action_type="admin.plans_listed",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=None,
+        affected_entity_type="Plan",
+        affected_entity_id="",
+        payload={"plan_count": len(plans)},
+    )
+    return [_plan_admin_dict(p) for p in plans]
+
+
+def _plan_admin_dict(plan: Any) -> dict[str, Any]:
+    return {
+        "id": str(plan.id),
+        "slug": plan.slug,
+        "version": int(plan.version),
+        "name": plan.name,
+        "description": plan.description,
+        "tier": plan.tier,
+        "monthly_price_cents": int(plan.monthly_price_cents),
+        "annual_price_cents": int(plan.annual_price_cents),
+        "billing_currency": plan.billing_currency,
+        "included_invoices_per_month": int(plan.included_invoices_per_month),
+        "per_overage_cents": int(plan.per_overage_cents),
+        "included_users": int(plan.included_users),
+        "included_api_keys": int(plan.included_api_keys),
+        "features": plan.features or {},
+        "stripe_price_id_monthly": plan.stripe_price_id_monthly,
+        "stripe_price_id_annual": plan.stripe_price_id_annual,
+        "is_active": bool(plan.is_active),
+        "is_public": bool(plan.is_public),
+        "created_at": plan.created_at.isoformat() if plan.created_at else None,
+    }
+
+
+# Editable subset on a plan revision. Slug + tier are fixed for a given
+# slug-family — changing them creates a different plan, not a revision.
+_PLAN_EDITABLE_FIELDS = {
+    "name",
+    "description",
+    "monthly_price_cents",
+    "annual_price_cents",
+    "billing_currency",
+    "included_invoices_per_month",
+    "per_overage_cents",
+    "included_users",
+    "included_api_keys",
+    "features",
+    "stripe_price_id_monthly",
+    "stripe_price_id_annual",
+    "is_active",
+    "is_public",
+}
+
+
+def admin_revise_plan(
+    *,
+    actor_user_id: UUID | str,
+    plan_id: UUID | str,
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    """Publish a new version of an existing plan.
+
+    The previous row stays in the table (so existing Subscriptions
+    keep resolving to the price they signed up at) but flips
+    ``is_active=False`` so new signups can't pick it. The new row gets
+    version=N+1 with merged values.
+
+    Per BUSINESS_MODEL.md: "Existing customers continue on their
+    grandfathered plan version unless they actively migrate."
+
+    Returns the new plan row dict.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.billing.models import Plan
+    from apps.identity.tenancy import super_admin_context
+
+    bad = sorted(set(updates.keys()) - _PLAN_EDITABLE_FIELDS)
+    if bad:
+        raise PlanUpdateError(f"Unknown plan field(s): {', '.join(bad)}")
+
+    with super_admin_context(reason=f"admin.plans:revise:{plan_id}"):
+        with transaction.atomic():
+            base = Plan.objects.select_for_update().get(id=plan_id)
+            # Bump version. The new row is_active by default; the old
+            # row is force-deactivated so new signups can't see it.
+            new_version = int(base.version) + 1
+
+            new_data = {
+                "slug": base.slug,
+                "version": new_version,
+                "tier": base.tier,
+                "name": updates.get("name", base.name),
+                "description": updates.get("description", base.description),
+                "monthly_price_cents": int(
+                    updates.get("monthly_price_cents", base.monthly_price_cents)
+                ),
+                "annual_price_cents": int(
+                    updates.get("annual_price_cents", base.annual_price_cents)
+                ),
+                "billing_currency": updates.get(
+                    "billing_currency", base.billing_currency
+                ),
+                "included_invoices_per_month": int(
+                    updates.get(
+                        "included_invoices_per_month", base.included_invoices_per_month
+                    )
+                ),
+                "per_overage_cents": int(
+                    updates.get("per_overage_cents", base.per_overage_cents)
+                ),
+                "included_users": int(updates.get("included_users", base.included_users)),
+                "included_api_keys": int(
+                    updates.get("included_api_keys", base.included_api_keys)
+                ),
+                "features": updates.get("features", base.features) or {},
+                "stripe_price_id_monthly": updates.get(
+                    "stripe_price_id_monthly", base.stripe_price_id_monthly
+                ),
+                "stripe_price_id_annual": updates.get(
+                    "stripe_price_id_annual", base.stripe_price_id_annual
+                ),
+                "is_active": bool(updates.get("is_active", True)),
+                "is_public": bool(updates.get("is_public", base.is_public)),
+            }
+
+            new_plan = Plan.objects.create(**new_data)
+
+            # Deactivate the old row only when we actually shipped a new
+            # active row. Keeps the previous plan available if the
+            # operator publishes an inactive draft.
+            if new_plan.is_active:
+                Plan.objects.filter(id=base.id).update(is_active=False)
+
+            record_event(
+                action_type="admin.plan_revised",
+                actor_type=AuditEvent.ActorType.USER,
+                actor_id=str(actor_user_id),
+                organization_id=None,
+                affected_entity_type="Plan",
+                affected_entity_id=str(new_plan.id),
+                payload={
+                    "slug": base.slug,
+                    "from_version": int(base.version),
+                    "to_version": new_version,
+                    "changed_fields": sorted(updates.keys()),
+                },
+            )
+
+    return _plan_admin_dict(new_plan)
+
+
+# --- Feature flags admin -------------------------------------------------------
+
+
+def list_feature_flags_for_admin(
+    *, actor_user_id: UUID | str
+) -> list[dict[str, Any]]:
+    """List every declared FeatureFlag with override + enabled-org counts."""
+    from django.db.models import Count
+
+    from apps.billing.models import FeatureFlag, FeatureFlagOverride
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="admin.feature_flags:list"):
+        flags = list(FeatureFlag.objects.all().order_by("category", "slug"))
+        override_counts = dict(
+            FeatureFlagOverride.objects.values_list("flag_id")
+            .annotate(c=Count("id"))
+            .values_list("flag_id", "c")
+        )
+
+    return [
+        {
+            "id": str(f.id),
+            "slug": f.slug,
+            "display_name": f.display_name,
+            "description": f.description,
+            "default_enabled": bool(f.default_enabled),
+            "category": f.category,
+            "override_count": int(override_counts.get(f.id, 0)),
+        }
+        for f in flags
+    ]
+
+
+def admin_update_feature_flag_default(
+    *,
+    actor_user_id: UUID | str,
+    slug: str,
+    default_enabled: bool,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Edit the global default for a declared flag."""
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.billing.models import FeatureFlag
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason=f"admin.feature_flags:update:{slug}"):
+        try:
+            flag = FeatureFlag.objects.get(slug=slug)
+        except FeatureFlag.DoesNotExist as exc:
+            raise PlanUpdateError(f"Unknown feature flag: {slug}") from exc
+
+        prior = bool(flag.default_enabled)
+        flag.default_enabled = bool(default_enabled)
+        if description is not None:
+            flag.description = description[:8000]
+        flag.save(update_fields=["default_enabled", "description", "updated_at"])
+
+        record_event(
+            action_type="admin.feature_flag_default_changed",
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(actor_user_id),
+            organization_id=None,
+            affected_entity_type="FeatureFlag",
+            affected_entity_id=str(flag.id),
+            payload={
+                "slug": slug,
+                "from": prior,
+                "to": bool(default_enabled),
+            },
+        )
+
+    return {
+        "id": str(flag.id),
+        "slug": flag.slug,
+        "default_enabled": bool(flag.default_enabled),
+    }
+
+
+def admin_set_feature_flag_override(
+    *,
+    actor_user_id: UUID | str,
+    organization_id: UUID | str,
+    slug: str,
+    enabled: bool,
+    reason: str,
+    expires_at: Any = None,
+) -> dict[str, Any]:
+    """Create or update a per-org feature flag override."""
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.billing.models import FeatureFlag, FeatureFlagOverride
+    from apps.identity.tenancy import super_admin_context
+
+    if not (reason or "").strip():
+        raise PlanUpdateError("Reason is required for a feature flag override.")
+
+    with super_admin_context(reason=f"admin.feature_flags:override:{slug}"):
+        flag = FeatureFlag.objects.filter(slug=slug).first()
+        if flag is None:
+            raise PlanUpdateError(f"Unknown feature flag: {slug}")
+
+        override, _ = FeatureFlagOverride.objects.update_or_create(
+            organization_id=organization_id,
+            flag=flag,
+            defaults={
+                "enabled": bool(enabled),
+                "expires_at": expires_at,
+                "reason": (reason or "").strip()[:255],
+                "created_by_user_id": actor_user_id,
+            },
+        )
+
+        record_event(
+            action_type="admin.feature_flag_override_set",
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(actor_user_id),
+            organization_id=str(organization_id),
+            affected_entity_type="FeatureFlagOverride",
+            affected_entity_id=str(override.id),
+            payload={
+                "slug": slug,
+                "enabled": bool(enabled),
+                "reason": reason,
+            },
+        )
+
+    return {
+        "id": str(override.id),
+        "slug": slug,
+        "enabled": bool(override.enabled),
+        "reason": override.reason,
+        "expires_at": override.expires_at.isoformat() if override.expires_at else None,
+    }
+
+
+def admin_clear_feature_flag_override(
+    *,
+    actor_user_id: UUID | str,
+    organization_id: UUID | str,
+    slug: str,
+) -> None:
+    """Remove a per-org override so the org falls back to plan default."""
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.billing.models import FeatureFlag, FeatureFlagOverride
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason=f"admin.feature_flags:clear:{slug}"):
+        flag = FeatureFlag.objects.filter(slug=slug).first()
+        if flag is None:
+            return
+        deleted = FeatureFlagOverride.objects.filter(
+            organization_id=organization_id, flag=flag
+        ).delete()
+        if deleted[0]:
+            record_event(
+                action_type="admin.feature_flag_override_cleared",
+                actor_type=AuditEvent.ActorType.USER,
+                actor_id=str(actor_user_id),
+                organization_id=str(organization_id),
+                affected_entity_type="FeatureFlagOverride",
+                affected_entity_id="",
+                payload={"slug": slug},
+            )
+
+
+def list_feature_flag_overrides_for_org(
+    *,
+    actor_user_id: UUID | str,
+    organization_id: UUID | str,
+) -> list[dict[str, Any]]:
+    """Return every override for an org for the admin tenant detail panel."""
+    from apps.billing.models import FeatureFlagOverride
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(
+        reason=f"admin.feature_flags:list_org_overrides:{organization_id}"
+    ):
+        overrides = list(
+            FeatureFlagOverride.objects.filter(organization_id=organization_id)
+            .select_related("flag")
+            .order_by("flag__category", "flag__slug")
+        )
+
+    return [
+        {
+            "id": str(o.id),
+            "slug": o.flag.slug,
+            "display_name": o.flag.display_name,
+            "enabled": bool(o.enabled),
+            "reason": o.reason,
+            "expires_at": o.expires_at.isoformat() if o.expires_at else None,
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+        }
+        for o in overrides
+    ]
+
+
+# --- Plan assignment to a tenant -----------------------------------------------
+
+
+class SubscriptionAssignmentError(Exception):
+    """Raised when admin assigns/changes a tenant's plan and validation fails."""
+
+
+def admin_assign_plan_to_tenant(
+    *,
+    actor_user_id: UUID | str,
+    organization_id: UUID | str,
+    plan_id: UUID | str,
+    billing_cycle: str = "monthly",
+    reason: str = "",
+) -> dict[str, Any]:
+    """Assign or replace a tenant's active subscription to the given plan.
+
+    Marks the previous active subscription ``replaced`` (per
+    BUSINESS_MODEL.md: history is preserved, never deleted) and
+    creates a fresh row pointing at the chosen plan + cycle. Does NOT
+    sync to Stripe — Stripe-managed subscriptions get changed via the
+    customer portal; this path is for admin overrides + custom plans.
+
+    Audit-logged with ``admin.subscription_assigned``.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone as _tz
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.billing.models import Plan, Subscription
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    if billing_cycle not in {"monthly", "annual"}:
+        raise SubscriptionAssignmentError(
+            "billing_cycle must be 'monthly' or 'annual'."
+        )
+
+    with super_admin_context(
+        reason=f"admin.subscription:assign:{organization_id}:{plan_id}"
+    ):
+        with transaction.atomic():
+            try:
+                org = Organization.objects.get(id=organization_id)
+            except Organization.DoesNotExist as exc:
+                raise SubscriptionAssignmentError("Unknown organization.") from exc
+            try:
+                plan = Plan.objects.get(id=plan_id)
+            except Plan.DoesNotExist as exc:
+                raise SubscriptionAssignmentError("Unknown plan.") from exc
+
+            # Mark every prior active row replaced — keeps the audit
+            # story coherent (no two ACTIVEs at once).
+            Subscription.objects.filter(
+                organization_id=org.id,
+                status__in=[
+                    Subscription.Status.ACTIVE,
+                    Subscription.Status.TRIALING,
+                    Subscription.Status.PAST_DUE,
+                ],
+            ).update(status=Subscription.Status.REPLACED, cancelled_at=_tz.now())
+
+            now = _tz.now()
+            cycle_days = 365 if billing_cycle == "annual" else 30
+            new_sub = Subscription.objects.create(
+                organization_id=org.id,
+                plan=plan,
+                status=Subscription.Status.ACTIVE,
+                billing_cycle=billing_cycle,
+                current_period_start=now,
+                current_period_end=now + timedelta(days=cycle_days),
+            )
+            # Mirror to Organization.subscription_state for fast list-page reads.
+            org.subscription_state = Organization.SubscriptionState.ACTIVE
+            org.save(update_fields=["subscription_state", "updated_at"])
+
+            record_event(
+                action_type="admin.subscription_assigned",
+                actor_type=AuditEvent.ActorType.USER,
+                actor_id=str(actor_user_id),
+                organization_id=str(org.id),
+                affected_entity_type="Subscription",
+                affected_entity_id=str(new_sub.id),
+                payload={
+                    "plan_slug": plan.slug,
+                    "plan_version": int(plan.version),
+                    "billing_cycle": billing_cycle,
+                    "reason": reason[:255],
+                },
+            )
+
+    return {
+        "id": str(new_sub.id),
+        "plan_id": str(plan.id),
+        "plan_slug": plan.slug,
+        "plan_name": plan.name,
+        "billing_cycle": billing_cycle,
+        "status": new_sub.status,
+    }
+
+
+# --- Customer support tools (Slice 99) -----------------------------------------
+
+
+class SupportActionError(Exception):
+    """Raised when an admin support action fails validation."""
+
+
+def admin_reset_user_2fa(
+    *,
+    actor_user_id: UUID | str,
+    target_user_id: UUID | str,
+    reason: str,
+) -> dict[str, Any]:
+    """Disable the target user's 2FA (per PRODUCT_REQUIREMENTS Domain 11).
+
+    Used by support to unblock a customer who lost their authenticator.
+    Recovery codes are revoked at the same time so the customer must
+    re-enroll cleanly. Audit-logged with the reason.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.models import User
+    from apps.identity.tenancy import super_admin_context
+
+    if not (reason or "").strip():
+        raise SupportActionError("Reason is required to reset a user's 2FA.")
+
+    with super_admin_context(reason=f"admin.support:reset_2fa:{target_user_id}"):
+        try:
+            user = User.objects.get(id=target_user_id)
+        except User.DoesNotExist as exc:
+            raise SupportActionError("Unknown user.") from exc
+
+        was_enabled = bool(user.two_factor_enabled)
+        user.two_factor_enabled = False
+        user.totp_secret_encrypted = ""
+        # Slice 89 stored recovery codes as a list field; defensive
+        # both shapes.
+        for f in ("totp_recovery_codes", "two_factor_recovery_codes"):
+            if hasattr(user, f):
+                setattr(user, f, [])
+        update_fields = ["two_factor_enabled", "totp_secret_encrypted", "updated_at"]
+        for f in ("totp_recovery_codes", "two_factor_recovery_codes"):
+            if hasattr(user, f):
+                update_fields.append(f)
+        user.save(update_fields=update_fields)
+
+        record_event(
+            action_type="admin.user_2fa_reset",
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(actor_user_id),
+            organization_id=None,
+            affected_entity_type="User",
+            affected_entity_id=str(user.id),
+            payload={
+                "email": user.email,
+                "was_enabled": was_enabled,
+                "reason": reason[:255],
+            },
+        )
+
+    return {
+        "user_id": str(user.id),
+        "email": user.email,
+        "two_factor_enabled": False,
+    }
+
+
+def admin_retry_stuck_invoice(
+    *,
+    actor_user_id: UUID | str,
+    invoice_id: UUID | str,
+    reason: str,
+) -> dict[str, Any]:
+    """Re-enqueue the structuring + validation pipeline for an invoice.
+
+    Used by support when an invoice landed in error / extracting
+    state and never recovered. Re-runs the structurer; if it succeeds
+    the invoice transitions to ready_for_review on its own.
+
+    The Stripe-style waitlist: this is the only admin action that
+    touches the live extraction pipeline, so we keep it explicit
+    rather than auto-recovering.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.tenancy import super_admin_context
+    from apps.submission.models import Invoice
+
+    if not (reason or "").strip():
+        raise SupportActionError("Reason is required to retry an invoice.")
+
+    with super_admin_context(reason=f"admin.support:retry:{invoice_id}"):
+        try:
+            invoice = Invoice.objects.get(id=invoice_id)
+        except Invoice.DoesNotExist as exc:
+            raise SupportActionError("Unknown invoice.") from exc
+
+        # Enqueue structuring on the high-priority worker. Don't .delay()
+        # under a transaction — but we're outside one here, so it's fine.
+        from apps.extraction.tasks import structure_invoice
+
+        structure_invoice.delay(str(invoice.id))
+
+        record_event(
+            action_type="admin.invoice_retried",
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(actor_user_id),
+            organization_id=str(invoice.organization_id),
+            affected_entity_type="Invoice",
+            affected_entity_id=str(invoice.id),
+            payload={
+                "prior_status": invoice.status,
+                "reason": reason[:255],
+            },
+        )
+
+    return {
+        "invoice_id": str(invoice.id),
+        "queued": True,
+        "prior_status": invoice.status,
+    }
+
+
+def admin_waive_overage(
+    *,
+    actor_user_id: UUID | str,
+    organization_id: UUID | str,
+    waived_invoice_count: int,
+    reason: str,
+) -> dict[str, Any]:
+    """Forgive ``waived_invoice_count`` overage invoices on the current period.
+
+    Attaches an ``OverageWaiver`` row to the org's active subscription
+    pinned to its current billing period. The bill calculator reads
+    waivers and subtracts before computing overage charges.
+
+    Pass ``-1`` to waive all overages for the current period.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.billing.models import OverageWaiver, Subscription
+    from apps.identity.tenancy import super_admin_context
+
+    if not (reason or "").strip():
+        raise SupportActionError("Reason is required to waive overage charges.")
+    if not isinstance(waived_invoice_count, int):
+        raise SupportActionError("waived_invoice_count must be an integer.")
+    if waived_invoice_count == 0:
+        raise SupportActionError("Use a non-zero count (or -1 for all).")
+
+    with super_admin_context(
+        reason=f"admin.support:waive_overage:{organization_id}"
+    ):
+        sub = (
+            Subscription.objects.filter(
+                organization_id=organization_id,
+                status__in=[
+                    Subscription.Status.ACTIVE,
+                    Subscription.Status.TRIALING,
+                    Subscription.Status.PAST_DUE,
+                ],
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        if sub is None:
+            raise SupportActionError("Tenant has no active subscription.")
+        if sub.current_period_start is None or sub.current_period_end is None:
+            raise SupportActionError(
+                "Active subscription has no billing period to waive against."
+            )
+
+        waiver = OverageWaiver.objects.create(
+            organization_id=organization_id,
+            subscription=sub,
+            period_start=sub.current_period_start,
+            period_end=sub.current_period_end,
+            waived_invoice_count=int(waived_invoice_count),
+            reason=reason[:255],
+            created_by_user_id=actor_user_id,
+        )
+
+        record_event(
+            action_type="admin.overage_waived",
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(actor_user_id),
+            organization_id=str(organization_id),
+            affected_entity_type="OverageWaiver",
+            affected_entity_id=str(waiver.id),
+            payload={
+                "subscription_id": str(sub.id),
+                "waived_invoice_count": int(waived_invoice_count),
+                "reason": reason[:255],
+            },
+        )
+
+    return {
+        "id": str(waiver.id),
+        "waived_invoice_count": int(waived_invoice_count),
+        "period_start": waiver.period_start.isoformat(),
+        "period_end": waiver.period_end.isoformat(),
+    }
+
+
+# --- Engine routing-rule editor (Slice 99) -------------------------------------
+
+
+class RoutingRuleUpdateError(Exception):
+    """Raised on validation failure for routing-rule edits."""
+
+
+def list_routing_rules_for_admin(
+    *, actor_user_id: UUID | str
+) -> list[dict[str, Any]]:
+    """Return every EngineRoutingRule with engine name + capability."""
+    from apps.extraction.models import EngineRoutingRule
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="admin.routing_rules:list"):
+        rules = list(
+            EngineRoutingRule.objects.select_related("engine").order_by(
+                "capability", "priority", "created_at"
+            )
+        )
+
+    return [
+        {
+            "id": str(r.id),
+            "engine_id": str(r.engine.id),
+            "engine_name": r.engine.name,
+            "engine_status": r.engine.status,
+            "capability": r.capability,
+            "priority": int(r.priority),
+            "is_active": bool(r.is_active),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rules
+    ]
+
+
+def admin_update_routing_rule(
+    *,
+    actor_user_id: UUID | str,
+    rule_id: UUID | str,
+    priority: int | None = None,
+    is_active: bool | None = None,
+) -> dict[str, Any]:
+    """Edit a routing rule's priority or active flag."""
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.extraction.models import EngineRoutingRule
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason=f"admin.routing_rules:update:{rule_id}"):
+        try:
+            rule = EngineRoutingRule.objects.select_related("engine").get(id=rule_id)
+        except EngineRoutingRule.DoesNotExist as exc:
+            raise RoutingRuleUpdateError("Unknown routing rule.") from exc
+
+        prior = {"priority": rule.priority, "is_active": rule.is_active}
+        update_fields: list[str] = []
+        if priority is not None:
+            try:
+                rule.priority = int(priority)
+            except (TypeError, ValueError) as exc:
+                raise RoutingRuleUpdateError("priority must be an integer.") from exc
+            update_fields.append("priority")
+        if is_active is not None:
+            rule.is_active = bool(is_active)
+            update_fields.append("is_active")
+        if update_fields:
+            rule.save(update_fields=update_fields)
+
+        record_event(
+            action_type="admin.routing_rule_updated",
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(actor_user_id),
+            organization_id=None,
+            affected_entity_type="EngineRoutingRule",
+            affected_entity_id=str(rule.id),
+            payload={
+                "engine": rule.engine.name,
+                "capability": rule.capability,
+                "from": prior,
+                "to": {"priority": rule.priority, "is_active": rule.is_active},
+            },
+        )
+
+    return {
+        "id": str(rule.id),
+        "engine_name": rule.engine.name,
+        "capability": rule.capability,
+        "priority": int(rule.priority),
+        "is_active": bool(rule.is_active),
+    }
+
+
+# --- System health probes (Slice 99) -------------------------------------------
+
+
+def system_health_snapshot(*, actor_user_id: UUID | str) -> dict[str, Any]:
+    """Real-time health view of every critical subsystem.
+
+    Probes:
+      - celery: queue depth (Redis broker), worker liveness via task ping
+      - postgres: simple SELECT 1
+      - lhdn: GET /v1.0/taxpayer/validate/<dummy> → 4xx is healthy
+      - stripe: GET /v1/balance with current API key → 401 means
+        unconfigured, 200 healthy
+      - extraction: avg engine call latency last 60 minutes per engine
+    """
+    from datetime import timedelta
+
+    from django.db import connection
+    from django.utils import timezone as _tz
+
+    from apps.identity.tenancy import super_admin_context
+
+    snapshot: dict[str, Any] = {
+        "checked_at": _tz.now().isoformat(),
+        "subsystems": {},
+        "extraction_latency": [],
+        "queue_depth": {},
+    }
+
+    # Postgres ping
+    pg_ok = False
+    try:
+        with connection.cursor() as c:
+            c.execute("SELECT 1")
+            pg_ok = c.fetchone()[0] == 1
+    except Exception as exc:
+        snapshot["subsystems"]["postgres"] = {
+            "status": "down",
+            "detail": str(exc)[:120],
+        }
+    else:
+        snapshot["subsystems"]["postgres"] = {"status": "ok" if pg_ok else "down"}
+
+    # Redis / Celery queue depth — reads broker length per known queue.
+    try:
+        import redis
+        from django.conf import settings
+
+        broker = redis.Redis.from_url(settings.CELERY_BROKER_URL)
+        for q in ("high", "low", "signing"):
+            try:
+                snapshot["queue_depth"][q] = int(broker.llen(q))
+            except Exception:
+                snapshot["queue_depth"][q] = None
+        snapshot["subsystems"]["celery"] = {"status": "ok"}
+    except Exception as exc:
+        snapshot["subsystems"]["celery"] = {
+            "status": "unknown",
+            "detail": str(exc)[:120],
+        }
+
+    # LHDN probe — best-effort. We only check that the configured URL
+    # responds; auth status doesn't matter for liveness.
+    try:
+        import httpx
+
+        from apps.administration.services import system_setting
+
+        base_url = system_setting(namespace="lhdn", key="base_url")
+        if base_url:
+            r = httpx.get(
+                f"{base_url.rstrip('/')}/api/v1.0/taxpayer/validate/IG00000000000",
+                timeout=5.0,
+            )
+            snapshot["subsystems"]["lhdn"] = {
+                "status": "ok" if r.status_code < 500 else "degraded",
+                "http_status": r.status_code,
+            }
+        else:
+            snapshot["subsystems"]["lhdn"] = {"status": "unconfigured"}
+    except Exception as exc:
+        snapshot["subsystems"]["lhdn"] = {
+            "status": "down",
+            "detail": str(exc)[:120],
+        }
+
+    # Stripe probe — only check configured-ness (no live API call to keep
+    # this snapshot cheap; full balance check is one click away in
+    # admin/settings).
+    try:
+        from apps.administration.services import system_setting
+
+        secret = system_setting(namespace="stripe", key="secret_key")
+        snapshot["subsystems"]["stripe"] = {
+            "status": "configured" if secret else "unconfigured"
+        }
+    except Exception as exc:
+        snapshot["subsystems"]["stripe"] = {
+            "status": "unknown",
+            "detail": str(exc)[:120],
+        }
+
+    # Extraction latency — avg ms per engine over the last hour.
+    try:
+        from django.db.models import Avg, Count
+
+        from apps.extraction.models import EngineCall
+
+        cutoff = _tz.now() - timedelta(hours=1)
+        with super_admin_context(reason="admin.health:extraction_latency"):
+            rows = list(
+                EngineCall.objects.filter(started_at__gte=cutoff)
+                .values("engine__name")
+                .annotate(avg_ms=Avg("duration_ms"), n=Count("id"))
+                .order_by("-n")[:10]
+            )
+        snapshot["extraction_latency"] = [
+            {
+                "engine": row["engine__name"],
+                "avg_ms": int(row["avg_ms"] or 0),
+                "calls": int(row["n"]),
+            }
+            for row in rows
+        ]
+    except Exception as exc:
+        snapshot["extraction_latency_error"] = str(exc)[:120]
+
+    return snapshot

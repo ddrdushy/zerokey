@@ -1326,3 +1326,20 @@ def two_factor_disable(request: Request) -> Response:
         payload={},
     )
     return Response({"ok": True})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def feature_flags_view(request: Request) -> Response:
+    """Return ``{slug: enabled}`` for every declared flag, resolved for the active org.
+
+    Frontend uses the map to gate UI surfaces (hide the SSO settings
+    tab if ``sso`` is off, hide the multi-entity dashboard if
+    ``multi_entity_dashboard`` is off, etc.).
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response({"flags": {}})
+    from apps.billing.services import resolved_feature_flags
+
+    return Response({"flags": resolved_feature_flags(organization_id=organization_id)})

@@ -71,4 +71,67 @@ urlpatterns = [
         views.admin_update_engine,
         name="admin-update-engine",
     ),
+    # --- Slice 99: plans + flags + support tools + routing + health ---
+    path("plans/", views.admin_list_plans, name="admin-list-plans"),
+    path(
+        "plans/<uuid:plan_id>/revise/",
+        views.admin_revise_plan,
+        name="admin-revise-plan",
+    ),
+    path(
+        "feature-flags/",
+        views.admin_list_feature_flags,
+        name="admin-list-feature-flags",
+    ),
+    path(
+        "feature-flags/<slug:slug>/",
+        views.admin_update_feature_flag,
+        name="admin-update-feature-flag",
+    ),
+    path(
+        "tenants/<uuid:organization_id>/feature-flags/",
+        views.admin_list_org_overrides,
+        name="admin-list-org-overrides",
+    ),
+    path(
+        "tenants/<uuid:organization_id>/feature-flags/<slug:slug>/",
+        views.admin_set_feature_flag_override,
+        name="admin-set-feature-flag-override",
+    ),
+    path(
+        "tenants/<uuid:organization_id>/feature-flags/<slug:slug>/clear/",
+        views.admin_clear_feature_flag_override,
+        name="admin-clear-feature-flag-override",
+    ),
+    path(
+        "tenants/<uuid:organization_id>/assign-plan/",
+        views.admin_assign_plan,
+        name="admin-assign-plan",
+    ),
+    path(
+        "tenants/<uuid:organization_id>/waive-overage/",
+        views.admin_waive_overage,
+        name="admin-waive-overage",
+    ),
+    path(
+        "users/<uuid:user_id>/reset-2fa/",
+        views.admin_reset_2fa,
+        name="admin-reset-2fa",
+    ),
+    path(
+        "invoices/<uuid:invoice_id>/retry/",
+        views.admin_retry_invoice,
+        name="admin-retry-invoice",
+    ),
+    path(
+        "routing-rules/",
+        views.admin_list_routing_rules,
+        name="admin-list-routing-rules",
+    ),
+    path(
+        "routing-rules/<uuid:rule_id>/",
+        views.admin_update_routing_rule,
+        name="admin-update-routing-rule",
+    ),
+    path("health/", views.admin_system_health, name="admin-system-health"),
 ]

@@ -121,12 +121,17 @@ export default function TenantDetailPage() {
           <>
             <Header detail={detail} onChanged={refresh} onError={setError} />
             <KPIGrid detail={detail} />
+            <SubscriptionAndOverridesSection
+              detail={detail}
+              onChanged={refresh}
+              onError={setError}
+            />
             <div className="grid gap-6 md:grid-cols-2">
               <MembersSection detail={detail} onChanged={refresh} onError={setError} />
               <InboxSection detail={detail} />
             </div>
             <RecentJobsSection detail={detail} />
-            <RecentInvoicesSection detail={detail} />
+            <RecentInvoicesSection detail={detail} onError={setError} />
           </>
         )}
       </div>
@@ -736,6 +741,30 @@ function MemberActions({
             Reactivate
           </Button>
         )}
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={saving}
+          onClick={async () => {
+            if (!reason.trim()) {
+              onError("Reason is required to reset 2FA.");
+              return;
+            }
+            setSaving(true);
+            onError(null);
+            try {
+              await api.adminReset2fa(member.user_id, reason.trim());
+              onChanged();
+            } catch (err) {
+              onError(err instanceof Error ? err.message : "Failed.");
+            } finally {
+              setSaving(false);
+            }
+          }}
+          className="text-warning hover:bg-warning/5"
+        >
+          Reset 2FA
+        </Button>
         <Button size="sm" variant="ghost" onClick={onClose} disabled={saving}>
           Cancel
         </Button>
@@ -817,7 +846,27 @@ function RecentJobsSection({ detail }: { detail: TenantDetail }) {
   );
 }
 
-function RecentInvoicesSection({ detail }: { detail: TenantDetail }) {
+function RecentInvoicesSection({
+  detail,
+  onError,
+}: {
+  detail: TenantDetail;
+  onError: (msg: string | null) => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  async function retry(invoiceId: string) {
+    const reason = window.prompt("Reason for retry (audited):") || "";
+    if (!reason.trim()) return;
+    setBusy(invoiceId);
+    onError(null);
+    try {
+      await api.adminRetryInvoice(invoiceId, reason.trim());
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
   return (
     <section className="rounded-xl border border-slate-100 bg-white">
       <header className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
@@ -838,28 +887,47 @@ function RecentInvoicesSection({ detail }: { detail: TenantDetail }) {
               <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Status</th>
               <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Total</th>
               <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">When</th>
+              <th className="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {detail.recent_invoices.map((inv) => (
-              <tr key={inv.id}>
-                <td className="px-3 py-2 font-mono text-ink">{inv.invoice_number || "—"}</td>
-                <td className="max-w-xs truncate px-3 py-2 text-slate-600">
-                  {inv.buyer_legal_name || "—"}
-                </td>
-                <td className="px-3 py-2">
-                  <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700">
-                    {inv.status}
-                  </code>
-                </td>
-                <td className="px-3 py-2 text-right text-slate-600">
-                  {inv.grand_total ? `${inv.currency_code} ${inv.grand_total}` : "—"}
-                </td>
-                <td className="px-3 py-2 text-slate-500">
-                  {inv.created_at ? new Date(inv.created_at).toLocaleString() : "—"}
-                </td>
-              </tr>
-            ))}
+            {detail.recent_invoices.map((inv) => {
+              const stuck =
+                inv.status === "extracting" ||
+                inv.status === "validating" ||
+                inv.status === "error";
+              return (
+                <tr key={inv.id}>
+                  <td className="px-3 py-2 font-mono text-ink">{inv.invoice_number || "—"}</td>
+                  <td className="max-w-xs truncate px-3 py-2 text-slate-600">
+                    {inv.buyer_legal_name || "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700">
+                      {inv.status}
+                    </code>
+                  </td>
+                  <td className="px-3 py-2 text-right text-slate-600">
+                    {inv.grand_total ? `${inv.currency_code} ${inv.grand_total}` : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-slate-500">
+                    {inv.created_at ? new Date(inv.created_at).toLocaleString() : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {stuck && (
+                      <button
+                        type="button"
+                        onClick={() => retry(inv.id)}
+                        disabled={busy === inv.id}
+                        className="rounded-md border border-slate-200 px-2 py-1 text-[10px] font-medium text-ink hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        {busy === inv.id ? "Queued…" : "Retry"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -871,6 +939,302 @@ function Loading() {
   return (
     <div className="grid place-items-center py-24 text-2xs uppercase tracking-wider text-slate-400">
       Loading tenant detail…
+    </div>
+  );
+}
+
+function SubscriptionAndOverridesSection({
+  detail,
+  onChanged,
+  onError,
+}: {
+  detail: TenantDetail;
+  onChanged: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  const [plans, setPlans] = useState<import("@/lib/api").AdminPlan[] | null>(null);
+  const [overrides, setOverrides] = useState<
+    import("@/lib/api").AdminFeatureFlagOverride[] | null
+  >(null);
+  const [flags, setFlags] = useState<import("@/lib/api").AdminFeatureFlag[] | null>(null);
+  const [planId, setPlanId] = useState("");
+  const [billingCycle, setBillingCycle] = useState<"monthly" | "annual">("monthly");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [waiving, setWaiving] = useState(false);
+
+  async function refresh() {
+    try {
+      const [p, ov, fl] = await Promise.all([
+        api.adminListPlans(),
+        api.adminListOrgFeatureOverrides(detail.id),
+        api.adminListFeatureFlags(),
+      ]);
+      setPlans(p);
+      setOverrides(ov);
+      setFlags(fl);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Failed to load subscription data.");
+    }
+  }
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail.id]);
+
+  const activePlans = (plans || []).filter((p) => p.is_active);
+
+  async function assign() {
+    if (!planId) {
+      onError("Pick a plan.");
+      return;
+    }
+    if (!reason.trim()) {
+      onError("Reason is required to change the subscription.");
+      return;
+    }
+    setBusy(true);
+    onError(null);
+    try {
+      await api.adminAssignPlan(detail.id, {
+        plan_id: planId,
+        billing_cycle: billingCycle,
+        reason: reason.trim(),
+      });
+      setReason("");
+      onChanged();
+      await refresh();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function waive() {
+    const countRaw = window.prompt(
+      "Waive how many overage invoices? Use -1 to forgive all overages this period.",
+    );
+    if (countRaw === null) return;
+    const count = Number(countRaw);
+    if (Number.isNaN(count) || count === 0) {
+      onError("Pick a non-zero count (or -1 for all).");
+      return;
+    }
+    const reasonW = window.prompt("Reason (audited):") || "";
+    if (!reasonW.trim()) return;
+    setWaiving(true);
+    onError(null);
+    try {
+      await api.adminWaiveOverage(detail.id, {
+        waived_invoice_count: count,
+        reason: reasonW.trim(),
+      });
+      onChanged();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Failed.");
+    } finally {
+      setWaiving(false);
+    }
+  }
+
+  return (
+    <section className="rounded-xl border border-slate-100 bg-white">
+      <header className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
+        <span className="text-2xs font-medium uppercase tracking-wider text-slate-400">
+          Subscription + feature overrides
+        </span>
+        <Button size="sm" variant="outline" onClick={waive} disabled={waiving}>
+          {waiving ? "Waiving…" : "Waive overage"}
+        </Button>
+      </header>
+      <div className="grid gap-6 p-4 md:grid-cols-2">
+        <div>
+          <h3 className="text-2xs font-medium uppercase tracking-wider text-slate-400">
+            Assign plan
+          </h3>
+          {plans === null ? (
+            <p className="mt-2 text-2xs text-slate-400">Loading plans…</p>
+          ) : (
+            <div className="mt-2 flex flex-col gap-2">
+              <select
+                value={planId}
+                onChange={(e) => setPlanId(e.target.value)}
+                className="rounded-md border border-slate-200 px-2 py-1.5 text-2xs"
+              >
+                <option value="">Pick a plan…</option>
+                {activePlans.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} v{p.version} · {p.billing_currency}{" "}
+                    {(p.monthly_price_cents / 100).toFixed(0)}/mo
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2 text-2xs">
+                <label className="inline-flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="cycle"
+                    checked={billingCycle === "monthly"}
+                    onChange={() => setBillingCycle("monthly")}
+                  />
+                  Monthly
+                </label>
+                <label className="inline-flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="cycle"
+                    checked={billingCycle === "annual"}
+                    onChange={() => setBillingCycle("annual")}
+                  />
+                  Annual
+                </label>
+              </div>
+              <input
+                type="text"
+                placeholder="Reason (audited)"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                className="rounded-md border border-slate-200 px-2 py-1.5 text-2xs"
+              />
+              <Button size="sm" disabled={busy} onClick={assign}>
+                {busy ? "Assigning…" : "Assign"}
+              </Button>
+            </div>
+          )}
+        </div>
+        <div>
+          <h3 className="text-2xs font-medium uppercase tracking-wider text-slate-400">
+            Per-org flag overrides
+          </h3>
+          {flags === null || overrides === null ? (
+            <p className="mt-2 text-2xs text-slate-400">Loading…</p>
+          ) : (
+            <FlagOverridesEditor
+              orgId={detail.id}
+              flags={flags}
+              overrides={overrides}
+              onChanged={refresh}
+              onError={onError}
+            />
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FlagOverridesEditor({
+  orgId,
+  flags,
+  overrides,
+  onChanged,
+  onError,
+}: {
+  orgId: string;
+  flags: import("@/lib/api").AdminFeatureFlag[];
+  overrides: import("@/lib/api").AdminFeatureFlagOverride[];
+  onChanged: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  const [busySlug, setBusySlug] = useState<string | null>(null);
+  const overrideBySlug = new Map(overrides.map((o) => [o.slug, o]));
+
+  async function setOverride(slug: string, enabled: boolean) {
+    const reason = window.prompt(
+      `Reason for ${enabled ? "enabling" : "disabling"} ${slug} for this tenant (audited):`,
+    );
+    if (!reason || !reason.trim()) return;
+    setBusySlug(slug);
+    onError(null);
+    try {
+      await api.adminSetFeatureOverride(orgId, slug, {
+        enabled,
+        reason: reason.trim(),
+      });
+      onChanged();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Failed.");
+    } finally {
+      setBusySlug(null);
+    }
+  }
+  async function clearOverride(slug: string) {
+    setBusySlug(slug);
+    onError(null);
+    try {
+      await api.adminClearFeatureOverride(orgId, slug);
+      onChanged();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Failed.");
+    } finally {
+      setBusySlug(null);
+    }
+  }
+
+  return (
+    <div className="mt-2 max-h-96 overflow-y-auto">
+      <table className="w-full text-2xs">
+        <thead className="bg-slate-50 text-slate-400">
+          <tr>
+            <th className="px-2 py-1.5 text-left font-medium uppercase tracking-wider">Flag</th>
+            <th className="px-2 py-1.5 text-right font-medium uppercase tracking-wider">Override</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {flags.map((f) => {
+            const o = overrideBySlug.get(f.slug);
+            return (
+              <tr key={f.id}>
+                <td className="px-2 py-1.5">
+                  <div className="font-medium text-ink">{f.display_name}</div>
+                  <code className="text-[10px] text-slate-400">{f.slug}</code>
+                </td>
+                <td className="px-2 py-1.5 text-right">
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={busySlug === f.slug}
+                      onClick={() => setOverride(f.slug, true)}
+                      className={cn(
+                        "rounded-sm px-1.5 py-0.5 text-[10px] uppercase tracking-wider",
+                        o?.enabled === true
+                          ? "bg-success/10 text-success"
+                          : "bg-slate-100 text-slate-500 hover:bg-slate-200",
+                      )}
+                    >
+                      on
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busySlug === f.slug}
+                      onClick={() => setOverride(f.slug, false)}
+                      className={cn(
+                        "rounded-sm px-1.5 py-0.5 text-[10px] uppercase tracking-wider",
+                        o?.enabled === false
+                          ? "bg-error/10 text-error"
+                          : "bg-slate-100 text-slate-500 hover:bg-slate-200",
+                      )}
+                    >
+                      off
+                    </button>
+                    {o && (
+                      <button
+                        type="button"
+                        disabled={busySlug === f.slug}
+                        onClick={() => clearOverride(f.slug)}
+                        className="text-[10px] text-slate-400 hover:text-ink"
+                      >
+                        clear
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

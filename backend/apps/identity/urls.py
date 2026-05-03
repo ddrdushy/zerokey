@@ -112,4 +112,10 @@ urlpatterns = [
         views.organization_certificate,
         name="organization-certificate",
     ),
+    # Slice 99 — feature-flag map for the active org (resolved server-side)
+    path(
+        "feature-flags/",
+        views.feature_flags_view,
+        name="feature-flags",
+    ),
 ]

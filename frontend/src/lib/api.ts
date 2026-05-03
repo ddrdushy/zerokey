@@ -402,6 +402,70 @@ export type SystemSettingNamespace = {
   updated_at: string | null;
 };
 
+// --- Slice 99: plans + flags + routing + health admin types ---
+export type AdminPlan = {
+  id: string;
+  slug: string;
+  version: number;
+  name: string;
+  description: string;
+  tier: string;
+  monthly_price_cents: number;
+  annual_price_cents: number;
+  billing_currency: string;
+  included_invoices_per_month: number;
+  per_overage_cents: number;
+  included_users: number;
+  included_api_keys: number;
+  features: Record<string, boolean>;
+  stripe_price_id_monthly: string;
+  stripe_price_id_annual: string;
+  is_active: boolean;
+  is_public: boolean;
+  created_at: string | null;
+};
+
+export type AdminFeatureFlag = {
+  id: string;
+  slug: string;
+  display_name: string;
+  description: string;
+  default_enabled: boolean;
+  category: string;
+  override_count: number;
+};
+
+export type AdminFeatureFlagOverride = {
+  id: string;
+  slug: string;
+  display_name?: string;
+  enabled: boolean;
+  reason: string;
+  expires_at: string | null;
+  created_at?: string | null;
+};
+
+export type AdminRoutingRule = {
+  id: string;
+  engine_id: string;
+  engine_name: string;
+  engine_status: string;
+  capability: string;
+  priority: number;
+  is_active: boolean;
+  created_at: string | null;
+};
+
+export type AdminSystemHealth = {
+  checked_at: string;
+  subsystems: Record<
+    string,
+    { status: string; detail?: string; http_status?: number }
+  >;
+  queue_depth: Record<string, number | null>;
+  extraction_latency: Array<{ engine: string; avg_ms: number; calls: number }>;
+};
+
 export type AdminEngine = {
   id: string;
   name: string;
@@ -1176,6 +1240,85 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  // --- Slice 99: plans + flags + routing + support tools + health ---
+  adminListPlans: () =>
+    request<{ results: AdminPlan[] }>("/admin/plans/").then((r) => r.results),
+  adminRevisePlan: (planId: string, updates: Partial<AdminPlan>) =>
+    request<AdminPlan>(`/admin/plans/${planId}/revise/`, {
+      method: "POST",
+      body: JSON.stringify({ updates }),
+    }),
+  adminListFeatureFlags: () =>
+    request<{ results: AdminFeatureFlag[] }>("/admin/feature-flags/").then(
+      (r) => r.results,
+    ),
+  adminUpdateFeatureFlag: (
+    slug: string,
+    body: { default_enabled: boolean; description?: string },
+  ) =>
+    request<{ slug: string; default_enabled: boolean }>(
+      `/admin/feature-flags/${slug}/`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+  adminListOrgFeatureOverrides: (organizationId: string) =>
+    request<{ results: AdminFeatureFlagOverride[] }>(
+      `/admin/tenants/${organizationId}/feature-flags/`,
+    ).then((r) => r.results),
+  adminSetFeatureOverride: (
+    organizationId: string,
+    slug: string,
+    body: { enabled: boolean; reason: string },
+  ) =>
+    request<AdminFeatureFlagOverride>(
+      `/admin/tenants/${organizationId}/feature-flags/${slug}/`,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  adminClearFeatureOverride: (organizationId: string, slug: string) =>
+    request<{ cleared: boolean }>(
+      `/admin/tenants/${organizationId}/feature-flags/${slug}/clear/`,
+      { method: "DELETE" },
+    ),
+  adminAssignPlan: (
+    organizationId: string,
+    body: { plan_id: string; billing_cycle: "monthly" | "annual"; reason: string },
+  ) =>
+    request<{ id: string; plan_slug: string; plan_name: string; status: string }>(
+      `/admin/tenants/${organizationId}/assign-plan/`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  adminWaiveOverage: (
+    organizationId: string,
+    body: { waived_invoice_count: number; reason: string },
+  ) =>
+    request<{ id: string; waived_invoice_count: number }>(
+      `/admin/tenants/${organizationId}/waive-overage/`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  adminReset2fa: (userId: string, reason: string) =>
+    request<{ user_id: string; two_factor_enabled: boolean }>(
+      `/admin/users/${userId}/reset-2fa/`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
+  adminRetryInvoice: (invoiceId: string, reason: string) =>
+    request<{ invoice_id: string; queued: boolean }>(
+      `/admin/invoices/${invoiceId}/retry/`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
+  adminListRoutingRules: () =>
+    request<{ results: AdminRoutingRule[] }>("/admin/routing-rules/").then(
+      (r) => r.results,
+    ),
+  adminUpdateRoutingRule: (
+    ruleId: string,
+    body: Partial<{ priority: number; is_active: boolean }>,
+  ) =>
+    request<AdminRoutingRule>(`/admin/routing-rules/${ruleId}/`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  adminSystemHealth: () => request<AdminSystemHealth>("/admin/health/"),
+  // Customer-facing feature flag map (resolved server-side).
+  featureFlags: () => request<{ flags: Record<string, boolean> }>("/identity/feature-flags/"),
   adminListTenants: (params?: { search?: string; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.search) qs.set("search", params.search);

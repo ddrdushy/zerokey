@@ -279,3 +279,128 @@ class UsageEvent(TenantScopedModel):
             f"{self.event_type} x{self.quantity} on {self.organization_id} "
             f"@ {self.occurred_at.isoformat()}"
         )
+
+
+class FeatureFlag(TimestampedModel):
+    """A declared feature flag the platform code reads from.
+
+    Per PRODUCT_REQUIREMENTS.md Domain 11: every feature is gated by a
+    flag at the global, plan, or customer level. The actual resolution
+    is in ``apps.billing.services.is_feature_enabled``; this row exists
+    so the admin console can list which flags exist + edit their global
+    defaults + descriptions without grepping the codebase.
+
+    Plan-level defaults live in ``Plan.features`` JSON (already there).
+    Per-organization overrides land in ``FeatureFlagOverride`` below.
+
+    Platform-global table — every tenant resolves against the same
+    declared flag set.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(max_length=64, unique=True)
+    display_name = models.CharField(max_length=128)
+    description = models.TextField(blank=True)
+
+    # Resolution fallback when no plan / org override matches. Most
+    # flags ship ``default_enabled=False`` so a new flag never silently
+    # enables something for everyone.
+    default_enabled = models.BooleanField(default=False)
+
+    # Categorisation for the admin UI (e.g. "ingestion", "billing",
+    # "compliance"). Free-form — keeps a flat declaration table from
+    # turning into a tree just to find a flag.
+    category = models.CharField(max_length=32, blank=True, db_index=True)
+
+    class Meta:
+        db_table = "billing_feature_flag"
+        ordering = ["category", "slug"]
+
+    def __str__(self) -> str:
+        return f"{self.slug} (default={'on' if self.default_enabled else 'off'})"
+
+
+class FeatureFlagOverride(TenantScopedModel):
+    """A per-organization override of a FeatureFlag.
+
+    Resolution order in ``is_feature_enabled``:
+      1. FeatureFlagOverride for (org, flag) — wins
+      2. Plan.features[slug] — plan-level default
+      3. FeatureFlag.default_enabled — global default
+
+    Tenant-scoped so RLS keeps an org's flag overrides invisible to
+    other orgs (admin reads cross-tenant under the usual elevation).
+    Reason is required to keep the audit story coherent — overrides
+    are deal-driven and we want to find the deal years later.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    flag = models.ForeignKey(FeatureFlag, on_delete=models.CASCADE, related_name="overrides")
+    enabled = models.BooleanField()
+
+    # Auto-expiring overrides — useful for "give acme corp X for 30
+    # days" trials. Null means permanent.
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    reason = models.CharField(max_length=255)
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        db_table = "billing_feature_flag_override"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "flag"],
+                name="uniq_feature_flag_override_per_org",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "flag"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.flag.slug}={'on' if self.enabled else 'off'} for {self.organization_id}"
+
+
+class OverageWaiver(TenantScopedModel):
+    """An admin-issued waiver of overage charges for a billing period.
+
+    Per PRODUCT_REQUIREMENTS.md Domain 11: support staff can waive
+    overage charges in defined circumstances. The waiver attaches to a
+    Subscription + a billing period (``period_start`` ... ``period_end``)
+    and reduces the billable overage count for that period by ``amount``.
+
+    Audit-logged; reason required.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subscription = models.ForeignKey(
+        Subscription, on_delete=models.CASCADE, related_name="overage_waivers"
+    )
+
+    # The billing period this waiver applies to. Pin to the
+    # subscription's current_period_* at the moment the waiver was
+    # issued so a future cycle change doesn't re-attach the waiver.
+    period_start = models.DateTimeField()
+    period_end = models.DateTimeField()
+
+    # Number of overage invoices to forgive in this period. -1 means
+    # "all overages this period". The bill calculation reads this and
+    # subtracts.
+    waived_invoice_count = models.IntegerField(default=0)
+    reason = models.CharField(max_length=255)
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        db_table = "billing_overage_waiver"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["organization", "-created_at"]),
+            models.Index(fields=["subscription", "period_start"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"OverageWaiver({self.subscription_id} -{self.waived_invoice_count} "
+            f"for {self.period_start.date()}-{self.period_end.date()})"
+        )

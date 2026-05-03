@@ -179,6 +179,86 @@ def record_usage_event(
     )
 
 
+def is_feature_enabled(
+    *,
+    organization_id: uuid.UUID | str,
+    flag_slug: str,
+) -> bool:
+    """Resolve a feature flag for an org. Order: org override → plan → default.
+
+    Per PRODUCT_REQUIREMENTS.md Domain 11: flags can be set at the
+    global, plan, or customer level — the customer override wins, then
+    the plan default, then the global default. An undeclared slug
+    returns False (fail-closed).
+
+    Cheap: one indexed lookup against the override table, one
+    join-less read of the active subscription. Caching is intentionally
+    not added here — feature gates are read on individual requests in
+    contexts that already do per-request work; a hot-path gate that
+    needs caching can wrap this with ``functools.cache``-per-request.
+    """
+    from .models import FeatureFlag, FeatureFlagOverride
+
+    flag = FeatureFlag.objects.filter(slug=flag_slug).first()
+    if flag is None:
+        return False  # undeclared flag → fail closed
+
+    # 1. Per-org override wins. Auto-expired overrides are ignored.
+    now = timezone.now()
+    override = (
+        FeatureFlagOverride.objects.filter(
+            organization_id=organization_id,
+            flag_id=flag.id,
+        )
+        .first()
+    )
+    if override is not None:
+        if override.expires_at is None or override.expires_at > now:
+            return bool(override.enabled)
+
+    # 2. Plan-level default from Plan.features JSON. The active
+    #    subscription's plan is the source of truth.
+    sub = (
+        Subscription.objects.filter(
+            organization_id=organization_id,
+            status__in=[
+                Subscription.Status.ACTIVE,
+                Subscription.Status.TRIALING,
+                Subscription.Status.PAST_DUE,
+            ],
+        )
+        .select_related("plan")
+        .order_by("-created_at")
+        .first()
+    )
+    if sub is not None and isinstance(sub.plan.features, dict):
+        if flag_slug in sub.plan.features:
+            return bool(sub.plan.features[flag_slug])
+
+    # 3. Global default declared on the flag row.
+    return bool(flag.default_enabled)
+
+
+def resolved_feature_flags(
+    *,
+    organization_id: uuid.UUID | str,
+) -> dict[str, bool]:
+    """Return ``{slug: enabled}`` for every declared flag, resolved for an org.
+
+    The customer-facing ``/identity/feature-flags/`` endpoint serves
+    this; the frontend uses the map to hide/show features without
+    asking per-flag.
+    """
+    from .models import FeatureFlag
+
+    return {
+        flag.slug: is_feature_enabled(
+            organization_id=organization_id, flag_slug=flag.slug
+        )
+        for flag in FeatureFlag.objects.all()
+    }
+
+
 def bootstrap_trial_subscription(*, organization_id: uuid.UUID | str) -> Subscription | None:
     """Create a 14-day trial subscription on the trial plan.
 

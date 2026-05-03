@@ -14,7 +14,19 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronDown, Cog, LogOut, ScrollText, Settings, ShieldCheck, Users } from "lucide-react";
+import {
+  Activity,
+  ChevronDown,
+  Cog,
+  CreditCard,
+  Flag,
+  LogOut,
+  Network,
+  ScrollText,
+  Settings,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 
 import { api, ApiError, type AdminMe } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -28,9 +40,13 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { href: "/admin", label: "Overview", icon: ShieldCheck },
+  { href: "/admin/health", label: "System health", icon: Activity },
   { href: "/admin/audit", label: "Platform audit", icon: ScrollText },
   { href: "/admin/tenants", label: "Tenants", icon: Users },
+  { href: "/admin/plans", label: "Plans + pricing", icon: CreditCard },
+  { href: "/admin/flags", label: "Feature flags", icon: Flag },
   { href: "/admin/engines", label: "Engines", icon: Cog },
+  { href: "/admin/routing", label: "Routing rules", icon: Network },
   { href: "/admin/settings", label: "System settings", icon: Settings },
 ];
 

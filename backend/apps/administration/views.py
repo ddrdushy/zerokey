@@ -401,3 +401,204 @@ def platform_tenants(request: Request) -> Response:
             ),
         }
     )
+
+
+# --- Plans + Feature flags + Routing rules + Support tools (Slice 99) -----------
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
+def admin_list_plans(request: Request) -> Response:
+    return Response(
+        {"results": services.list_plans_for_admin(actor_user_id=request.user.id)}
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformStaff])
+def admin_revise_plan(request: Request, plan_id: str) -> Response:
+    body = request.data or {}
+    updates = body.get("updates") or {}
+    if not isinstance(updates, dict):
+        return Response(
+            {"detail": "updates must be an object."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        result = services.admin_revise_plan(
+            actor_user_id=request.user.id,
+            plan_id=plan_id,
+            updates=updates,
+        )
+    except services.PlanUpdateError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:  # Plan.DoesNotExist
+        return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+    return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
+def admin_list_feature_flags(request: Request) -> Response:
+    return Response(
+        {"results": services.list_feature_flags_for_admin(actor_user_id=request.user.id)}
+    )
+
+
+@api_view(["PATCH"])
+@permission_classes([IsPlatformStaff])
+def admin_update_feature_flag(request: Request, slug: str) -> Response:
+    body = request.data or {}
+    if "default_enabled" not in body:
+        return Response(
+            {"detail": "default_enabled is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        result = services.admin_update_feature_flag_default(
+            actor_user_id=request.user.id,
+            slug=slug,
+            default_enabled=bool(body.get("default_enabled")),
+            description=body.get("description"),
+        )
+    except services.PlanUpdateError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["PUT"])
+@permission_classes([IsPlatformStaff])
+def admin_set_feature_flag_override(
+    request: Request, organization_id: str, slug: str
+) -> Response:
+    body = request.data or {}
+    try:
+        result = services.admin_set_feature_flag_override(
+            actor_user_id=request.user.id,
+            organization_id=organization_id,
+            slug=slug,
+            enabled=bool(body.get("enabled", False)),
+            reason=str(body.get("reason") or ""),
+        )
+    except services.PlanUpdateError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsPlatformStaff])
+def admin_clear_feature_flag_override(
+    request: Request, organization_id: str, slug: str
+) -> Response:
+    services.admin_clear_feature_flag_override(
+        actor_user_id=request.user.id,
+        organization_id=organization_id,
+        slug=slug,
+    )
+    return Response({"cleared": True})
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
+def admin_list_org_overrides(request: Request, organization_id: str) -> Response:
+    return Response(
+        {
+            "results": services.list_feature_flag_overrides_for_org(
+                actor_user_id=request.user.id,
+                organization_id=organization_id,
+            )
+        }
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformStaff])
+def admin_assign_plan(request: Request, organization_id: str) -> Response:
+    body = request.data or {}
+    try:
+        result = services.admin_assign_plan_to_tenant(
+            actor_user_id=request.user.id,
+            organization_id=organization_id,
+            plan_id=str(body.get("plan_id") or ""),
+            billing_cycle=str(body.get("billing_cycle") or "monthly"),
+            reason=str(body.get("reason") or ""),
+        )
+    except services.SubscriptionAssignmentError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformStaff])
+def admin_reset_2fa(request: Request, user_id: str) -> Response:
+    body = request.data or {}
+    try:
+        result = services.admin_reset_user_2fa(
+            actor_user_id=request.user.id,
+            target_user_id=user_id,
+            reason=str(body.get("reason") or ""),
+        )
+    except services.SupportActionError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformStaff])
+def admin_retry_invoice(request: Request, invoice_id: str) -> Response:
+    body = request.data or {}
+    try:
+        result = services.admin_retry_stuck_invoice(
+            actor_user_id=request.user.id,
+            invoice_id=invoice_id,
+            reason=str(body.get("reason") or ""),
+        )
+    except services.SupportActionError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformStaff])
+def admin_waive_overage(request: Request, organization_id: str) -> Response:
+    body = request.data or {}
+    try:
+        result = services.admin_waive_overage(
+            actor_user_id=request.user.id,
+            organization_id=organization_id,
+            waived_invoice_count=int(body.get("waived_invoice_count") or 0),
+            reason=str(body.get("reason") or ""),
+        )
+    except services.SupportActionError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
+def admin_list_routing_rules(request: Request) -> Response:
+    return Response(
+        {"results": services.list_routing_rules_for_admin(actor_user_id=request.user.id)}
+    )
+
+
+@api_view(["PATCH"])
+@permission_classes([IsPlatformStaff])
+def admin_update_routing_rule(request: Request, rule_id: str) -> Response:
+    body = request.data or {}
+    try:
+        result = services.admin_update_routing_rule(
+            actor_user_id=request.user.id,
+            rule_id=rule_id,
+            priority=body.get("priority"),
+            is_active=body.get("is_active"),
+        )
+    except services.RoutingRuleUpdateError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformStaff])
+def admin_system_health(request: Request) -> Response:
+    return Response(services.system_health_snapshot(actor_user_id=request.user.id))
