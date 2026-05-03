@@ -19,7 +19,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertCircle, CheckCircle2, Inbox as InboxIcon, Sparkles } from "lucide-react";
 
-import { api, ApiError, type InboxItem } from "@/lib/api";
+import { api, ApiError, type InboxBatchSummary, type InboxItem } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -41,6 +41,7 @@ export default function InboxPage() {
   const router = useRouter();
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<InboxBatchSummary | null>(null);
   const [reason, setReason] = useState("");
   const [resolving, setResolving] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +56,7 @@ export default function InboxPage() {
         if (cancelled) return;
         setItems(response.results);
         setTotal(response.total);
+        setSummary(response.summary ?? null);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -81,6 +83,7 @@ export default function InboxPage() {
       const response = await api.listInbox({ reason: reason || undefined });
       setItems(response.results);
       setTotal(response.total);
+      setSummary(response.summary ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Resolve failed.");
     } finally {
@@ -114,6 +117,8 @@ export default function InboxPage() {
           </div>
         )}
 
+        {summary && <BatchSummaryPanel summary={summary} />}
+
         <FilterBar value={reason} onChange={setReason} />
 
         {items === null ? (
@@ -125,6 +130,81 @@ export default function InboxPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+function BatchSummaryPanel({ summary }: { summary: InboxBatchSummary }) {
+  // Slice 101 — PRD Domain 4 batch validation summary. Three tiles +
+  // a top-error breakdown so the user knows where to focus the
+  // single-pass review session.
+  return (
+    <section className="rounded-xl border border-slate-100 bg-white">
+      <header className="border-b border-slate-100 px-5 py-3">
+        <h2 className="text-2xs font-medium uppercase tracking-wider text-slate-400">
+          Batch summary
+        </h2>
+      </header>
+      <div className="grid gap-4 px-5 py-4 md:grid-cols-3">
+        <SummaryTile
+          label="Passed (last 24h)"
+          value={summary.passed_today}
+          tone="success"
+        />
+        <SummaryTile
+          label="Need review"
+          value={summary.needs_review}
+          tone={summary.needs_review > 0 ? "warning" : "neutral"}
+        />
+        <SummaryTile
+          label="Open inbox"
+          value={summary.inbox_open_total}
+          tone={summary.inbox_open_total > 0 ? "warning" : "success"}
+        />
+      </div>
+      {summary.top_error_codes.length > 0 && (
+        <div className="border-t border-slate-100 px-5 py-3">
+          <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">
+            Most common errors right now
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {summary.top_error_codes.map((row) => (
+              <span
+                key={row.code}
+                className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-2xs text-slate-700"
+              >
+                <code className="font-mono text-[11px]">{row.code}</code>
+                <span className="font-medium">{row.count}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SummaryTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "success" | "warning" | "neutral";
+}) {
+  const accent =
+    tone === "success"
+      ? "text-success"
+      : tone === "warning"
+        ? "text-warning"
+        : "text-slate-500";
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-slate-400">{label}</div>
+      <div className={cn("mt-1 font-display text-2xl font-bold", accent)}>
+        {value.toLocaleString()}
+      </div>
+    </div>
   );
 }
 

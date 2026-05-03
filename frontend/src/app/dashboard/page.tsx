@@ -68,10 +68,19 @@ export default function DashboardPage() {
   }, [jobs]);
 
   function onUploaded(job: IngestionJob) {
-    // Drop the user straight into the review surface — the dashboard
-    // is for monitoring, but the moment after an upload they want to
-    // see the extracted fields. The review page polls until the job
-    // settles, so it works whether structuring takes 1s or 30s.
+    // Slice 101 — ZIP uploads return a BUNDLE parent. The parent
+    // never enters the extraction pipeline; the children do. Stay
+    // on the dashboard in that case so the user sees the unpacked
+    // entries land in "recent uploads".
+    if (job.status === "bundle") {
+      refreshDashboardData();
+      return;
+    }
+    // Single-file upload: drop the user straight into the review
+    // surface — the dashboard is for monitoring, but the moment
+    // after an upload they want to see the extracted fields. The
+    // review page polls until the job settles, so it works whether
+    // structuring takes 1s or 30s.
     router.push(`/dashboard/jobs/${job.id}`);
   }
 

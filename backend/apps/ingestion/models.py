@@ -59,9 +59,15 @@ class IngestionJob(TenantScopedModel):
         REJECTED = "rejected", "Rejected by LHDN"
         CANCELLED = "cancelled", "Cancelled"
         ERROR = "error", "Error"
+        # Slice 101 — ZIP archive parent. Holds the original archive
+        # for audit + download but never enters the extraction
+        # pipeline; child IngestionJobs (one per inner file) carry
+        # the actual work. Counts as terminal so the dashboard
+        # poller stops watching it.
+        BUNDLE = "bundle", "Archive bundle"
 
     TERMINAL_STATUSES = frozenset(
-        {Status.VALIDATED, Status.REJECTED, Status.CANCELLED, Status.ERROR}
+        {Status.VALIDATED, Status.REJECTED, Status.CANCELLED, Status.ERROR, Status.BUNDLE}
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

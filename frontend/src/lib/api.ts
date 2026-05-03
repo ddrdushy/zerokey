@@ -122,6 +122,34 @@ export type BillingUsage = {
   overage_count: number;
 };
 
+// Slice 101 — global search response.
+export type GlobalSearchResults = {
+  query: string;
+  invoices: Array<{
+    id: string;
+    invoice_number: string;
+    supplier_legal_name: string;
+    buyer_legal_name: string;
+    status: string;
+    grand_total: string;
+    currency_code: string;
+    ingestion_job_id: string;
+  }>;
+  customers: Array<{
+    id: string;
+    legal_name: string;
+    tin: string;
+  }>;
+  audit: Array<{
+    id: string;
+    sequence: number;
+    action_type: string;
+    occurred_at: string | null;
+    affected_entity_type: string;
+    affected_entity_id: string;
+  }>;
+};
+
 export type BillingInvoiceRow = {
   id: string;
   number: string;
@@ -743,6 +771,16 @@ export type InboxItem = {
 export type InboxListResponse = {
   results: InboxItem[];
   total: number;
+  summary?: InboxBatchSummary;
+};
+
+// Slice 101 — batch validation summary panel (PRD Domain 4).
+export type InboxBatchSummary = {
+  inbox_open_total: number;
+  inbox_open_by_reason: Record<string, number>;
+  passed_today: number;
+  needs_review: number;
+  top_error_codes: Array<{ code: string; count: number }>;
 };
 
 export type InvoiceListSummary = {
@@ -1337,6 +1375,11 @@ export const api = {
   adminSystemHealth: () => request<AdminSystemHealth>("/admin/health/"),
   // Customer-facing feature flag map (resolved server-side).
   featureFlags: () => request<{ flags: Record<string, boolean> }>("/identity/feature-flags/"),
+  // Slice 101 — global search hit sets, debounced from the topbar.
+  globalSearch: (q: string) =>
+    request<GlobalSearchResults>(
+      `/identity/search/?q=${encodeURIComponent(q)}`,
+    ),
   adminListTenants: (params?: { search?: string; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.search) qs.set("search", params.search);

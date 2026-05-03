@@ -118,4 +118,6 @@ urlpatterns = [
         views.feature_flags_view,
         name="feature-flags",
     ),
+    # Slice 101 — global search across invoices + customers + audit
+    path("search/", views.global_search_view, name="global-search"),
 ]

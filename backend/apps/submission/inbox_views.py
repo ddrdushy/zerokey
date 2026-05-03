@@ -43,10 +43,12 @@ def list_inbox(request: Request) -> Response:
         organization_id=organization_id, reason=reason, limit=limit
     )
     total = inbox_services.count_open_for_organization(organization_id=organization_id)
+    summary = inbox_services.batch_summary(organization_id=organization_id)
     return Response(
         {
             "results": ExceptionInboxItemSerializer(rows, many=True).data,
             "total": total,
+            "summary": summary,
         }
     )
 

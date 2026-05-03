@@ -222,3 +222,101 @@ def _audit(
         affected_entity_id=str(item.id),
         payload={"invoice_id": str(invoice.id), **(payload or {})},
     )
+
+
+# --- Slice 101: batch validation summary ---------------------------------------
+
+
+def batch_summary(*, organization_id: UUID | str) -> dict[str, int | dict[str, int]]:
+    """Per-org snapshot for the inbox batch summary panel.
+
+    PRD Domain 4 ("batch validation summary"): "When a batch of
+    invoices is uploaded, the dashboard surfaces a summary: how many
+    passed pre-flight, how many need attention, what the most common
+    errors are. The user fixes errors in a single review pass rather
+    than per-invoice."
+
+    Cheap aggregation — three queries against existing rows, no new
+    table. Reads:
+      - ``inbox_open_total``         currently open inbox items
+      - ``inbox_open_by_reason``     {reason → count}
+      - ``invoices_validated_today`` invoices that hit ``ready_for_review``
+                                      with no blocking issues today
+      - ``invoices_needing_review``   invoices in READY_FOR_REVIEW
+                                      with at least one error severity
+    """
+    from datetime import timedelta
+
+    from django.db.models import Count
+    from django.utils import timezone as _tz
+
+    from apps.submission.models import Invoice
+    from apps.validation.models import ValidationIssue
+
+    today_start = _tz.now() - timedelta(hours=24)
+
+    inbox_total = ExceptionInboxItem.objects.filter(
+        organization_id=organization_id,
+        status=ExceptionInboxItem.Status.OPEN,
+    ).count()
+
+    by_reason = dict(
+        ExceptionInboxItem.objects.filter(
+            organization_id=organization_id,
+            status=ExceptionInboxItem.Status.OPEN,
+        )
+        .values_list("reason")
+        .annotate(c=Count("id"))
+    )
+
+    # Validated in the last 24h = invoices that landed ready_for_review
+    # recently AND have no validation errors. Rough proxy for "passed
+    # pre-flight" since LHDN-validated submissions also imply passed.
+    invoice_ids_with_errors = set(
+        ValidationIssue.objects.filter(
+            organization_id=organization_id,
+            severity="error",
+        )
+        .values_list("invoice_id", flat=True)
+        .distinct()
+    )
+
+    recent_invoices = list(
+        Invoice.objects.filter(
+            organization_id=organization_id,
+            updated_at__gte=today_start,
+        ).values_list("id", "status")
+    )
+    passed_today = sum(
+        1
+        for (inv_id, st) in recent_invoices
+        if st in {"ready_for_review", "validated"} and inv_id not in invoice_ids_with_errors
+    )
+
+    needs_review = Invoice.objects.filter(
+        organization_id=organization_id,
+        status="ready_for_review",
+        id__in=list(invoice_ids_with_errors),
+    ).count()
+
+    # Top-3 most common validation error codes — useful for the
+    # "fix all of these in one pass" framing.
+    top_codes = list(
+        ValidationIssue.objects.filter(
+            organization_id=organization_id,
+            severity__in=["error", "warning"],
+        )
+        .values_list("code")
+        .annotate(c=Count("id"))
+        .order_by("-c")[:3]
+    )
+
+    return {
+        "inbox_open_total": int(inbox_total),
+        "inbox_open_by_reason": {str(r): int(c) for r, c in by_reason.items()},
+        "passed_today": int(passed_today),
+        "needs_review": int(needs_review),
+        "top_error_codes": [
+            {"code": str(code), "count": int(count)} for code, count in top_codes
+        ],
+    }

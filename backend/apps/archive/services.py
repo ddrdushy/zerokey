@@ -208,3 +208,45 @@ def _to_dict(row: ArchivedDocument) -> dict[str, Any]:
         "deletion_pending": bool(row.deletion_pending),
         "archived_at": row.archived_at.isoformat() if row.archived_at else None,
     }
+
+
+# --- Slice 101: retention sweep (per-plan retention enforcement) ----------------
+
+
+def sweep_expired_archives() -> dict[str, int]:
+    """Mark ArchivedDocuments past ``retain_until`` as deletion_pending.
+
+    PRD Domain 9 ("historical archive") + COMPLIANCE.md require a real
+    retention enforcer — until this slice the ``retain_until`` column
+    was set on insert but nothing read it back. This sweeper flips
+    ``deletion_pending=True`` on rows past their date so a downstream
+    destructive sweep + admin sign-off can purge.
+
+    Idempotent: rows already flagged are skipped. Returns
+    ``{flagged: int}`` so the audit chain shows what each run touched.
+    """
+    from .models import ArchivedDocument
+
+    now = timezone.now()
+    qs = ArchivedDocument.objects.filter(
+        retain_until__lte=now,
+        deletion_pending=False,
+    )
+    flagged_ids = list(qs.values_list("id", flat=True)[:1000])  # safety cap per run
+    if not flagged_ids:
+        return {"flagged": 0}
+
+    updated = ArchivedDocument.objects.filter(id__in=flagged_ids).update(
+        deletion_pending=True
+    )
+
+    record_event(
+        action_type="archive.retention_sweep",
+        actor_type=AuditEvent.ActorType.SERVICE,
+        actor_id="archive.retention",
+        organization_id=None,
+        affected_entity_type="ArchivedDocument",
+        affected_entity_id="",
+        payload={"flagged": int(updated), "ids": [str(i) for i in flagged_ids]},
+    )
+    return {"flagged": int(updated)}

@@ -55,6 +55,36 @@ def upload(request: Request) -> Response:
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    # Slice 101 — bulk ZIP upload (PRD Domain 1). Detect ZIPs by either
+    # MIME type OR filename extension (browsers sometimes send
+    # "application/octet-stream" for .zip), unpack into N child jobs,
+    # and return the parent so the FE can show a one-line "imported N
+    # files from archive.zip" entry that links to the children.
+    name = (upload_file.name or "").lower()
+    mime = (upload_file.content_type or "").lower()
+    if mime == "application/zip" or name.endswith(".zip"):
+        try:
+            bulk = services.upload_zip_archive(
+                organization_id=organization_id,
+                actor_user_id=request.user.id,
+                file_obj=upload_file,
+                original_filename=upload_file.name,
+                size=upload_file.size,
+            )
+        except services.IngestionError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                **IngestionJobSerializer(
+                    bulk.parent_job, context={"request": request}
+                ).data,
+                "child_jobs": IngestionJobSerializer(
+                    bulk.child_jobs, many=True, context={"request": request}
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
     try:
         result = services.upload_web_file(
             organization_id=organization_id,

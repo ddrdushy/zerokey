@@ -14,7 +14,6 @@ import {
   LogOut,
   Package,
   Plug,
-  Search,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -27,6 +26,7 @@ import { useT, getLocale, setLocale, SUPPORTED_LOCALES, LOCALE_LABELS } from "@/
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 import { SubscriptionStateBanner } from "@/components/billing/SubscriptionStateBanner";
 import { NotificationBell } from "./NotificationBell";
+import { GlobalSearch } from "./GlobalSearch";
 import { CertExpiryBanner } from "./CertExpiryBanner";
 
 // Persistent shell that wraps every authenticated page. The sidebar groups
@@ -267,15 +267,7 @@ function TopBar({
   return (
     <header className="sticky top-0 z-40 border-b border-slate-100 bg-paper/85 backdrop-blur">
       <div className="flex h-14 items-center gap-4 px-4 md:px-8">
-        <div className="flex flex-1 items-center gap-2">
-          <Search className="h-4 w-4 text-slate-400" aria-hidden />
-          <input
-            type="search"
-            placeholder="Search invoices, customers, audit log…"
-            className="h-9 max-w-md flex-1 bg-transparent text-sm text-ink placeholder-slate-400 outline-none"
-            aria-label="Search"
-          />
-        </div>
+        <GlobalSearch />
         <NotificationBell />
         <div className="relative">
           <button

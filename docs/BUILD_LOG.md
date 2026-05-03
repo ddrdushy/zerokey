@@ -7720,6 +7720,104 @@ hand-edit `SystemSetting` from `/django-admin/`):
 
 ---
 
+### Slice 101 — Spec polish: topbar search, ZIP unpack, retention sweep, batch validation summary
+
+Closes four buildable PRD gaps identified by the post-Slice-100 audit:
+two P0 (topbar global search · Domain 8, ZIP bulk upload · Domain 1)
+plus the P0 retention enforcement (Domain 9) and the P1 batch
+validation summary (Domain 4). The threshold-rule gap I called out
+turned out to already be shipped — `rule_rm10k_threshold` is
+registered in `apps/validation/rules.py` since Slice 60.
+
+Backend:
+
+- **Topbar global search** — `GET /api/v1/identity/search/?q=…`
+  returns up to 5 hits per category (invoices by number / supplier
+  / buyer; customers by legal_name / TIN; audit by action_type /
+  affected_entity_id). Tenant-scoped via the active org.
+- **ZIP bulk upload** — new `services.upload_zip_archive()` unpacks
+  the archive into one IngestionJob per supported inner file
+  (PDF / image / Excel / CSV); leading `__MACOSX/`, dotfiles, and
+  unsupported extensions are silently skipped. The parent ZIP
+  itself is recorded as an IngestionJob with the new
+  `Status.BUNDLE` (terminal — extraction never runs on it) so the
+  upload audit chain still has the user's "I uploaded archive.zip"
+  gesture as a single row, with `child_ids` in the audit payload.
+  Hard caps: 25 MB total, 200 inner files. Detection in
+  `views.upload` triggers on `application/zip` MIME or `.zip`
+  extension (browsers occasionally send `octet-stream` for
+  ZIPs).
+- **Retention sweep** — `archive.services.sweep_expired_archives()`
+  flips `deletion_pending=True` on `ArchivedDocument` rows past
+  their `retain_until` date. Per-run safety cap of 1000 rows.
+  Audit-logged. Wrapped in `archive.tasks.sweep_expired_archives_task`
+  on an hourly beat schedule. The actual destructive purge stays
+  out — per COMPLIANCE.md it requires admin sign-off + a separate
+  audited gesture.
+- **Batch validation summary** — `submission.inbox.batch_summary()`
+  returns `{inbox_open_total, inbox_open_by_reason, passed_today,
+  needs_review, top_error_codes}` for the active org. Wired into
+  the `GET /api/v1/inbox/` response as `summary`.
+
+Frontend:
+
+- **`GlobalSearch` (new component)** — replaces the dead
+  `<input>` in the topbar. 250ms debounce, popover with grouped
+  invoice / customer / audit results, click-outside to close, `/`
+  to focus, Esc to clear. Each hit links into the right detail
+  surface (jobs/[id] for invoices, customers/[id] for customers,
+  audit?action_type=… for audit events).
+- **`/dashboard/inbox`** — new `BatchSummaryPanel` renders three
+  tiles (Passed / Need review / Open inbox) plus a "Most common
+  errors right now" strip with the top-3 validation codes. Reads
+  `response.summary` and skips rendering if missing (defensive
+  default for older clients).
+- **Dashboard upload handler** — when the upload returns a BUNDLE
+  parent, stay on the dashboard (refresh the recent-uploads list)
+  instead of routing to the parent's detail page. Single-file
+  uploads keep the existing route-to-review behavior from Slice 90.
+- **API client** — adds `globalSearch(q)` + `GlobalSearchResults`
+  type, plus `summary` on the inbox response.
+
+Verified end-to-end against `dushy@symprio.com`:
+
+```
+✅ Topbar search → typing "IV-1605" surfaces invoice hits in popover
+✅ Inbox batch summary panel renders Passed/Need review/Open tiles
+✅ ZIP upload → BUNDLE parent + 2 child jobs (skipping .DS_Store + .txt)
+✅ Both children reach ready_for_review via the normal extraction pipeline
+```
+
+Files: `backend/apps/identity/views.py`,
+`backend/apps/identity/urls.py`,
+`backend/apps/ingestion/services.py`,
+`backend/apps/ingestion/views.py`,
+`backend/apps/ingestion/serializers.py`,
+`backend/apps/ingestion/models.py`,
+`backend/apps/ingestion/migrations/0004_alter_ingestionjob_status.py`,
+`backend/apps/archive/services.py`,
+`backend/apps/archive/tasks.py` (new),
+`backend/apps/submission/inbox.py`,
+`backend/apps/submission/inbox_views.py`,
+`backend/zerokey/settings/base.py`,
+`frontend/src/lib/api.ts`,
+`frontend/src/app/dashboard/page.tsx`,
+`frontend/src/app/dashboard/inbox/page.tsx`,
+`frontend/src/components/shell/AppShell.tsx`,
+`frontend/src/components/shell/GlobalSearch.tsx` (new).
+
+What this does NOT include and is deliberate follow-up:
+
+- **Multi-invoice-document handling (Domain 2 P1)** — auto-splitting
+  a single PDF that contains N separate invoices. Needs an
+  invoice-boundary detector (LLM heuristic on first-page markers);
+  defer until a customer hits this case.
+- **Destructive purge sweep** — the retention sweeper flags rows
+  but never deletes. The destructive sweep needs admin sign-off
+  per COMPLIANCE.md.
+
+---
+
 ### Slice 100 — Billing self-service: cancellation, portal, invoice history, lifecycle, usage meter, banner
 
 Closes 6 of the 8 P0 promises in PRODUCT_REQUIREMENTS Domain 10

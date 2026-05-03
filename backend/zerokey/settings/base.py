@@ -297,6 +297,13 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 60.0 * 60.0,  # hourly is fine; the boundaries are day-resolution
         "options": {"queue": "low"},
     },
+    # Slice 101 — retention sweep on archived documents (per-plan
+    # retain_until). Hourly; only flags rows for purge — never deletes.
+    "archive.sweep_expired_archives": {
+        "task": "archive.sweep_expired_archives",
+        "schedule": 60.0 * 60.0,
+        "options": {"queue": "low"},
+    },
 }
 
 # --- Logging --------------------------------------------------------------------------

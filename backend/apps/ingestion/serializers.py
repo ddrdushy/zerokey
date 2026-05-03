@@ -15,6 +15,7 @@ class IngestionJobSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "source_channel",
+            "source_identifier",
             "original_filename",
             "file_size",
             "file_mime_type",

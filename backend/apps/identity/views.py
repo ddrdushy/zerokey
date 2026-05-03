@@ -1343,3 +1343,94 @@ def feature_flags_view(request: Request) -> Response:
     from apps.billing.services import resolved_feature_flags
 
     return Response({"flags": resolved_feature_flags(organization_id=organization_id)})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def global_search_view(request: Request) -> Response:
+    """Cross-domain search for the topbar Cmd-K-style input.
+
+    Slice 101 — returns up to 5 hits per category:
+      - invoices  (by invoice_number / supplier / buyer)
+      - customers (by legal_name / TIN)
+      - audit     (by action_type or affected entity id)
+
+    Tenant-scoped via the active org context. Empty query → empty.
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response({"invoices": [], "customers": [], "audit": []})
+
+    q = (request.query_params.get("q") or "").strip()
+    if len(q) < 2:
+        return Response({"invoices": [], "customers": [], "audit": []})
+
+    from django.db.models import Q
+
+    from apps.audit.models import AuditEvent
+    from apps.enrichment.models import CustomerMaster
+    from apps.submission.models import Invoice
+
+    invoices = list(
+        Invoice.objects.filter(
+            organization_id=organization_id,
+        )
+        .filter(
+            Q(invoice_number__icontains=q)
+            | Q(supplier_legal_name__icontains=q)
+            | Q(buyer_legal_name__icontains=q)
+        )
+        .order_by("-created_at")[:5]
+    )
+    customers = list(
+        CustomerMaster.objects.filter(organization_id=organization_id)
+        .filter(Q(legal_name__icontains=q) | Q(tin__icontains=q))
+        .order_by("legal_name")[:5]
+    )
+    audit = list(
+        AuditEvent.objects.filter(organization_id=organization_id)
+        .filter(
+            Q(action_type__icontains=q)
+            | Q(affected_entity_id__icontains=q)
+            | Q(actor_id__icontains=q)
+        )
+        .order_by("-occurred_at")[:5]
+    )
+
+    return Response(
+        {
+            "query": q,
+            "invoices": [
+                {
+                    "id": str(inv.id),
+                    "invoice_number": inv.invoice_number or "",
+                    "supplier_legal_name": inv.supplier_legal_name,
+                    "buyer_legal_name": inv.buyer_legal_name,
+                    "status": inv.status,
+                    "grand_total": str(inv.grand_total) if inv.grand_total is not None else "",
+                    "currency_code": inv.currency_code,
+                    "ingestion_job_id": str(inv.ingestion_job_id) if inv.ingestion_job_id else "",
+                }
+                for inv in invoices
+            ],
+            "customers": [
+                {
+                    "id": str(c.id),
+                    "legal_name": c.legal_name,
+                    "tin": c.tin,
+                }
+                for c in customers
+            ],
+            "audit": [
+                {
+                    "id": str(e.id),
+                    "sequence": int(e.sequence) if hasattr(e, "sequence") else 0,
+                    "action_type": e.action_type,
+                    "occurred_at": e.occurred_at.isoformat() if e.occurred_at else None,
+                    "affected_entity_type": e.affected_entity_type,
+                    "affected_entity_id": e.affected_entity_id,
+                }
+                for e in audit
+            ],
+        }
+    )
