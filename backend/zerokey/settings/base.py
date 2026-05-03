@@ -41,6 +41,10 @@ THIRD_PARTY_APPS = [
     "rest_framework",
     "corsheaders",
     "drf_spectacular",
+    # Slice 104 — failed-login lockout. AxesBackend wraps the auth
+    # backends below so a brute-force run gets banned before it ever
+    # reaches the password validator.
+    "axes",
 ]
 
 # Bounded-context apps (see ARCHITECTURE.md). Order matches the document's list.
@@ -66,6 +70,9 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Slice 104 — must be early so the request id is on the
+    # contextvar before any logging fires. Echoes ``X-Request-Id``.
+    "zerokey.middleware.RequestIdMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -74,6 +81,12 @@ MIDDLEWARE = [
     "apps.identity.tenancy.TenantContextMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Slice 104 — emit X-RateLimit-* headers from the throttle
+    # bookkeeping. Late so it sees the response object after view
+    # rendering. AxesMiddleware must follow auth so it sees the
+    # resolved user.
+    "axes.middleware.AxesMiddleware",
+    "zerokey.throttling.RateLimitHeaderMiddleware",
 ]
 
 ROOT_URLCONF = "zerokey.urls"
@@ -160,6 +173,27 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# Slice 104 — django-axes. AxesStandaloneBackend wraps the model
+# backend so a brute-force run is rejected before the password
+# hash is checked.
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+
+# Lockout policy: 5 failed attempts within 15 minutes triggers a
+# 15-minute lockout. ``username_or_ip`` keys both the email AND the
+# source IP — a distributed brute force still hits the per-email
+# cap, while a noisy office NAT doesn't lock out an innocent
+# co-worker.
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = 0.25  # hours = 15 min
+AXES_LOCKOUT_PARAMETERS = ["username", "ip_address"]
+AXES_RESET_ON_SUCCESS = True
+AXES_LOCKOUT_TEMPLATE = None  # JSON 403 from middleware is fine for a SPA
+AXES_ENABLE_ADMIN = False
+AXES_HANDLER = "axes.handlers.cache.AxesCacheHandler"  # uses our Redis cache
+
 # --- Internationalization -------------------------------------------------------------
 
 LANGUAGE_CODE = "en"
@@ -194,6 +228,15 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    # Slice 104 — every error response goes through the envelope
+    # handler so clients can rely on a single shape.
+    "EXCEPTION_HANDLER": "zerokey.exception_handlers.envelope_exception_handler",
+    # Slice 104 — global throttling. Per-view scopes can still be
+    # added via ``throttle_classes`` on a viewset.
+    "DEFAULT_THROTTLE_CLASSES": [
+        "zerokey.throttling.AnonThrottle",
+        "zerokey.throttling.UserThrottle",
+    ],
 }
 
 SPECTACULAR_SETTINGS = {
@@ -313,16 +356,24 @@ CELERY_BEAT_SCHEDULE = {
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        # Slice 104 — every record carries the active request id
+        # (or "-" outside a request context).
+        "request_id": {
+            "()": "zerokey.middleware.RequestIdLogFilter",
+        },
+    },
     "formatters": {
         "json": {
             "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
-            "format": "%(asctime)s %(name)s %(levelname)s %(message)s",
+            "format": "%(asctime)s %(name)s %(levelname)s %(request_id)s %(message)s",
         },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "json",
+            "filters": ["request_id"],
         },
     },
     "root": {"handlers": ["console"], "level": "INFO"},
@@ -331,6 +382,33 @@ LOGGING = {
         "celery": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }
+
+# --- Sentry --------------------------------------------------------------------------
+# Slice 104 — every unhandled exception becomes a Sentry event. DSN
+# is empty in dev / CI by default so initialisation is a no-op there;
+# prod injects the DSN via env.
+
+SENTRY_DSN = env("SENTRY_DSN", default="")
+SENTRY_ENVIRONMENT = env("SENTRY_ENVIRONMENT", default="development")
+SENTRY_TRACES_SAMPLE_RATE = env.float("SENTRY_TRACES_SAMPLE_RATE", default=0.0)
+
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.celery import CeleryIntegration
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        integrations=[
+            DjangoIntegration(),
+            CeleryIntegration(),
+            LoggingIntegration(),
+        ],
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,  # SECURITY.md §"Sensitive data is never logged"
+    )
 
 # --- CORS -----------------------------------------------------------------------------
 

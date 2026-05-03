@@ -1268,6 +1268,13 @@ def two_factor_confirm(request: Request) -> Response:
     request.user.two_factor_enabled = True
     request.user.save(update_fields=["two_factor_enabled", "totp_recovery_hashes"])
 
+    # Slice 104 — SECURITY.md "rotated on privilege escalation".
+    # Enabling 2FA changes the trust level of this session, so cycle
+    # the session key. cycle_key() preserves the session data
+    # (organization_id, etc.) but issues a fresh session id, which
+    # invalidates any leaked / fixated id from before the upgrade.
+    request.session.cycle_key()
+
     record_event(
         action_type="identity.2fa.enabled",
         actor_type=AuditEvent.ActorType.USER,
@@ -1315,6 +1322,10 @@ def two_factor_disable(request: Request) -> Response:
             "totp_recovery_hashes",
         ]
     )
+
+    # Slice 104 — same rotation rationale as 2fa-confirm: changing the
+    # account's auth requirements is a privilege-level change.
+    request.session.cycle_key()
 
     record_event(
         action_type="identity.2fa.disabled",

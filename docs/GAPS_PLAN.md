@@ -7,6 +7,9 @@
 >
 > This is a *living* planning doc: as slices ship, strike the line and
 > reference the slice number. When the list is empty, delete the file.
+>
+> **Slice 104 shipped 2026-05-04.** Closed gaps below are struck through
+> with the slice number annotated.
 
 ---
 
@@ -42,7 +45,7 @@ at the end so the BUILD_LOG can be corrected.
 | In-product onboarding tooltips beyond the checklist | P0 | M |
 | In-app notification feed (model + UI) | P0 | M |
 | Outbound WhatsApp notification channel | P0 | M |
-| Per-plan rate limiting | P0 | S |
+| ~~Per-plan rate limiting~~ — Slice 104 (default 60/anon, 600/user; per-plan override hook in Slice 107) | P0 | S |
 | Customer master merge endpoint | P0 | S |
 | Batch submission + batch-level status | P1 | M |
 | Multi-entity firm-scoped dashboard | P1 | M |
@@ -52,10 +55,10 @@ at the end so the BUILD_LOG can be corrected.
 | Gap | Priority | Effort |
 |-----|----------|--------|
 | Idempotency-Key enforcement on inbound mutations | P0 | M |
-| Standardised error envelope `{error: {code, message, field, request_id, …}}` | P0 | S |
-| `request_id` middleware + `X-Request-Id` echo | P0 | S |
+| ~~Standardised error envelope `{error: {code, message, field, request_id, …}}`~~ — Slice 104 | P0 | S |
+| ~~`request_id` middleware + `X-Request-Id` echo~~ — Slice 104 | P0 | S |
 | Cursor-based pagination class (replace per-view paging) | P0 | M |
-| Rate-limit response headers (`X-RateLimit-*`, `Retry-After`) | P0 | S |
+| ~~Rate-limit response headers (`X-RateLimit-*`, `Retry-After`)~~ — Slice 104 | P0 | S |
 | Resource-prefixed opaque IDs (`inv_…`, `cust_…`) in serialisers | P0 | M |
 | Public `AuditEvent` API resource | P1 | S |
 | Public `UsageReport` API resource | P1 | S |
@@ -65,9 +68,9 @@ at the end so the BUILD_LOG can be corrected.
 
 | Gap | Priority | Effort |
 |-----|----------|--------|
-| Account lockout + progressive failed-login delays | P0 | S |
+| ~~Account lockout + progressive failed-login delays~~ — Slice 104 (django-axes, 5 fails / 15 min) | P0 | S |
 | File upload virus scanning (ClamAV / managed equivalent) | P0 | M |
-| Session rotation on privilege escalation (2FA confirm) | P0 | S |
+| ~~Session rotation on privilege escalation (2FA confirm)~~ — Slice 104 (also disable) | P0 | S |
 | Security alert templates (new device, password change, 2FA change, key created/revoked) | P0 | M |
 | Account deletion / full data export self-serve | P0 | L |
 
@@ -77,8 +80,8 @@ at the end so the BUILD_LOG can be corrected.
 
 | Gap | Priority | Effort |
 |-----|----------|--------|
-| Sentry SDK init + DSN | P0 | S |
-| Request-ID propagation through Celery + logs | P0 | S |
+| ~~Sentry SDK init + DSN~~ — Slice 104 (Django + Celery + logging integrations) | P0 | S |
+| ~~Request-ID propagation through Celery + logs~~ — Slice 104 (signal handlers + log filter) | P0 | S |
 
 (Phase-6 work — Terraform, runbooks, observability dashboards, DR drill —
 is out of scope for this round.)
@@ -108,22 +111,12 @@ is out of scope for this round.)
 
 Each slice is sized to ship in one session.
 
-### Slice 104 — Platform hardening (S bundle)
+### ~~Slice 104 — Platform hardening~~ — shipped
 
-Touches the request lifecycle once and ships several P0 items
-together — biggest impact for smallest effort.
-
-- Standardised error envelope (DRF `EXCEPTION_HANDLER`).
-- `request_id` middleware + `X-Request-Id` response header +
-  Celery task header propagation + log line enrichment.
-- Sentry SDK init (Django + Celery + frontend).
-- DRF scoped throttle (plan-tier-aware) + rate-limit response
-  headers + `Retry-After` on 429.
-- Account lockout via `django-axes`.
-- Session rotation on 2FA confirm (`request.session.cycle_key()`).
-
-Closes 6 P0 gaps. **Effort: M** (one good session). Depends on
-nothing.
+Standardised error envelope, request id middleware (+ Celery
+propagation + log enrichment), Sentry SDK, anon + user
+throttles with `X-RateLimit-*` headers, django-axes lockout,
+and 2FA session rotation. See BUILD_LOG entry for details.
 
 ### Slice 105 — Idempotency-Key enforcement
 
@@ -244,20 +237,14 @@ on the audit redaction pipeline being in place.
 
 ## Recommended next
 
-**Slice 104 (platform hardening).** It closes six P0 gaps in one
-session, every other slice depends on at least one of its outputs
-(request_id for log correlation, error envelope for the public API,
-Sentry for ops visibility), and it is the smallest commitment with the
-biggest immediate payoff.
+With Slice 104 shipped, the natural next step is **Slice 105
+(idempotency-key enforcement)** — it inherits the request id from 104
+and closes the largest remaining API correctness gap (duplicate LHDN
+submission risk on network retry).
 
-After that, **Slice 106 (audit signatures)** is the highest *strategic*
-priority — without it, the brand-defining trust claim ("publicly
-verifiable audit chain") is not actually true. It is independent of
-104 and can ship next or in parallel.
-
-Slices 105 and 107 are the natural follow-ons after 104 because they
-inherit its middleware. 108 unblocks 109. 110, 111, 112 are
-parallelisable.
+The strategic alternate remains **Slice 106 (audit signatures)** —
+without it, the "publicly verifiable audit chain" claim isn't true.
+Independent of 104 and 105.
 
 ---
 

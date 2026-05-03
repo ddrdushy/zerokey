@@ -9238,6 +9238,133 @@ session because they all touch the request lifecycle layer.
 
 ---
 
+### Slice 104 — Platform hardening
+
+Closes six P0 gaps from ``API_DESIGN`` + ``SECURITY`` +
+``OPERATIONS`` in one slice because they share the request
+lifecycle. Every later slice now inherits these primitives —
+request ids stitch traces together, the error envelope is
+the public contract, throttles defend the API surface, axes
+defends the auth surface, and Sentry collects what slips
+through.
+
+**1. ``X-Request-Id`` middleware + Celery propagation.**
+``zerokey/middleware.py`` adds ``RequestIdMiddleware`` (mints
+a UUID hex per request, accepts inbound ``X-Request-Id`` if
+the format checks out, echoes on every response) plus a
+contextvar-backed ``RequestIdLogFilter`` so JSON log lines
+all carry the active id under a ``request_id`` field.
+``zerokey/celery.py`` adds three signal handlers
+(``before_task_publish`` / ``task_prerun`` / ``task_postrun``)
+that copy the parent's request id into a custom task header
+and re-push it on the worker side. End result: a single id
+threads from the SPA through HTTP through Celery — quoting
+it back to a customer is enough to find the whole trace.
+
+**2. Standardised error envelope.**
+``zerokey/exception_handlers.py`` adds
+``envelope_exception_handler`` (wired as DRF
+``EXCEPTION_HANDLER``). Every error response now has the
+shape ``{"error": {"code", "message", "field"?,
+"request_id", "errors"?}}``. Stable string codes
+(``validation_error``, ``not_authenticated``,
+``permission_denied``, ``not_found``, ``throttled``,
+``method_not_allowed``, ``parse_error``, ``internal``)
+become part of the public API contract — once a client
+branches on them, never rename. Validation errors keep
+their full DRF tree under ``error.errors`` for callers
+that want every issue.
+
+**3. Rate limiting + headers.**
+``zerokey/throttling.py`` adds ``AnonThrottle`` (60/min by
+IP) and ``UserThrottle`` (600/min by user, with a plan-tier
+override hook for Slice 107 when plan-aware rates ship).
+``RateLimitHeaderMiddleware`` echoes ``X-RateLimit-Limit``,
+``X-RateLimit-Remaining``, ``X-RateLimit-Reset`` on every
+response and the envelope handler adds ``Retry-After`` on
+429s. The throttle classes use DRF's existing
+``SimpleRateThrottle`` + the project Redis cache, so no
+extra infrastructure.
+
+  Subtle bit worth recording: the throttle sets bookkeeping
+  on ``request._request._zk_ratelimit`` — DRF wraps the
+  Django ``HttpRequest`` in its own ``Request``, and the
+  response middleware sees the wrapped Django request. A
+  cache-key-of-None means "this throttle didn't apply", so
+  we skip header bookkeeping in that case so the OTHER
+  applicable throttle's values reach the response. Without
+  this, ``UserThrottle`` would always overwrite anonymous
+  responses with limit=600.
+
+**4. Sentry SDK init.**
+``zerokey/settings/base.py`` initialises
+``sentry_sdk`` (Django + Celery + logging integrations)
+when ``SENTRY_DSN`` is set. ``send_default_pii=False`` per
+``SECURITY.md``. The dev / CI default DSN is empty so init
+is a no-op there; prod injects via env. Tracing sample rate
+defaults to 0 — flip it to 1.0 in staging once the dashboards
+in Phase 6 land.
+
+**5. Account lockout via django-axes.**
+``axes`` is added to ``INSTALLED_APPS`` and wired as the
+first authentication backend. Five failed attempts within
+15 minutes lock the (username, ip) pair for 15 minutes.
+Lockout state lives in the Redis cache via
+``AxesCacheHandler`` — same cache backend as everything
+else.
+
+**6. Session rotation on 2FA confirm + disable.**
+``apps/identity/views.py:two_factor_confirm`` and
+``two_factor_disable`` now call
+``request.session.cycle_key()`` after the secret rotates.
+``SECURITY.md`` mandates session rotation on privilege
+escalation — flipping the 2FA bit changes the trust level
+of the session, so the session id should rotate too. Django's
+``login()`` already does this for normal logins; the 2FA
+toggles are the cases that didn't.
+
+**Smoke evidence**
+- ``GET /api/v1/identity/ping/`` →
+  ``X-Request-Id: 003d...``,
+  ``X-RateLimit-Limit: 60``, ``X-RateLimit-Remaining: 58``,
+  ``X-RateLimit-Reset: ...``.
+- 61st request in a minute →
+  ``HTTP 429``, ``Retry-After: 18``,
+  ``{"error": {"code": "throttled", ...}}``.
+- ``POST /api/v1/identity/login/`` with empty body →
+  ``HTTP 400``,
+  ``{"error": {"code": "validation_error",
+  "message": "This field is required.",
+  "field": "email", "errors": {...},
+  "request_id": "..."}}``.
+- ``GET /api/v1/identity/me/`` unauthenticated →
+  ``HTTP 401``,
+  ``{"error": {"code": "not_authenticated", ...}}``.
+
+**Files**
+- new: ``backend/zerokey/middleware.py``,
+  ``backend/zerokey/exception_handlers.py``,
+  ``backend/zerokey/throttling.py``
+- modified: ``backend/zerokey/settings/base.py``,
+  ``backend/zerokey/celery.py``,
+  ``backend/apps/identity/views.py``
+- deps: ``django-axes>=7.0,<8.0``,
+  ``sentry-sdk[django]>=2.18,<3.0``
+- migrations applied: ``axes.0001`` … ``axes.0009``
+
+**Inherited by later slices**
+- Slice 105 idempotency key uses ``request_id`` for retry log
+  correlation.
+- Slice 107 plan-tier rate limits read through
+  ``UserThrottle._resolved_per_minute`` hook.
+- Slice 109 magic-link / new-device auth lifecycle gets the
+  axes lockout for free.
+- Slice 112 public API contract (cursor pagination, prefixed
+  ids, public ``AuditEvent`` resource) inherits the error
+  envelope as the documented public shape.
+
+---
+
 ## How to run it
 
 ```bash

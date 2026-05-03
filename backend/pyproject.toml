@@ -38,6 +38,14 @@ dependencies = [
     # PDF → image rasterisation for OCR. pypdfium2 is a single Python wheel
     # with no system deps, much leaner than pdf2image+poppler.
     "pypdfium2>=4,<5",
+    # Slice 104 — platform hardening.
+    # django-axes: failed-login lockout (account lockout + progressive
+    # delay per SECURITY.md "Failed login attempts trigger progressive
+    # delays and eventual account lockout").
+    "django-axes>=7.0,<8.0",
+    # sentry-sdk: error + performance tracing per OPERATIONS.md
+    # ("Sentry … used for catching unhandled exceptions").
+    "sentry-sdk[django]>=2.18,<3.0",
 ]
 
 [dependency-groups]
