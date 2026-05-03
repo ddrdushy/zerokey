@@ -66,12 +66,38 @@ def register(request: Request) -> Response:
 def login_view(request: Request) -> Response:
     serializer = LoginSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
+    email = serializer.validated_data["email"]
     user = authenticate(
         request,
-        username=serializer.validated_data["email"],
+        username=email,
         password=serializer.validated_data["password"],
     )
     if user is None or not user.is_active:
+        # Slice 104 — Django's authenticate() catches the
+        # ``PermissionDenied`` that ``AxesStandaloneBackend`` raises on
+        # lockout and returns None — same shape as a bad password.
+        # Disambiguate by asking axes directly so the locked-out user
+        # gets a clear 403 + Retry-After instead of being told their
+        # password is wrong (which they then try to "fix" with another
+        # attempt — burning more lockout budget).
+        from axes.handlers.proxy import AxesProxyHandler  # noqa: PLC0415
+
+        if AxesProxyHandler.is_locked(request, credentials={"username": email}):
+            from zerokey.middleware import get_request_id  # noqa: PLC0415
+
+            response = Response(
+                {
+                    "error": {
+                        "code": "account_locked",
+                        "message": "Too many failed attempts. Try again later.",
+                        "request_id": get_request_id(),
+                    }
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+            # 15-minute cool-off matches AXES_COOLOFF_TIME in settings.
+            response["Retry-After"] = "900"
+            return response
         # The signal-handler still records auth.login_failed via Django's
         # user_login_failed signal, fired by ``authenticate`` on miss.
         return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
