@@ -70,6 +70,7 @@ Twenty-three documents organized into seven groups.
 |---|---|
 | [`ROADMAP.md`](./ROADMAP.md) | Phased plan from foundation through GA and into year two. |
 | [`BUILD_LOG.md`](./BUILD_LOG.md) | What has actually shipped, slice-by-slice, with durable design decisions. |
+| [`GAPS_PLAN.md`](./GAPS_PLAN.md) | Living planning doc — open gaps between docs and code, sequenced into proposed slices. Delete when empty. |
 | [`CLAUDE_CODE_GUIDE.md`](./CLAUDE_CODE_GUIDE.md) | How to work effectively with Claude Code on this codebase. |
 | [`START_HERE.md`](./START_HERE.md) | The orientation document every session reads first. |
 

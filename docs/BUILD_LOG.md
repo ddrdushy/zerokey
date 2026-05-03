@@ -9139,47 +9139,16 @@ Still open (ordered roughly by Phase 5–6 priority):
   .preview_validation`` to apply line-level drafts to the
   in-memory invoice copy. ~2h slice; defer until a real user
   needs live feedback on line-item changes.
-- **Field-level PII encryption.** PRODUCT_REQUIREMENTS §223
-  promises "PII stored at rest is encrypted." Today: KMS
-  envelope covers customer signing certs (Slice 55) +
-  engine credentials. Per-column PII (``buyer_phone``,
-  ``buyer_sst_number``, ``buyer_id_value``, supplier_*
-  equivalents) sits as plaintext in Postgres' encrypted
-  EBS volume — disk-level encryption only.
-
-  Why deferred (not "fix all P0" worthy in one session):
-  the implementation has to thread an envelope encrypt /
-  decrypt through every read/write path that touches those
-  columns — the InvoiceSerializer, update_invoice,
-  enrich_invoice's _autofill_buyer / _propagate_corrections
-  _to_master, the LHDN JSON builder, the CSV exporter, the
-  CustomerMaster + ItemMaster reads, and ANY validation
-  rule that compares against these fields. Plus a data
-  migration that walks existing rows and rewrites them
-  ciphertext, with a rollback story if it half-fails. The
-  pattern (``apps.administration.crypto.encrypt_value`` /
-  ``decrypt_value``) is already proven by Slice 55, but
-  applying it at column granularity is a 1-2 day slice on
-  its own with serious test surface (every read path
-  decrypts; every write path encrypts; no path stores raw).
-
-  Plan when we pick it up:
-  1. Pick the encrypted columns explicitly (not all
-     fields are PII — TIN is public, buyer_legal_name is on
-     the printed invoice). Likely list:
-     ``{supplier,buyer}_phone``, ``{supplier,buyer}_sst_number``,
-     ``{supplier,buyer}_id_value``, ``{supplier,buyer}_address``.
-  2. Add a Django field subclass ``EncryptedTextField`` that
-     calls ``encrypt_value`` on save and ``decrypt_value``
-     on load. Same approach Engine.credentials already uses,
-     just at column granularity.
-  3. Migration: backfill existing rows under super-admin
-     elevation (``apps.identity.tenancy``).
-  4. RLS policies + indexes don't change — encryption is
-     at the application layer, not the DB layer.
-  5. Add a test that proves a SELECT against the raw column
-     returns ciphertext (defense against future regressions
-     that bypass the field subclass).
+- **Field-level PII encryption — shipped (Slice 95 + later
+  expansions).** ``EncryptedCharField`` and
+  ``EncryptedTextField`` live in
+  ``apps/administration/fields.py`` and are applied across
+  ``CustomerMaster`` PII (Slice 95 — see
+  ``apps/enrichment/migrations/0004_encrypt_customermaster_pii.py``)
+  and ``OIDCProvider.client_secret``. The earlier "deferred"
+  entry that lived here is removed; remaining columns
+  (``Invoice`` supplier/buyer phone/SST/ID/address) follow the
+  same pattern when they get encrypted next.
 
 ---
 
@@ -9241,6 +9210,31 @@ After the fixes, the sweep is clean across all 28 page/viewport
 combinations. Files: ``frontend/src/lib/format.ts``,
 ``components/shell/AppShell.tsx``, ``components/admin/AdminShell.tsx``,
 plus the call-site updates in dashboard + admin pages.
+
+---
+
+### Planning checkpoint — gap analysis 2026-05-04
+
+After Slice 103 we walked the documentation set against shipped
+code and produced a planning artifact: ``docs/GAPS_PLAN.md``.
+It captures every open gap (P0/P1) from
+``PRODUCT_REQUIREMENTS``, ``API_DESIGN``, ``SECURITY``,
+``OPERATIONS``, ``INTEGRATION_CATALOG`` and
+``AUDIT_LOG_SPEC``, and groups them into 11 proposed slices
+(104–114) so each session has a clear scope.
+
+The standout finding: ``apps/audit/chain.py`` records every
+event but leaves ``signature`` empty. The brand-defining
+"publicly verifiable audit chain" claim is not true today.
+Slice 106 is the fix.
+
+The standout *correction*: field-level PII encryption (which
+lived on the deferred list above) is actually shipped — the
+deferred entry has been removed.
+
+Recommended next: **Slice 104 (platform hardening)** — closes
+six P0 gaps from API_DESIGN + SECURITY + OPERATIONS in one
+session because they all touch the request lifecycle layer.
 
 ---
 
