@@ -9365,6 +9365,116 @@ toggles are the cases that didn't.
 
 ---
 
+### Slice 105 — Idempotency-Key enforcement
+
+The biggest API correctness fix. Without it, a network-level
+retry on ``POST /v1/invoices/{id}/submit/`` could result in two
+LHDN submissions — the original cause of the constraint in
+``API_DESIGN.md §Idempotency`` ("Network failures must not
+result in duplicate invoices submitted to LHDN").
+
+**Implementation: middleware, not decorator.**
+``zerokey/idempotency.py`` adds ``IdempotencyMiddleware``,
+wired late in the chain (after auth + axes, before the
+rate-limit header middleware). A decorator would require
+remembering to add it to every new view; a middleware can't
+be forgotten. Side benefit — it covers endpoints we haven't
+written yet.
+
+**Contract.**
+The middleware honours the spec verbatim:
+
+  * Header ``Idempotency-Key`` (1–128 chars from
+    ``[A-Za-z0-9_\-]``); reject malformed with 400 +
+    ``idempotency_key_invalid``.
+  * Apply to ``POST/PUT/PATCH/DELETE`` only — safe methods
+    are never deduped (and ignore the header).
+  * Skip multipart uploads — file ingestion has its own
+    dedup at the storage layer (S3 ETag + ``IngestionJob``
+    uniqueness key) and the body is too large to hash
+    cheaply.
+  * Scope by authenticated principal: ``key:{api_key_id}``
+    when API-key authenticated, ``user:{user_id}:{org_id}``
+    when session-authenticated. Two integrations can share
+    the same idempotency string without collision.
+  * 24-hour TTL (per spec).
+
+**What gets cached.**
+Status code, body bytes (base64), Content-Type, plus the
+*original* request id. On replay we add an
+``Idempotent-Replay: true`` header and an
+``X-Original-Request-Id: <orig>`` header so a client
+correlating logs sees both ids — the original execution
+plus the replay's own request id. Subtle bit worth noting:
+``RequestIdMiddleware`` adds ``X-Request-Id`` to the
+response *outside* the idempotency middleware, so reading
+the header at serialisation time yields empty. The fix is
+to read the contextvar (``get_request_id()``) instead —
+same value, set on entry.
+
+**Three behaviours per the spec.**
+
+  1. *First call* — execute normally, cache the response.
+  2. *Same key, same body* — return the cached response
+     plus the replay headers. Real handler does NOT run.
+  3. *Same key, different body* — 409 +
+     ``idempotency_conflict`` envelope. The client either
+     sends the original payload or rotates the key.
+
+**Concurrent retries.**
+Before the real handler runs, the cache key is set to a
+short-lived "in-flight" marker (5 min TTL). A concurrent
+retry sees the marker and returns 409 +
+``idempotency_in_flight`` so two clients don't race the
+same mutation. The 5-min TTL means a crashed worker
+doesn't permanently block the key — the next retry after
+that gets a fresh execution. If the marker is replaced by
+the actual response (the normal path), TTL extends to 24
+hours.
+
+**Smoke evidence**
+
+```
+$ curl -X POST -H "Idempotency-Key: test-key" -d '{}' /api/v1/identity/onboarding/
+HTTP/1.1 404 Not Found
+X-Request-Id: b23cf392b69f4c3bb3849c8b1a56351f
+[real execution]
+
+$ curl -X POST -H "Idempotency-Key: test-key" -d '{}' /api/v1/identity/onboarding/
+HTTP/1.1 404 Not Found
+Idempotent-Replay: true
+X-Original-Request-Id: b23cf392b69f4c3bb3849c8b1a56351f
+X-Request-Id: e3d0446506194f719b1175f851c4e34b
+[no real execution — cached body returned]
+
+$ curl -X POST -H "Idempotency-Key: test-key" -d '{"different":"payload"}' /api/v1/identity/onboarding/
+HTTP/1.1 409 Conflict
+{"error":{"code":"idempotency_conflict",
+  "message":"An Idempotency-Key was reused with a different request body. ...",
+  "request_id":"556919..."}}
+
+$ curl -X POST -H "Idempotency-Key: bad key with spaces!!" -d '{}' /api/v1/identity/onboarding/
+HTTP/1.1 400 Bad Request
+{"error":{"code":"idempotency_key_invalid",...}}
+
+$ curl -H "Idempotency-Key: get-key" /api/v1/identity/me/   # (GET — middleware bypasses)
+HTTP/1.1 200 OK   # no Idempotent-Replay header
+```
+
+**Files**
+- new: ``backend/zerokey/idempotency.py``
+- modified: ``backend/zerokey/settings/base.py`` (one MIDDLEWARE
+  entry)
+
+**What this unblocks**
+LHDN submission (``POST /v1/invoices/{id}/submit/``) is
+now safe to retry on network failure — clients should
+generate a UUID per submit attempt and resend the same
+key on retry. The middleware ensures at-most-once delivery
+to LHDN within the 24-hour window.
+
+---
+
 ## How to run it
 
 ```bash

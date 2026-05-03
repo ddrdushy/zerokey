@@ -54,7 +54,7 @@ at the end so the BUILD_LOG can be corrected.
 
 | Gap | Priority | Effort |
 |-----|----------|--------|
-| Idempotency-Key enforcement on inbound mutations | P0 | M |
+| ~~Idempotency-Key enforcement on inbound mutations~~ — Slice 105 (24h dedup, body-hash conflict, in-flight marker, replay headers) | P0 | M |
 | ~~Standardised error envelope `{error: {code, message, field, request_id, …}}`~~ — Slice 104 | P0 | S |
 | ~~`request_id` middleware + `X-Request-Id` echo~~ — Slice 104 | P0 | S |
 | Cursor-based pagination class (replace per-view paging) | P0 | M |
@@ -118,17 +118,13 @@ propagation + log enrichment), Sentry SDK, anon + user
 throttles with `X-RateLimit-*` headers, django-axes lockout,
 and 2FA session rotation. See BUILD_LOG entry for details.
 
-### Slice 105 — Idempotency-Key enforcement
+### ~~Slice 105 — Idempotency-Key enforcement~~ — shipped
 
-The biggest API correctness fix. Without it, a network-level retry on
-`POST /v1/invoices/{id}/submit/` can result in two LHDN submissions.
-
-- Decorator-based dedup (Redis-backed) for inbound POST/PUT/DELETE.
-- Honours request body hash so a re-used key with a different body
-  errors instead of silently returning the prior response.
-
-**Effort: M.** Depends on Slice 104 for `request_id` to log retries
-coherently.
+Middleware-based dedup (24h TTL). Honours body hash for conflict
+detection, scopes by API-key id or user+org, sets in-flight marker
+to prevent concurrent races, returns ``Idempotent-Replay: true`` +
+``X-Original-Request-Id`` on cached responses. See BUILD_LOG entry
+for details.
 
 ### Slice 106 — Audit log integrity (the trust story)
 
@@ -237,14 +233,14 @@ on the audit redaction pipeline being in place.
 
 ## Recommended next
 
-With Slice 104 shipped, the natural next step is **Slice 105
-(idempotency-key enforcement)** — it inherits the request id from 104
-and closes the largest remaining API correctness gap (duplicate LHDN
-submission risk on network retry).
+With Slices 104 + 105 shipped, the highest-leverage next step is
+**Slice 106 (audit signatures)** — without Ed25519 signing the
+"publicly verifiable audit chain" claim in ``AUDIT_LOG_SPEC.md`` is
+not actually true. Independent of 104 and 105.
 
-The strategic alternate remains **Slice 106 (audit signatures)** —
-without it, the "publicly verifiable audit chain" claim isn't true.
-Independent of 104 and 105.
+After 106, **Slice 107 (identity QoL: password reset, customer
+master merge, sessions UI)** is a natural follow-on to 104's
+middleware.
 
 ---
 

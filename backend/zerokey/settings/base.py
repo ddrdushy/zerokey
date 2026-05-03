@@ -86,6 +86,12 @@ MIDDLEWARE = [
     # rendering. AxesMiddleware must follow auth so it sees the
     # resolved user.
     "axes.middleware.AxesMiddleware",
+    # Slice 105 — Idempotency-Key dedup. Must be after auth (needs
+    # the user/key for scoping) and after axes (lockout wins over
+    # cache). Before RateLimitHeaderMiddleware so a replayed
+    # response still carries fresh rate-limit headers from this
+    # request.
+    "zerokey.idempotency.IdempotencyMiddleware",
     "zerokey.throttling.RateLimitHeaderMiddleware",
 ]
 
