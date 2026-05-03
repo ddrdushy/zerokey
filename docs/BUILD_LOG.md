@@ -7720,6 +7720,122 @@ hand-edit `SystemSetting` from `/django-admin/`):
 
 ---
 
+### Slice 100 — Billing self-service: cancellation, portal, invoice history, lifecycle, usage meter, banner
+
+Closes 6 of the 8 P0 promises in PRODUCT_REQUIREMENTS Domain 10
+(Billing and self-service) that were unbuilt before this slice. The
+slice splits the work between native UI (cancellation flow + usage
+meter + lifecycle banner) and Stripe-hosted UI (Customer Portal for
+plan change + payment methods + invoice downloads), since rebuilding
+Stripe's portal would be busywork that adds no customer value.
+
+Backend:
+
+- **`apps/billing/stripe_client.py`** — adds three Stripe calls:
+  `create_billing_portal_session` (POST /v1/billing_portal/sessions),
+  `list_invoices` (GET /v1/invoices?customer=…), and
+  `cancel_stripe_subscription` (DELETE for immediate, POST update
+  with `cancel_at_period_end=true` for period-end). Auth + error
+  handling matches the existing httpx-based pattern.
+- **`apps/billing/services.py`** — adds `cancel_subscription`
+  (mode ∈ {immediate, period_end} with audit + best-effort Stripe
+  forward; immediate flips `Organization.subscription_state` to
+  CANCELLED), `reactivate_subscription` (undoes a pending period-end
+  cancellation locally + in Stripe), `list_billing_invoices` (pulls
+  Stripe invoice history for the org's `stripe_customer_id` —
+  empty list if Stripe isn't configured or no customer was
+  provisioned), `create_billing_portal_url` (opens a Stripe
+  Customer Portal session and returns the redirect URL), and
+  `enforce_subscription_lifecycle` (the trial → past_due (read-only
+  grace, 14d) → suspended (30d) → purge-eligible state machine).
+- **`apps/billing/tasks.py`** — new file. `enforce_subscription
+  _lifecycle_task` wraps the service for celery beat; the schedule
+  ships hourly in `settings/base.py`. Day-resolution boundaries
+  don't need finer cadence.
+- **`apps/billing/urls.py`** — 4 new endpoints: `POST /cancel/`,
+  `POST /reactivate/`, `GET /invoices/`, `POST /portal/`. All
+  org-scoped + reason-friendly per the existing customer billing
+  pattern.
+
+Frontend:
+
+- **`/dashboard/settings/billing`** — extends `CurrentSubscription`
+  with a `SubscriptionActions` row (Manage-in-Stripe + Cancel /
+  Resume). The cancel flow is a 3-click modal per PRD Domain 10:
+  Cancel button → pick mode (period_end default) + optional
+  reason → Cancel subscription. Immediate mode warns about
+  prorated refund per terms. Pending period-end cancellations
+  swap the button for "Resume subscription" and the footer copy
+  shows the cancellation date. Adds a `BillingInvoicesSection`
+  under the subscription card listing Stripe-issued invoices
+  (number, date, amount, status, PDF link) — renders nothing
+  when the list is empty so Stripe-less dev tenants don't see a
+  ghost section.
+- **`UsageMeter` (new component)** — renders on the main
+  dashboard between StatsStrip and the throughput chart. Pulls
+  `/billing/overview/`, shows `count / limit` invoices for the
+  current period with an amber bar at ≥80% and red at ≥100%
+  (matching the PRD's notification thresholds). Links into
+  `/dashboard/settings/billing`.
+- **`SubscriptionStateBanner` (new component)** — global
+  AppShell banner that surfaces above every customer page for
+  past_due / suspended / cancelled orgs. Headline + sub-copy +
+  "Pick a plan" CTA. Renders nothing for trialing/active so
+  it's a zero-cost layout change for healthy tenants. Reads
+  the state off `Me.memberships[].organization.subscription
+  _state` (already exposed by `OrgSerializer`); the frontend
+  type was extended to surface it.
+- **`api.ts`** — adds `cancelSubscription`, `reactivate
+  Subscription`, `listBillingInvoices`, `openBillingPortal`
+  + the `BillingInvoiceRow` type.
+
+Verified end-to-end against `dushy@symprio.com`:
+
+```
+✅ UsageMeter renders "Trial · this period" with progress bar
+✅ Billing settings shows Cancel button
+✅ Cancel modal shows both mode options (period_end / immediate)
+✅ Confirming period_end → "Cancels on …" copy + Resume button
+✅ Resume → returns to Cancel state
+✅ Org flipped to past_due → global banner "Trial ended — read-only mode" + "Pick a plan" CTA
+```
+
+What this does NOT include and is deliberate follow-up:
+
+- **Native plan upgrade/downgrade UI** — Stripe Customer Portal
+  handles plan changes inside Stripe's hosted surface; the
+  Manage-in-Stripe button is the user's path. A native
+  upgrade flow can come later if customers ask for it (the
+  admin-side `admin_assign_plan_to_tenant` from Slice 99
+  already supports the operator-override path).
+- **Native payment method management** — same reasoning;
+  Stripe Customer Portal is the canonical surface.
+- **Destructive purge sweep** — `enforce_subscription
+  _lifecycle` flags 30+ day suspended orgs as
+  `purge_eligible` via audit event, but the actual destructive
+  data deletion needs admin sign-off and lands in a separate
+  slice once we have customers in that state.
+- **80%/90%/100% notification dispatch** — the meter visually
+  warns; the email notification on threshold crossing rides on
+  the `NotificationPreference` work and lands when the
+  notification dispatcher is extended (Slice 47 + 52 are the
+  prior slices that own this surface).
+
+Files: `backend/apps/billing/stripe_client.py`,
+`backend/apps/billing/services.py`,
+`backend/apps/billing/tasks.py` (new),
+`backend/apps/billing/views.py`,
+`backend/apps/billing/urls.py`,
+`backend/zerokey/settings/base.py`,
+`frontend/src/lib/api.ts`,
+`frontend/src/app/dashboard/page.tsx`,
+`frontend/src/app/dashboard/settings/billing/page.tsx`,
+`frontend/src/components/dashboard/UsageMeter.tsx` (new),
+`frontend/src/components/billing/SubscriptionStateBanner.tsx` (new),
+`frontend/src/components/shell/AppShell.tsx`.
+
+---
+
 ### Slice 99 — Admin gap closure: plans, flags, support tools, routing rules, system health
 
 Closes every P0 + P1 gap from PRODUCT_REQUIREMENTS Domain 11

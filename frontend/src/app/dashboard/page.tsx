@@ -20,6 +20,7 @@ import { OnboardingChecklist } from "@/components/dashboard/OnboardingChecklist"
 import { StatsStrip, type Stat } from "@/components/dashboard/StatsStrip";
 import { ThroughputChart } from "@/components/dashboard/ThroughputChart";
 import { CompliancePosture } from "@/components/dashboard/CompliancePosture";
+import { UsageMeter } from "@/components/dashboard/UsageMeter";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -142,6 +143,8 @@ export default function DashboardPage() {
         <DropZone onUploaded={onUploaded} />
 
         <StatsStrip stats={stats} />
+
+        <UsageMeter />
 
         <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
           <ThroughputChart data={throughput?.series} />

@@ -25,6 +25,7 @@ import { api, type Me } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useT, getLocale, setLocale, SUPPORTED_LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
+import { SubscriptionStateBanner } from "@/components/billing/SubscriptionStateBanner";
 import { NotificationBell } from "./NotificationBell";
 import { CertExpiryBanner } from "./CertExpiryBanner";
 
@@ -123,6 +124,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-paper">
       {me?.impersonation && <ImpersonationBanner ctx={me.impersonation} />}
+      <SubscriptionStateBanner me={me} />
       <div className="flex min-h-0 flex-1">
         <Sidebar collapsed={collapsed} onToggle={toggleCollapsed} />
         <div className="flex flex-1 flex-col">

@@ -290,6 +290,13 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": float(BNM_RATES_REFRESH_SECONDS),
         "options": {"queue": "low"},
     },
+    # Slice 100 — daily sweep that transitions trial → past-due → suspended
+    # and flags long-suspended orgs as eligible for purge.
+    "billing.enforce_subscription_lifecycle": {
+        "task": "billing.enforce_subscription_lifecycle",
+        "schedule": 60.0 * 60.0,  # hourly is fine; the boundaries are day-resolution
+        "options": {"queue": "low"},
+    },
 }
 
 # --- Logging --------------------------------------------------------------------------

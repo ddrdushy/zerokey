@@ -6,7 +6,15 @@
 // wiring slice.
 
 import { useEffect, useState } from "react";
-import { CreditCard, Loader2, Sparkles } from "lucide-react";
+import {
+  CreditCard,
+  Download,
+  ExternalLink,
+  FileText,
+  Loader2,
+  Sparkles,
+  XCircle,
+} from "lucide-react";
 
 import {
   api,
@@ -30,7 +38,7 @@ export default function BillingSettingsPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  function loadOverview() {
     api
       .getBillingOverview()
       .then(setOverview)
@@ -41,6 +49,10 @@ export default function BillingSettingsPage() {
         }
         setError(err instanceof Error ? err.message : "Failed to load.");
       });
+  }
+
+  useEffect(() => {
+    loadOverview();
   }, []);
 
   return (
@@ -67,7 +79,13 @@ export default function BillingSettingsPage() {
           <Loading />
         ) : overview === null ? null : (
           <>
-            <CurrentSubscription subscription={overview.subscription} usage={overview.usage} />
+            <CurrentSubscription
+              subscription={overview.subscription}
+              usage={overview.usage}
+              onChanged={loadOverview}
+              onError={setError}
+            />
+            <BillingInvoicesSection />
             <PlanCatalog
               plans={overview.available_plans}
               currentSlug={overview.subscription?.plan.slug ?? null}
@@ -82,9 +100,13 @@ export default function BillingSettingsPage() {
 function CurrentSubscription({
   subscription,
   usage,
+  onChanged,
+  onError,
 }: {
   subscription: BillingSubscription | null;
   usage: BillingUsage;
+  onChanged: () => void;
+  onError: (msg: string | null) => void;
 }) {
   if (!subscription) {
     return (
@@ -167,9 +189,263 @@ function CurrentSubscription({
           )}
         </div>
       </div>
-      <footer className="border-t border-slate-100 px-5 py-3 text-[10px] text-slate-400">
-        Pick a plan below to subscribe through Stripe checkout.
+      <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-5 py-3">
+        <div className="text-[10px] text-slate-400">
+          {subscription.cancel_at_period_end
+            ? subscription.current_period_end
+              ? `Cancels on ${new Date(subscription.current_period_end).toLocaleDateString()}.`
+              : "Cancellation pending."
+            : "Manage payment methods, plan, and invoice downloads in the Stripe portal."}
+        </div>
+        <SubscriptionActions
+          subscription={subscription}
+          onChanged={onChanged}
+          onError={onError}
+        />
       </footer>
+    </section>
+  );
+}
+
+function SubscriptionActions({
+  subscription,
+  onChanged,
+  onError,
+}: {
+  subscription: BillingSubscription;
+  onChanged: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  const [cancelling, setCancelling] = useState(false);
+  const [openingPortal, setOpeningPortal] = useState(false);
+  const [reactivating, setReactivating] = useState(false);
+
+  async function openPortal() {
+    setOpeningPortal(true);
+    onError(null);
+    try {
+      const { url } = await api.openBillingPortal(window.location.href);
+      window.location.href = url;
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Couldn't open Stripe portal.");
+    } finally {
+      setOpeningPortal(false);
+    }
+  }
+
+  async function reactivate() {
+    setReactivating(true);
+    onError(null);
+    try {
+      await api.reactivateSubscription();
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Couldn't reactivate.");
+    } finally {
+      setReactivating(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {subscription.stripe_customer_id && (
+        <Button size="sm" variant="outline" disabled={openingPortal} onClick={openPortal}>
+          {openingPortal ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+          )}
+          Manage in Stripe
+        </Button>
+      )}
+      {subscription.cancel_at_period_end ? (
+        <Button size="sm" disabled={reactivating} onClick={reactivate}>
+          {reactivating ? "Reactivating…" : "Resume subscription"}
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-error hover:bg-error/5"
+          onClick={() => setCancelling(true)}
+        >
+          <XCircle className="mr-1.5 h-3.5 w-3.5" />
+          Cancel
+        </Button>
+      )}
+      {cancelling && (
+        <CancelDialog
+          subscription={subscription}
+          onClose={() => setCancelling(false)}
+          onCancelled={() => {
+            setCancelling(false);
+            onChanged();
+          }}
+          onError={onError}
+        />
+      )}
+    </div>
+  );
+}
+
+function CancelDialog({
+  subscription,
+  onClose,
+  onCancelled,
+  onError,
+}: {
+  subscription: BillingSubscription;
+  onClose: () => void;
+  onCancelled: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  // Three-click flow per PRD Domain 10: Cancel → pick mode → confirm.
+  // No retention dialogue, no friction beyond the mode pick.
+  const [mode, setMode] = useState<"period_end" | "immediate">("period_end");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function confirm() {
+    setSubmitting(true);
+    onError(null);
+    try {
+      await api.cancelSubscription({ mode, reason });
+      onCancelled();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Couldn't cancel.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const periodEnd = subscription.current_period_end
+    ? new Date(subscription.current_period_end).toLocaleDateString()
+    : null;
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/40 px-4">
+      <div className="w-full max-w-md rounded-xl bg-white p-6">
+        <h3 className="text-base font-semibold text-ink">Cancel subscription</h3>
+        <p className="mt-1 text-2xs text-slate-500">
+          We&apos;ll stop billing you. Your data is retained per the deletion schedule.
+        </p>
+        <div className="mt-4 flex flex-col gap-2 text-2xs">
+          <label className="flex items-start gap-2 rounded-md border border-slate-100 p-3 hover:bg-slate-50">
+            <input
+              type="radio"
+              name="cancel-mode"
+              checked={mode === "period_end"}
+              onChange={() => setMode("period_end")}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-medium text-ink">End of current period</span>
+              <span className="block text-slate-500">
+                Keep using until {periodEnd ?? "the end of the cycle"}. No refund needed.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 rounded-md border border-slate-100 p-3 hover:bg-slate-50">
+            <input
+              type="radio"
+              name="cancel-mode"
+              checked={mode === "immediate"}
+              onChange={() => setMode("immediate")}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-medium text-ink">Cancel immediately</span>
+              <span className="block text-slate-500">
+                Access ends now. Prorated refund per terms.
+              </span>
+            </span>
+          </label>
+          <input
+            type="text"
+            placeholder="Optional — what made you leave?"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            className="rounded-md border border-slate-200 px-2 py-1.5 text-2xs"
+          />
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={submitting}>
+            Keep subscription
+          </Button>
+          <Button
+            size="sm"
+            disabled={submitting}
+            onClick={confirm}
+            className="bg-error hover:bg-error/90"
+          >
+            {submitting ? "Cancelling…" : "Cancel subscription"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BillingInvoicesSection() {
+  const [rows, setRows] = useState<import("@/lib/api").BillingInvoiceRow[] | null>(null);
+
+  useEffect(() => {
+    api.listBillingInvoices().then(setRows).catch(() => setRows([]));
+  }, []);
+
+  if (rows === null) return null;
+  if (rows.length === 0) return null;
+
+  return (
+    <section className="rounded-xl border border-slate-100 bg-white">
+      <header className="flex items-center gap-2 border-b border-slate-100 px-5 py-4">
+        <FileText className="h-4 w-4 text-slate-400" />
+        <h2 className="text-sm font-semibold text-ink">Invoices + receipts</h2>
+      </header>
+      <table className="w-full text-2xs">
+        <thead className="bg-slate-50 text-slate-400">
+          <tr>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Number</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Date</th>
+            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Amount</th>
+            <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Status</th>
+            <th className="px-3 py-2"></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={row.id} className="hover:bg-slate-50">
+              <td className="px-3 py-2 font-mono text-ink">{row.number || row.id.slice(0, 12)}</td>
+              <td className="px-3 py-2 text-slate-500">
+                {row.created
+                  ? new Date(row.created * 1000).toLocaleDateString()
+                  : "—"}
+              </td>
+              <td className="px-3 py-2 text-right text-slate-600">
+                {row.currency} {(row.amount_paid_cents / 100).toFixed(2)}
+              </td>
+              <td className="px-3 py-2">
+                <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700">
+                  {row.status}
+                </code>
+              </td>
+              <td className="px-3 py-2 text-right">
+                {row.invoice_pdf && (
+                  <a
+                    href={row.invoice_pdf}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-2xs font-medium text-ink hover:underline"
+                  >
+                    <Download className="h-3 w-3" />
+                    PDF
+                  </a>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </section>
   );
 }

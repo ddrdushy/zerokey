@@ -122,6 +122,17 @@ export type BillingUsage = {
   overage_count: number;
 };
 
+export type BillingInvoiceRow = {
+  id: string;
+  number: string;
+  amount_paid_cents: number;
+  currency: string;
+  status: string;
+  created: number;
+  hosted_invoice_url: string;
+  invoice_pdf: string;
+};
+
 export type NotificationPreferenceRow = {
   key: string;
   label: string;
@@ -189,7 +200,14 @@ export type InvitationRow = {
 
 export type Membership = {
   id: string;
-  organization: { id: string; legal_name: string; tin: string };
+  organization: {
+    id: string;
+    legal_name: string;
+    tin: string;
+    /** Slice 100 — surfaced on Me so the global state banner doesn't need a separate fetch. */
+    subscription_state?: string;
+    trial_state?: string;
+  };
   role: string;
   joined_date: string;
 };
@@ -1574,6 +1592,25 @@ export const api = {
     }>("/billing/checkout/", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  // Slice 100 — customer self-service
+  cancelSubscription: (body: { mode: "immediate" | "period_end"; reason: string }) =>
+    request<BillingSubscription>("/billing/cancel/", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  reactivateSubscription: () =>
+    request<BillingSubscription>("/billing/reactivate/", {
+      method: "POST",
+    }),
+  listBillingInvoices: () =>
+    request<{ results: BillingInvoiceRow[] }>("/billing/invoices/").then(
+      (r) => r.results,
+    ),
+  openBillingPortal: (returnUrl: string) =>
+    request<{ url: string }>("/billing/portal/", {
+      method: "POST",
+      body: JSON.stringify({ return_url: returnUrl }),
     }),
   getInboxAddress: () => request<{ address: string }>("/ingestion/inbox/address/"),
   rotateInboxToken: (reason: string) =>

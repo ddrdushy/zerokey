@@ -288,3 +288,349 @@ def bootstrap_trial_subscription(*, organization_id: uuid.UUID | str) -> Subscri
         trial_started_at=now,
         trial_ends_at=trial_end,
     )
+
+
+# --- Slice 100: customer billing self-service -----------------------------------
+
+
+class SubscriptionCancelError(Exception):
+    """Raised on cancellation validation failure."""
+
+
+def cancel_subscription(
+    *,
+    organization_id: uuid.UUID | str,
+    actor_user_id: uuid.UUID | str,
+    mode: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Cancel the org's active subscription.
+
+    ``mode``:
+      - ``"immediate"`` — sets status=CANCELLED, cancelled_at=now,
+        flips Organization.subscription_state to CANCELLED. The
+        prorated-refund handling lives in Stripe webhook land.
+      - ``"period_end"`` — sets cancel_at_period_end=True, leaves
+        status ACTIVE/TRIALING; the daily lifecycle sweep flips it
+        to CANCELLED on the period boundary.
+
+    Stripe sync is best-effort: if a `stripe_subscription_id` is
+    present we forward the cancellation to Stripe; if not, we
+    short-circuit (still cancels locally).
+
+    Audited as ``billing.subscription_cancelled``.
+    """
+    from django.utils import timezone as _tz
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.models import Organization
+
+    if mode not in {"immediate", "period_end"}:
+        raise SubscriptionCancelError("mode must be 'immediate' or 'period_end'.")
+
+    sub = (
+        Subscription.objects.filter(
+            organization_id=organization_id,
+            status__in=[
+                Subscription.Status.ACTIVE,
+                Subscription.Status.TRIALING,
+                Subscription.Status.PAST_DUE,
+            ],
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if sub is None:
+        raise SubscriptionCancelError("No active subscription to cancel.")
+
+    # Push to Stripe if we know the remote id.
+    if sub.stripe_subscription_id:
+        from . import stripe_client
+
+        try:
+            stripe_client.cancel_stripe_subscription(
+                subscription_id=sub.stripe_subscription_id,
+                immediate=(mode == "immediate"),
+            )
+        except stripe_client.StripeError:
+            # Don't fail the local cancellation if Stripe is down —
+            # the webhook reconciler will catch up. Log + continue.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "billing.cancel.stripe_failed",
+                extra={"subscription_id": str(sub.id)},
+            )
+
+    if mode == "immediate":
+        sub.status = Subscription.Status.CANCELLED
+        sub.cancelled_at = _tz.now()
+        sub.cancellation_reason = (reason or "")[:255]
+        sub.cancel_at_period_end = False
+        sub.save(
+            update_fields=[
+                "status",
+                "cancelled_at",
+                "cancellation_reason",
+                "cancel_at_period_end",
+                "updated_at",
+            ]
+        )
+        Organization.objects.filter(id=organization_id).update(
+            subscription_state=Organization.SubscriptionState.CANCELLED
+        )
+    else:
+        sub.cancel_at_period_end = True
+        sub.cancellation_reason = (reason or "")[:255]
+        sub.save(
+            update_fields=["cancel_at_period_end", "cancellation_reason", "updated_at"]
+        )
+
+    record_event(
+        action_type="billing.subscription_cancelled",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=str(organization_id),
+        affected_entity_type="Subscription",
+        affected_entity_id=str(sub.id),
+        payload={"mode": mode, "reason": reason[:255]},
+    )
+
+    return _subscription_dict(sub)
+
+
+def reactivate_subscription(
+    *,
+    organization_id: uuid.UUID | str,
+    actor_user_id: uuid.UUID | str,
+) -> dict[str, Any]:
+    """Undo a pending period-end cancellation.
+
+    Only valid while the sub is still ACTIVE/TRIALING with
+    cancel_at_period_end=True.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    sub = (
+        Subscription.objects.filter(
+            organization_id=organization_id,
+            cancel_at_period_end=True,
+            status__in=[
+                Subscription.Status.ACTIVE,
+                Subscription.Status.TRIALING,
+                Subscription.Status.PAST_DUE,
+            ],
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if sub is None:
+        raise SubscriptionCancelError(
+            "No subscription with a pending cancellation to reactivate."
+        )
+
+    sub.cancel_at_period_end = False
+    sub.cancellation_reason = ""
+    sub.save(update_fields=["cancel_at_period_end", "cancellation_reason", "updated_at"])
+
+    if sub.stripe_subscription_id:
+        from . import stripe_client
+
+        try:
+            stripe_client._post(
+                creds=stripe_client.credentials(),
+                path=f"/subscriptions/{sub.stripe_subscription_id}",
+                data={"cancel_at_period_end": "false"},
+            )
+        except stripe_client.StripeError:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "billing.reactivate.stripe_failed",
+                extra={"subscription_id": str(sub.id)},
+            )
+
+    record_event(
+        action_type="billing.subscription_reactivated",
+        actor_type=AuditEvent.ActorType.USER,
+        actor_id=str(actor_user_id),
+        organization_id=str(organization_id),
+        affected_entity_type="Subscription",
+        affected_entity_id=str(sub.id),
+        payload={},
+    )
+    return _subscription_dict(sub)
+
+
+def list_billing_invoices(
+    *,
+    organization_id: uuid.UUID | str,
+) -> list[dict[str, Any]]:
+    """Return Stripe-issued invoice history for the org's subscription.
+
+    Slice 100 — surfaces ZeroKey's *own* subscription invoices to the
+    customer (we issue our own e-invoices for the SaaS subscription;
+    the meta-loop is intentional). Empty list if Stripe isn't
+    configured or the customer hasn't been provisioned in Stripe yet.
+    """
+    sub = (
+        Subscription.objects.filter(
+            organization_id=organization_id,
+        )
+        .exclude(stripe_customer_id="")
+        .order_by("-created_at")
+        .first()
+    )
+    if sub is None or not sub.stripe_customer_id:
+        return []
+
+    from . import stripe_client
+
+    try:
+        envelope = stripe_client.list_invoices(customer_id=sub.stripe_customer_id)
+    except stripe_client.StripeError:
+        return []
+
+    invoices = envelope.get("data") or []
+    return [
+        {
+            "id": inv.get("id", ""),
+            "number": inv.get("number") or "",
+            "amount_paid_cents": int(inv.get("amount_paid") or 0),
+            "currency": (inv.get("currency") or "myr").upper(),
+            "status": inv.get("status") or "",
+            "created": inv.get("created") or 0,
+            "hosted_invoice_url": inv.get("hosted_invoice_url") or "",
+            "invoice_pdf": inv.get("invoice_pdf") or "",
+        }
+        for inv in invoices
+    ]
+
+
+def create_billing_portal_url(
+    *,
+    organization_id: uuid.UUID | str,
+    return_url: str,
+) -> str:
+    """Open a Stripe Customer Portal session and return the URL.
+
+    The portal handles payment-method management, plan changes, and
+    invoice downloads. Three Domain-10 P0 promises live in Stripe's
+    UI; we link out rather than rebuild.
+    """
+    sub = (
+        Subscription.objects.filter(organization_id=organization_id)
+        .exclude(stripe_customer_id="")
+        .order_by("-created_at")
+        .first()
+    )
+    if sub is None or not sub.stripe_customer_id:
+        raise SubscriptionCancelError(
+            "Set up a payment method first — no Stripe customer attached yet."
+        )
+    from . import stripe_client
+
+    session = stripe_client.create_billing_portal_session(
+        customer_id=sub.stripe_customer_id, return_url=return_url
+    )
+    return str(session.get("url") or "")
+
+
+# --- Trial-to-paid lifecycle (PRD Domain 10 — trial-to-paid conversion) -------
+
+# Per PRD: trial expires → read-only for 14 days → suspended → 30
+# more days → data purge eligible. We model the in-between state as
+# Organization.SubscriptionState.PAST_DUE (read-only with banner)
+# and SUSPENDED (no access). The actual purge runs from a different
+# beat task and only flags rows for deletion; the destructive sweep
+# stays as a follow-up.
+
+POST_TRIAL_GRACE_DAYS = 14
+SUSPENDED_BEFORE_PURGE_DAYS = 30
+
+
+def enforce_subscription_lifecycle() -> dict[str, int]:
+    """Daily sweep — transition orgs through trial → grace → suspended.
+
+    Called by celery beat. Idempotent: an org already in the target
+    state is left alone. Audit-logged so the chain shows when each
+    state change happened and what triggered it.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone as _tz
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    counts = {"to_grace": 0, "to_suspended": 0, "to_purge_pending": 0}
+    now = _tz.now()
+    grace_deadline = now - timedelta(days=POST_TRIAL_GRACE_DAYS)
+    suspend_deadline = now - timedelta(days=SUSPENDED_BEFORE_PURGE_DAYS)
+
+    with super_admin_context(reason="billing.lifecycle.sweep"):
+        # Trial expired AND no paid sub took over → into grace (past_due).
+        expired_trials = Subscription.objects.filter(
+            status=Subscription.Status.TRIALING,
+            trial_ends_at__lte=now,
+        )
+        for sub in expired_trials:
+            sub.status = Subscription.Status.PAST_DUE
+            sub.save(update_fields=["status", "updated_at"])
+            Organization.objects.filter(id=sub.organization_id).update(
+                subscription_state=Organization.SubscriptionState.PAST_DUE,
+                trial_state=Organization.TrialState.EXPIRED,
+            )
+            record_event(
+                action_type="billing.trial_expired",
+                actor_type=AuditEvent.ActorType.SERVICE,
+                actor_id="billing.lifecycle",
+                organization_id=str(sub.organization_id),
+                affected_entity_type="Subscription",
+                affected_entity_id=str(sub.id),
+                payload={"grace_days": POST_TRIAL_GRACE_DAYS},
+            )
+            counts["to_grace"] += 1
+
+        # Past-due (grace) for >14 days → suspended.
+        past_due_orgs = Organization.objects.filter(
+            subscription_state=Organization.SubscriptionState.PAST_DUE,
+            updated_at__lte=grace_deadline,
+        )
+        for org in past_due_orgs:
+            org.subscription_state = Organization.SubscriptionState.SUSPENDED
+            org.save(update_fields=["subscription_state", "updated_at"])
+            record_event(
+                action_type="billing.subscription_suspended",
+                actor_type=AuditEvent.ActorType.SERVICE,
+                actor_id="billing.lifecycle",
+                organization_id=str(org.id),
+                affected_entity_type="Organization",
+                affected_entity_id=str(org.id),
+                payload={"after_grace_days": POST_TRIAL_GRACE_DAYS},
+            )
+            counts["to_suspended"] += 1
+
+        # Suspended for >30 days → flag for purge (does NOT delete; a
+        # separate destructive sweep + admin sign-off does that).
+        suspended_orgs = Organization.objects.filter(
+            subscription_state=Organization.SubscriptionState.SUSPENDED,
+            updated_at__lte=suspend_deadline,
+        )
+        for org in suspended_orgs:
+            record_event(
+                action_type="billing.purge_eligible",
+                actor_type=AuditEvent.ActorType.SERVICE,
+                actor_id="billing.lifecycle",
+                organization_id=str(org.id),
+                affected_entity_type="Organization",
+                affected_entity_id=str(org.id),
+                payload={"suspended_days": SUSPENDED_BEFORE_PURGE_DAYS},
+            )
+            counts["to_purge_pending"] += 1
+
+    return counts

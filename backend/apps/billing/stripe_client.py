@@ -246,6 +246,71 @@ def get_subscription(*, subscription_id: str) -> dict[str, Any]:
     return _get(creds=credentials(), path=f"/subscriptions/{subscription_id}")
 
 
+def create_billing_portal_session(
+    *,
+    customer_id: str,
+    return_url: str,
+) -> dict[str, Any]:
+    """Create a Stripe-hosted Customer Portal session.
+
+    The portal handles plan changes, payment method updates, invoice
+    history, and cancellation in one Stripe-managed surface — frees
+    us from rebuilding any of that. The customer is redirected to
+    ``session.url`` and bounced back to ``return_url`` when done.
+    """
+    return _post(
+        creds=credentials(),
+        path="/billing_portal/sessions",
+        data={
+            "customer": customer_id,
+            "return_url": return_url,
+        },
+    )
+
+
+def list_invoices(*, customer_id: str, limit: int = 24) -> dict[str, Any]:
+    """List invoices for a Stripe customer.
+
+    Slice 100 — the customer's "Invoice + receipt history" surface.
+    Stripe issues + hosts these PDFs; we only present the list.
+    """
+    return _get(
+        creds=credentials(),
+        path=f"/invoices?customer={customer_id}&limit={int(limit)}",
+    )
+
+
+def cancel_stripe_subscription(
+    *,
+    subscription_id: str,
+    immediate: bool,
+) -> dict[str, Any]:
+    """Cancel a Stripe Subscription either immediately or at period end."""
+    if immediate:
+        # Stripe's cancel endpoint is DELETE on /subscriptions/{id};
+        # _post doesn't speak DELETE, so we fall back to httpx here.
+        creds = credentials()
+        try:
+            with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as c:
+                r = c.delete(
+                    f"{STRIPE_API_BASE}/subscriptions/{subscription_id}",
+                    headers={"Authorization": f"Bearer {creds.secret_key}"},
+                )
+        except httpx.HTTPError as exc:
+            raise StripeError(f"Stripe cancel failed: {exc}") from exc
+        if r.status_code in (401, 403):
+            raise StripeAuthError("Stripe rejected the API key.")
+        if r.status_code >= 400:
+            raise StripeError(f"Stripe returned {r.status_code}: {r.text[:200]}")
+        return r.json()
+    # period_end: POST update with cancel_at_period_end=true
+    return _post(
+        creds=credentials(),
+        path=f"/subscriptions/{subscription_id}",
+        data={"cancel_at_period_end": "true"},
+    )
+
+
 # --- Webhook signature verification -----------------------------------------
 
 

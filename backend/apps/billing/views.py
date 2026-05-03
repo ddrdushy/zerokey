@@ -163,3 +163,118 @@ def stripe_webhook_view(request: Request) -> Response:
         )
 
     return Response(result)
+
+
+# --- Slice 100: customer self-service surface ----------------------------------
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def cancel_view(request: Request) -> Response:
+    """Cancel the active subscription. Body: ``{mode, reason?}``.
+
+    ``mode`` ∈ {"immediate", "period_end"}. Three-click flow: the
+    UI confirms, the user picks a mode, the call lands here.
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not identity_services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    body = request.data or {}
+    mode = str(body.get("mode") or "").strip()
+    reason = str(body.get("reason") or "").strip()
+
+    try:
+        result = services.cancel_subscription(
+            organization_id=organization_id,
+            actor_user_id=request.user.id,
+            mode=mode,
+            reason=reason,
+        )
+    except services.SubscriptionCancelError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def reactivate_view(request: Request) -> Response:
+    """Undo a pending period-end cancellation."""
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not identity_services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        result = services.reactivate_subscription(
+            organization_id=organization_id,
+            actor_user_id=request.user.id,
+        )
+    except services.SubscriptionCancelError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def invoices_view(request: Request) -> Response:
+    """Return the org's Stripe-issued subscription invoices."""
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response({"results": []})
+    if not identity_services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return Response(
+        {"results": services.list_billing_invoices(organization_id=organization_id)}
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def portal_view(request: Request) -> Response:
+    """Create a Stripe Customer Portal session + return the URL."""
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not identity_services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    body = request.data or {}
+    return_url = str(body.get("return_url") or "").strip()
+    if not return_url:
+        return Response(
+            {"detail": "return_url is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        url = services.create_billing_portal_url(
+            organization_id=organization_id, return_url=return_url
+        )
+    except services.SubscriptionCancelError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({"url": url})
