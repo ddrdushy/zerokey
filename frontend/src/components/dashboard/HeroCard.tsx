@@ -14,11 +14,38 @@ import { Button } from "@/components/ui/button";
 export function HeroCard({
   organizationName,
   validatedThisMonth,
+  totalUploads = 0,
+  needsReview = 0,
 }: {
   organizationName: string;
   validatedThisMonth: number;
+  /** Slice 102 — total upload count so the empty-state copy doesn't lie when the user has uploads in flight. */
+  totalUploads?: number;
+  needsReview?: number;
 }) {
   const router = useRouter();
+
+  // Three-state copy ladder — read the actual upload state, not just
+  // LHDN-validated counts. The pre-Slice-102 single-branch copy lied
+  // to users who had uploaded but not yet completed the cert+submit
+  // flow, telling them "no invoices yet" while the dashboard stats
+  // showed 11 in flight.
+  let summary: string;
+  if (validatedThisMonth > 0) {
+    summary = `${validatedThisMonth} invoice${
+      validatedThisMonth === 1 ? "" : "s"
+    } validated by LHDN this month.`;
+  } else if (needsReview > 0) {
+    summary = `${needsReview} invoice${
+      needsReview === 1 ? "" : "s"
+    } waiting for review. Open the inbox to clear them.`;
+  } else if (totalUploads > 0) {
+    summary = `${totalUploads} upload${
+      totalUploads === 1 ? "" : "s"
+    } in flight. Set up LHDN signing in Settings to start validating.`;
+  } else {
+    summary = "No invoices submitted yet — drop your first one below to get started.";
+  }
 
   return (
     <section className="relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-6 md:p-8">
@@ -31,11 +58,7 @@ export function HeroCard({
             Welcome back.{" "}
             <em className="not-italic text-slate-600">Drop a file when you&apos;re ready.</em>
           </h2>
-          <p className="max-w-xl text-base text-slate-600">
-            {validatedThisMonth > 0
-              ? `${validatedThisMonth} invoice${validatedThisMonth === 1 ? "" : "s"} validated by LHDN this month.`
-              : "No invoices submitted yet — drop your first one below to get started."}
-          </p>
+          <p className="max-w-xl text-base text-slate-600">{summary}</p>
           <div className="mt-2 flex flex-wrap gap-3">
             <Button variant="outline" size="md" onClick={() => router.push("/dashboard/audit")}>
               View audit log

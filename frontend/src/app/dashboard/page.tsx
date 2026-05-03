@@ -139,7 +139,12 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <div className="flex flex-col gap-6">
-        <HeroCard organizationName={orgName} validatedThisMonth={validated} />
+        <HeroCard
+          organizationName={orgName}
+          validatedThisMonth={validated}
+          totalUploads={jobs.length}
+          needsReview={needsReview}
+        />
 
         {/* Onboarding checklist hides itself once dismissed or when
             its endpoint fails. Returning-user dashboards never see it. */}

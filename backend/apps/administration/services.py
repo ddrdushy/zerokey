@@ -446,13 +446,17 @@ def platform_overview(*, actor_user_id: UUID | str) -> dict[str, Any]:
         }
         engines_total = sum(engine_breakdown.values())
 
-        # Per-engine 7-day call success rate so the operator can spot a
-        # silently-failing engine before tenants do. Gathered as a small
-        # list rather than expanding the count blob.
+        # Per-engine call success rate so the operator can spot a
+        # silently-failing engine before tenants do. Window is 24h, NOT
+        # 7d — a credential rotation or model-config fix needs to fall
+        # off the dashboard quickly so the operator isn't staring at
+        # week-old failures dominated by 0% health every morning.
+        # Slice 102 — narrowed from 7d after the UX walk found 4500+
+        # stale failures making active engines look broken.
         from apps.extraction.models import EngineCall
 
         engine_calls = list(
-            EngineCall.objects.filter(started_at__gte=seven_days_ago)
+            EngineCall.objects.filter(started_at__gte=one_day_ago)
             .values("engine__name")
             .annotate(
                 total=Count("id"),
@@ -463,28 +467,31 @@ def platform_overview(*, actor_user_id: UUID | str) -> dict[str, Any]:
             .order_by("-total")[:8]
         )
 
-    # 14-day daily sparklines for the four KPIs the operator most wants to
-    # eyeball trends on. Gap-filled so the front-end always renders 14 bars.
-    ingestion_sparkline = _daily_count_sparkline(
-        IngestionJob.objects.all(),
-        date_field="created_at",
-        days=14,
-    )
-    invoices_sparkline = _daily_count_sparkline(
-        Invoice.objects.all(),
-        date_field="created_at",
-        days=14,
-    )
-    audit_sparkline = _daily_count_sparkline(
-        AuditEvent.objects.all(),
-        date_field="timestamp",
-        days=14,
-    )
-    inbox_sparkline = _daily_count_sparkline(
-        ExceptionInboxItem.objects.all(),
-        date_field="created_at",
-        days=14,
-    )
+        # 14-day daily sparklines for the four KPIs the operator most wants to
+        # eyeball trends on. Gap-filled so the front-end always renders 14 bars.
+        # MUST stay inside the super_admin_context block — without it the
+        # RLS policy strips every row from the tenant-scoped tables and the
+        # sparkline comes back all-zeros.
+        ingestion_sparkline = _daily_count_sparkline(
+            IngestionJob.objects.all(),
+            date_field="created_at",
+            days=14,
+        )
+        invoices_sparkline = _daily_count_sparkline(
+            Invoice.objects.all(),
+            date_field="created_at",
+            days=14,
+        )
+        audit_sparkline = _daily_count_sparkline(
+            AuditEvent.objects.all(),
+            date_field="timestamp",
+            days=14,
+        )
+        inbox_sparkline = _daily_count_sparkline(
+            ExceptionInboxItem.objects.all(),
+            date_field="created_at",
+            days=14,
+        )
 
     overview = {
         "tenants": {

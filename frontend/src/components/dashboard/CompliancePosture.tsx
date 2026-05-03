@@ -14,8 +14,16 @@ export function CompliancePosture({
   needsReview: number;
   failed: number;
 }) {
-  const total = validated + needsReview + failed;
-  const score = total === 0 ? 0 : Math.round((validated / total) * 100);
+  // Success rate = validated of (validated + failed). This is the
+  // SAME definition the /dashboard/compliance page uses — Slice 102
+  // unified the two so they don't disagree (the prior denominator
+  // included needsReview, which made the donut read "0% validated"
+  // for a tenant whose only completed invoice was passing).
+  // ``needsReview`` still drives the segment colours below — the
+  // donut visualises the work mix, the centre number scores it.
+  const terminal = validated + failed;
+  const total = terminal + needsReview;
+  const score = terminal === 0 ? 0 : Math.round((validated / terminal) * 100);
 
   const data = [
     { name: "Validated", value: validated, fill: "#3FA568" },
@@ -55,9 +63,11 @@ export function CompliancePosture({
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <div className="text-center">
             <div className="font-display text-3xl font-bold tracking-tight text-ink">
-              {total === 0 ? "—" : `${score}%`}
+              {terminal === 0 ? "—" : `${score}%`}
             </div>
-            <div className="text-2xs uppercase tracking-wider text-slate-400">validated</div>
+            <div className="text-2xs uppercase tracking-wider text-slate-400">
+              {terminal === 0 ? "no completions yet" : "success rate"}
+            </div>
           </div>
         </div>
       </div>

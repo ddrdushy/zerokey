@@ -77,7 +77,7 @@ export default function AdminOverviewPage() {
             <KPIGrid overview={overview} />
             <section>
               <h2 className="text-2xs font-medium uppercase tracking-wider text-slate-400">
-                Engine activity (last 7 days)
+                Engine activity (last 24 hours)
               </h2>
               <EngineHealthTable rows={overview.engines.calls_last_7d} />
             </section>
@@ -223,7 +223,7 @@ function EngineHealthTable({ rows }: { rows: PlatformOverview["engines"]["calls_
   if (rows.length === 0) {
     return (
       <div className="mt-3 rounded-xl border border-slate-100 bg-white p-6 text-center text-2xs text-slate-400">
-        No engine calls in the last 7 days.
+        No engine calls in the last 24 hours.
       </div>
     );
   }

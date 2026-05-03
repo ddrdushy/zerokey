@@ -1371,7 +1371,13 @@ def global_search_view(request: Request) -> Response:
     from apps.enrichment.models import CustomerMaster
     from apps.submission.models import Invoice
 
-    invoices = list(
+    # Pull a slightly wider candidate set then dedupe by
+    # (invoice_number, supplier, buyer) so a customer who uploaded the
+    # same PDF many times sees ONE hit per logical invoice. The most
+    # recent row wins (we sort by -created_at). Slice 102 — fixes the
+    # UX-walk finding where searching "IV" returned 5 identical
+    # "IV-1605-003" rows.
+    raw_invoices = list(
         Invoice.objects.filter(
             organization_id=organization_id,
         )
@@ -1380,8 +1386,24 @@ def global_search_view(request: Request) -> Response:
             | Q(supplier_legal_name__icontains=q)
             | Q(buyer_legal_name__icontains=q)
         )
-        .order_by("-created_at")[:5]
+        .order_by("-created_at")[:25]
     )
+    seen: set[tuple[str, str, str]] = set()
+    invoices: list[Invoice] = []
+    for inv in raw_invoices:
+        key = (
+            (inv.invoice_number or "").strip().lower(),
+            (inv.supplier_legal_name or "").strip().lower(),
+            (inv.buyer_legal_name or "").strip().lower(),
+        )
+        # Empty-key invoices (no number, no parties) are kept distinct
+        # so blank-extraction rows don't all collapse into one mystery row.
+        if key != ("", "", "") and key in seen:
+            continue
+        seen.add(key)
+        invoices.append(inv)
+        if len(invoices) >= 5:
+            break
     customers = list(
         CustomerMaster.objects.filter(organization_id=organization_id)
         .filter(Q(legal_name__icontains=q) | Q(tin__icontains=q))
@@ -1394,7 +1416,7 @@ def global_search_view(request: Request) -> Response:
             | Q(affected_entity_id__icontains=q)
             | Q(actor_id__icontains=q)
         )
-        .order_by("-occurred_at")[:5]
+        .order_by("-timestamp")[:5]
     )
 
     return Response(
@@ -1426,7 +1448,7 @@ def global_search_view(request: Request) -> Response:
                     "id": str(e.id),
                     "sequence": int(e.sequence) if hasattr(e, "sequence") else 0,
                     "action_type": e.action_type,
-                    "occurred_at": e.occurred_at.isoformat() if e.occurred_at else None,
+                    "occurred_at": e.timestamp.isoformat() if e.timestamp else None,
                     "affected_entity_type": e.affected_entity_type,
                     "affected_entity_id": e.affected_entity_id,
                 }

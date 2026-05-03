@@ -7720,6 +7720,78 @@ hand-edit `SystemSetting` from `/django-admin/`):
 
 ---
 
+### Slice 102 — UX polish lap: hero copy, sparklines, engine window, donut metric, search dedupe
+
+End-to-end Playwright walk across every customer + admin surface
+turned up six rough edges; this slice fixes five (the sixth — minor
+display normalization for currency codes — is queued for the next
+extraction-prompt tweak).
+
+Findings + fixes:
+
+1. **`/identity/search/` → 500** when called from the topbar.
+   Root cause: I used `occurred_at` for ordering but `AuditEvent`
+   has `timestamp`. Also fixed in the response shape so
+   `e.timestamp.isoformat()` lands on the right field.
+2. **Dashboard hero copy lied to active users** — said "No invoices
+   submitted yet — drop your first one below" while the dashboard
+   stats showed 11 in-flight jobs and 142 audit events. Replaced
+   with a three-state ladder: validated > 0 → "N validated this
+   month"; needsReview > 0 → "N waiting for review · open the
+   inbox"; uploads > 0 → "N in flight · set up LHDN signing in
+   Settings"; else → the original empty-state copy.
+3. **Compliance posture donut on the dashboard disagreed with the
+   `/dashboard/compliance` page** — donut said "0% validated" while
+   the dedicated compliance page said "100% success rate" for the
+   same data. The donut counted needsReview in the denominator,
+   which read as "in-flight = failure". Renamed the centre label
+   to "success rate" + switched the denominator to terminal-only
+   (`validated + failed`), matching the compliance page. Added a
+   "no completions yet" copy for the zero-state instead of "0%".
+4. **Admin overview KPI sparklines were all zeros** for ingestion /
+   invoices / inbox while audit had data. Root cause: the
+   sparkline queries ran OUTSIDE the `super_admin_context` block,
+   so RLS stripped every row from the tenant-scoped tables. Moved
+   them inside the elevation block.
+5. **Engine activity table window was 7 days**, which let stale
+   credential failures (4500+ from a week-old config) dominate the
+   operator view, making working engines look 0% healthy.
+   Narrowed to 24h so a fix falls off the dashboard quickly. Header
+   copy + empty-state copy updated to match.
+6. **Topbar search popover** showed up to 5 duplicate rows for the
+   same logical invoice (the same PDF re-uploaded for testing).
+   Now dedupes by `(invoice_number, supplier, buyer)` server-side
+   while pulling a wider candidate set, keeping the most recent
+   per dedup key.
+
+Files: `backend/apps/identity/views.py`,
+`backend/apps/administration/services.py`,
+`frontend/src/app/admin/page.tsx`,
+`frontend/src/app/dashboard/page.tsx`,
+`frontend/src/components/dashboard/HeroCard.tsx`,
+`frontend/src/components/dashboard/CompliancePosture.tsx`.
+
+Verified end-to-end against `dushy@symprio.com`:
+
+```
+✅ search returns HTTP 200 + 1 IV-1605 hit (was 5 dups + 500)
+✅ admin sparklines: ingestion=5/14, invoices=5/14, inbox=5/14, audit=6/14 non-zero days
+✅ engine 24h window: ollama 4/4 success, pdfplumber 4/4 success
+✅ hero shows "8 invoices waiting for review. Open the inbox to clear them."
+✅ admin header: "Engine activity (last 24 hours)"
+✅ donut centre label: "success rate"
+```
+
+Deferred (low-impact polish):
+
+- **Currency code normalisation** ("RM" vs "MYR" mixed in invoice
+  list) — extraction prompt or display-layer normalisation. Wait
+  for the next prompt-tightening pass.
+- **Empty `invoice_number` rows in the invoices list** show as
+  blank cells; render an explicit "—" placeholder. Tiny, defer.
+
+---
+
 ### Slice 101 — Spec polish: topbar search, ZIP unpack, retention sweep, batch validation summary
 
 Closes four buildable PRD gaps identified by the post-Slice-100 audit:
