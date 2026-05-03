@@ -262,7 +262,7 @@ function InboxTable({
   onResolve: (item: InboxItem) => void;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+    <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>
@@ -285,7 +285,7 @@ function InboxTable({
                   href={`/dashboard/jobs/${item.ingestion_job_id}`}
                   className="font-medium text-ink hover:underline"
                 >
-                  {item.invoice_number || <span className="text-slate-400">no number</span>}
+                  {item.invoice_number || <span className="text-slate-400">—</span>}
                 </Link>
                 <div className="mt-0.5 text-slate-400">
                   {item.invoice_status.replace(/_/g, " ")}

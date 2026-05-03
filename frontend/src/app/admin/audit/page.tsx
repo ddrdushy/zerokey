@@ -245,7 +245,7 @@ function EventTable({
   onPickOrg: (orgId: string) => void;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+    <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>

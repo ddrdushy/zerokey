@@ -13,6 +13,7 @@ import { FileText, ScrollText, Search, Users } from "lucide-react";
 
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { formatMoney } from "@/lib/format";
 
 type Hit = { type: "invoice" | "customer" | "audit"; id: string; primary: string; secondary: string; href: string };
 
@@ -42,7 +43,7 @@ export function GlobalSearch() {
             primary:
               inv.invoice_number ||
               `${inv.supplier_legal_name || "—"} → ${inv.buyer_legal_name || "—"}`,
-            secondary: `${inv.status} · ${inv.currency_code} ${inv.grand_total || "0"}`,
+            secondary: `${inv.status} · ${formatMoney(inv.currency_code, inv.grand_total)}`,
             href: inv.ingestion_job_id
               ? `/dashboard/jobs/${inv.ingestion_job_id}`
               : `/dashboard/invoices`,

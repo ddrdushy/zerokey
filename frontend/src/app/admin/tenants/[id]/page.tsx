@@ -31,6 +31,7 @@ import { AdminShell } from "@/components/admin/AdminShell";
 import { Sparkline } from "@/components/admin/Sparkline";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { formatMoney } from "@/lib/format";
 
 const ROLE_OPTIONS = ["owner", "admin", "approver", "submitter", "viewer"];
 
@@ -908,7 +909,7 @@ function RecentInvoicesSection({
                     </code>
                   </td>
                   <td className="px-3 py-2 text-right text-slate-600">
-                    {inv.grand_total ? `${inv.currency_code} ${inv.grand_total}` : "—"}
+                    {formatMoney(inv.currency_code, inv.grand_total)}
                   </td>
                   <td className="px-3 py-2 text-slate-500">
                     {inv.created_at ? new Date(inv.created_at).toLocaleString() : "—"}

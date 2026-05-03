@@ -13,6 +13,7 @@ import { FileText, Search } from "lucide-react";
 import { api, ApiError, type InvoiceListSummary } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
+import { formatMoney } from "@/lib/format";
 
 const PAGE_SIZE = 50;
 
@@ -251,7 +252,7 @@ function FilterBar({
 
 function InvoiceTable({ invoices }: { invoices: InvoiceListSummary[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+    <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>
@@ -272,7 +273,7 @@ function InvoiceTable({ invoices }: { invoices: InvoiceListSummary[] }) {
                   href={`/dashboard/jobs/${invoice.ingestion_job_id}`}
                   className="font-medium text-ink hover:underline"
                 >
-                  {invoice.invoice_number || <span className="text-slate-400">no number</span>}
+                  {invoice.invoice_number || <span className="text-slate-400">—</span>}
                 </Link>
               </td>
               <td className="px-3 py-3">
@@ -287,7 +288,7 @@ function InvoiceTable({ invoices }: { invoices: InvoiceListSummary[] }) {
                 {invoice.issue_date ? new Date(invoice.issue_date).toLocaleDateString() : "—"}
               </td>
               <td className="px-3 py-3 text-right font-mono">
-                {invoice.grand_total ? `${invoice.currency_code} ${invoice.grand_total}` : "—"}
+                {formatMoney(invoice.currency_code, invoice.grand_total)}
               </td>
               <td className="px-3 py-3">
                 <StatusPill status={invoice.status} />

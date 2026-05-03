@@ -9183,6 +9183,67 @@ Still open (ordered roughly by Phase 5–6 priority):
 
 ---
 
+### Slice 103 — Mobile + currency polish
+
+Two quick wins from the BUILD_LOG deferred list, then a mobile
+responsive sweep that turned up the biggest gap of all: there
+was no mobile navigation. Customers / admins on phones could
+sign in but had no way to reach any page beyond the dashboard.
+
+**1. Currency display unified.**
+``frontend/src/lib/format.ts`` adds ``formatMoney(code, amount)``
+which renders ``"RM 1,234.56"`` for MYR (the symbol Malaysian
+users actually expect on an invoice), keeps the ISO code for
+non-MYR currencies, and replaces every prior call site that
+was doing inline ``${currency_code} ${grand_total}`` formatting
+(no thousand separators, no symbol substitution). Touched: the
+all-invoices list, customer detail recent_invoices, approvals
+queue, admin tenant detail, and the global-search popover
+secondary line.
+
+**2. Empty invoice_number placeholder.**
+The dashboard had two different placeholders — admin used
+``"—"``, customer pages used ``<span>no number</span>``.
+Consolidated to ``—`` everywhere (matches the same convention
+already used for missing buyer / issue date / etc.). Touched:
+invoices list, customer detail, inbox, approvals.
+
+**3. Mobile + tablet responsive sweep.**
+Playwright walked 14 pages across customer + admin shells at
+375 (mobile) and 768 (tablet) widths. 20 issues found — most
+falling into two buckets:
+
+- **No mobile navigation at all.** Both ``AppShell`` and
+  ``AdminShell`` rendered the sidebar with ``hidden md:flex``
+  but never wired a replacement. A user on mobile saw the
+  topbar and nothing else; tapping anywhere just bounced them
+  back to whatever page they landed on.
+  Fix: added a hamburger button (``md:hidden``) in each topbar
+  and a ``MobileDrawer`` / ``AdminMobileDrawer`` offcanvas
+  panel that renders the same nav items. Drawer auto-closes
+  on route change so tapping a link doesn't leave it hovering
+  over the new page. The original sidebar stays as-is for
+  desktop.
+
+- **Wide tables forced page-level horizontal scroll.** The
+  recurring pattern ``<div className="overflow-hidden rounded-xl
+  border ...">`` wrapping ``<table>`` clipped overflow but
+  pushed the page wider than the viewport. The whole shell
+  (topbar included) inherited the horizontal scrollbar.
+  Fix: bulk-changed the wrapper to ``overflow-x-auto`` across
+  the 18 files where the pattern wraps a ``<table>``. Tables
+  now scroll horizontally inside their card; the page chrome
+  stays put. Also added ``min-w-0`` to the flex column inside
+  the shell so flex children (search input etc.) can shrink
+  below their natural width on mobile.
+
+After the fixes, the sweep is clean across all 28 page/viewport
+combinations. Files: ``frontend/src/lib/format.ts``,
+``components/shell/AppShell.tsx``, ``components/admin/AdminShell.tsx``,
+plus the call-site updates in dashboard + admin pages.
+
+---
+
 ## How to run it
 
 ```bash

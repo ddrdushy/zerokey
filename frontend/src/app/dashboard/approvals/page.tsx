@@ -14,6 +14,7 @@ import { CheckCircle2, ShieldCheck, XCircle } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
+import { formatMoney } from "@/lib/format";
 
 type PendingApproval = {
   approval_id: string;
@@ -106,7 +107,7 @@ export default function ApprovalsPage() {
         ) : rows.length === 0 ? (
           <Empty />
         ) : (
-          <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+          <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
             <table className="w-full text-2xs">
               <thead className="bg-slate-50 text-slate-400">
                 <tr>
@@ -126,12 +127,12 @@ export default function ApprovalsPage() {
                         href={`/dashboard/invoices/${row.invoice_id}`}
                         className="font-medium text-ink hover:underline"
                       >
-                        {row.invoice_number || <span className="text-slate-400">no number</span>}
+                        {row.invoice_number || <span className="text-slate-400">—</span>}
                       </Link>
                     </td>
                     <td className="px-3 py-3 text-slate-600">{row.buyer_legal_name || "—"}</td>
                     <td className="px-3 py-3 text-right font-mono">
-                      {row.grand_total ? `${row.currency_code} ${row.grand_total}` : "—"}
+                      {formatMoney(row.currency_code, row.grand_total)}
                     </td>
                     <td className="px-3 py-3 text-slate-600">
                       {new Date(row.requested_at).toLocaleString()}

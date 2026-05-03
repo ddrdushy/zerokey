@@ -140,7 +140,7 @@ function SummarySection({ summary }: { summary: EngineSummary[] | null }) {
           {summary.length} engine{summary.length === 1 ? "" : "s"} active
         </span>
       </div>
-      <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+      <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
         <table className="w-full text-2xs">
           <thead className="bg-slate-50 text-slate-400">
             <tr>
@@ -222,7 +222,7 @@ function CallsSection({
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-base font-semibold">Recent calls</h2>
-      <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+      <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
         <table className="w-full text-2xs">
           <thead className="bg-slate-50 text-slate-400">
             <tr>

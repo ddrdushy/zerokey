@@ -304,7 +304,7 @@ function Conflicts({ diff }: { diff: SyncDiff }) {
       >
         Open conflict queue →
       </Link>
-      <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+      <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
         <table className="w-full text-2xs">
           <thead className="bg-slate-50 text-slate-400">
             <tr>
@@ -361,7 +361,7 @@ function Skipped({ diff }: { diff: SyncDiff }) {
 
 function RecordList({ entries }: { entries: SyncDiffEntry[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+    <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>
@@ -390,7 +390,7 @@ function RecordList({ entries }: { entries: SyncDiffEntry[] }) {
 
 function UpdateList({ entries }: { entries: SyncDiffEntry[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+    <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>

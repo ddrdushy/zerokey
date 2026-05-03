@@ -23,6 +23,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { FieldRow } from "@/components/review/FieldRow";
 import { ProvenancePill } from "@/components/review/ProvenancePill";
+import { formatMoney } from "@/lib/format";
 
 type EditableCustomerField =
   | "legal_name"
@@ -452,7 +453,7 @@ function InvoiceHistory({ invoices }: { invoices: CustomerInvoiceSummary[] | nul
           {invoices.length} invoice{invoices.length === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+      <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
         <table className="w-full text-2xs">
           <thead className="bg-slate-50 text-slate-400">
             <tr>
@@ -476,14 +477,14 @@ function InvoiceHistory({ invoices }: { invoices: CustomerInvoiceSummary[] | nul
                     href={`/dashboard/jobs/${invoice.ingestion_job_id}`}
                     className="font-medium text-ink hover:underline"
                   >
-                    {invoice.invoice_number || <span className="text-slate-400">no number</span>}
+                    {invoice.invoice_number || <span className="text-slate-400">—</span>}
                   </Link>
                 </td>
                 <td className="px-3 py-3 text-slate-600">
                   {invoice.issue_date ? new Date(invoice.issue_date).toLocaleDateString() : "—"}
                 </td>
                 <td className="px-3 py-3 text-right font-mono">
-                  {invoice.grand_total ? `${invoice.currency_code} ${invoice.grand_total}` : "—"}
+                  {formatMoney(invoice.currency_code, invoice.grand_total)}
                 </td>
                 <td className="px-3 py-3">
                   <StatusPill status={invoice.status} />

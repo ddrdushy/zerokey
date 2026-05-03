@@ -81,7 +81,7 @@ export default function AdminRoutingPage() {
                 <h2 className="text-2xs font-medium uppercase tracking-wider text-slate-400">
                   {capability}
                 </h2>
-                <div className="mt-2 overflow-hidden rounded-xl border border-slate-100 bg-white">
+                <div className="mt-2 overflow-x-auto rounded-xl border border-slate-100 bg-white">
                   <table className="w-full text-2xs">
                     <thead className="bg-slate-50 text-slate-400">
                       <tr>

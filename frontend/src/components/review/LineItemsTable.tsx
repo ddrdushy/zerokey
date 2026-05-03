@@ -83,7 +83,7 @@ export function LineItemsTable(props: ReadProps | EditProps) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="overflow-hidden rounded-xl border border-slate-100">
+      <div className="overflow-x-auto rounded-xl border border-slate-100">
         <table className="w-full text-2xs">
           <thead className="bg-slate-50 text-slate-400">
             <tr>

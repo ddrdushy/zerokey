@@ -228,7 +228,7 @@ function EngineHealthTable({ rows }: { rows: PlatformOverview["engines"]["calls_
     );
   }
   return (
-    <div className="mt-3 overflow-hidden rounded-xl border border-slate-100 bg-white">
+    <div className="mt-3 overflow-x-auto rounded-xl border border-slate-100 bg-white">
       <table className="w-full text-2xs">
         <thead className="bg-slate-50 text-slate-400">
           <tr>

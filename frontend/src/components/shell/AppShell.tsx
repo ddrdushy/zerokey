@@ -12,12 +12,14 @@ import {
   Inbox,
   LayoutDashboard,
   LogOut,
+  Menu,
   Package,
   Plug,
   Settings,
   ShieldCheck,
   Sparkles,
   Users,
+  X,
 } from "lucide-react";
 
 import { api, type Me } from "@/lib/api";
@@ -91,10 +93,12 @@ const SIDEBAR_KEY = "zerokey:sidebar-collapsed";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [me, setMe] = useState<Me | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -105,6 +109,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       .then(setMe)
       .catch(() => router.replace("/sign-in"));
   }, [router]);
+
+  // Close the drawer whenever the route changes — otherwise tapping a
+  // nav link leaves the drawer open over the new page.
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
 
   function toggleCollapsed() {
     setCollapsed((prev) => {
@@ -127,8 +137,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <SubscriptionStateBanner me={me} />
       <div className="flex min-h-0 flex-1">
         <Sidebar collapsed={collapsed} onToggle={toggleCollapsed} />
-        <div className="flex flex-1 flex-col">
-          <TopBar me={me} menuOpen={menuOpen} setMenuOpen={setMenuOpen} onLogout={onLogout} />
+        <MobileDrawer open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TopBar
+            me={me}
+            menuOpen={menuOpen}
+            setMenuOpen={setMenuOpen}
+            onLogout={onLogout}
+            onOpenMobileNav={() => setMobileNavOpen(true)}
+          />
           {me && <CertExpiryBanner />}
           <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
             {error && (
@@ -243,16 +260,95 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
   );
 }
 
+function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const pathname = usePathname();
+  const t = useT();
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true">
+      <button
+        type="button"
+        aria-label="Close navigation"
+        onClick={onClose}
+        className="absolute inset-0 bg-ink/40"
+      />
+      <aside className="relative flex h-full w-72 max-w-[85vw] flex-col bg-ink text-paper">
+        <div className="flex items-center justify-between px-6 py-5">
+          <Link href="/dashboard" className="font-display text-xl font-bold tracking-tight">
+            ZeroKey
+          </Link>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close navigation"
+            className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-slate-800/50 hover:text-paper"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <nav className="flex-1 overflow-y-auto px-3 py-2">
+          {NAV_GROUPS.map((group, idx) => (
+            <div key={idx} className="mb-6">
+              {group.labelKey && (
+                <div className="px-3 py-2 text-2xs font-semibold uppercase tracking-wider text-slate-400">
+                  {t(group.labelKey)}
+                </div>
+              )}
+              <ul className="space-y-0.5">
+                {group.items.map((item) => {
+                  const active = item.href === pathname;
+                  const Icon = item.icon;
+                  const label = t(item.labelKey);
+                  const className = cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-xs font-medium",
+                    active
+                      ? "bg-slate-800 text-paper"
+                      : "text-slate-400 hover:bg-slate-800/50 hover:text-paper",
+                    item.disabled && "cursor-not-allowed opacity-50",
+                  );
+                  if (item.disabled || !item.href) {
+                    return (
+                      <li key={item.labelKey}>
+                        <span className={className} aria-disabled="true">
+                          <Icon className="h-4 w-4" />
+                          {label}
+                          <span className="ml-auto text-2xs uppercase tracking-wider text-slate-500">
+                            soon
+                          </span>
+                        </span>
+                      </li>
+                    );
+                  }
+                  return (
+                    <li key={item.labelKey}>
+                      <Link href={item.href} className={className}>
+                        <Icon className="h-4 w-4" />
+                        {label}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </nav>
+      </aside>
+    </div>
+  );
+}
+
 function TopBar({
   me,
   menuOpen,
   setMenuOpen,
   onLogout,
+  onOpenMobileNav,
 }: {
   me: Me | null;
   menuOpen: boolean;
   setMenuOpen: (open: boolean) => void;
   onLogout: () => void;
+  onOpenMobileNav: () => void;
 }) {
   const initials =
     me?.email
@@ -266,7 +362,15 @@ function TopBar({
 
   return (
     <header className="sticky top-0 z-40 border-b border-slate-100 bg-paper/85 backdrop-blur">
-      <div className="flex h-14 items-center gap-4 px-4 md:px-8">
+      <div className="flex h-14 items-center gap-2 px-3 md:gap-4 md:px-8">
+        <button
+          type="button"
+          onClick={onOpenMobileNav}
+          aria-label="Open navigation"
+          className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-ink md:hidden"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
         <GlobalSearch />
         <NotificationBell />
         <div className="relative">
