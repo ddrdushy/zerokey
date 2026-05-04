@@ -148,6 +148,60 @@ def job_detail(request: Request, job_id: str) -> Response:
     )
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def list_extraction_engines_view(request: Request) -> Response:
+    """Slice 106 — list active extraction engines for the re-extract dropdown."""
+    from apps.extraction.services import list_extraction_engines
+
+    return Response({"engines": list_extraction_engines()})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def re_extract_job_view(request: Request, job_id: str) -> Response:
+    """Slice 106 — re-run extraction with a customer-chosen engine.
+
+    Body: ``{"engine": "<engine-slug>"}``. The slug must come from
+    /extraction-engines/. Replaces the prior extraction + structured
+    fields. The UI surfaces a confirm dialog before invoking because
+    user edits are overwritten.
+    """
+    from apps.extraction.services import ReExtractError, re_extract_job
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response({"detail": "No active organization."}, status=status.HTTP_400_BAD_REQUEST)
+    job = services.get_job(organization_id=organization_id, job_id=job_id)
+    if job is None:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    body = request.data if isinstance(request.data, dict) else {}
+    engine_slug = (body.get("engine") or "").strip()
+    if not engine_slug:
+        return Response(
+            {"detail": "engine is required."}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        re_extract_job(
+            job_id=job.id,
+            engine_slug=engine_slug,
+            actor_user_id=request.user.id,
+        )
+    except ReExtractError as exc:
+        return Response(
+            {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    job.refresh_from_db()
+    return Response(
+        IngestionJobSerializer(
+            job, context={"request": request, "include_download_url": True}
+        ).data
+    )
+
+
 # --- Slice 78: Public API ingestion --------------------------------------
 
 

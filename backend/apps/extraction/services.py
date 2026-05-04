@@ -809,6 +809,357 @@ def _fail(job: IngestionJob, *, error: str) -> None:
     )
 
 
+# --- Slice 106: re-extract with a chosen engine ---------------------------------
+
+
+class ReExtractError(Exception):
+    """Raised when a manually-triggered re-extraction can't proceed."""
+
+
+# Statuses where re-extraction is safe. We exclude in-flight states (the
+# pipeline is already running) and BUNDLE (parents never extract). We
+# also exclude SUBMITTING / SIGNING — re-extracting an invoice mid-LHDN
+# call would race the submission service. VALIDATED + REJECTED + ERROR
+# are all fine: VALIDATED has already shipped to LHDN (re-extracting
+# only changes our local copy, not what we filed), REJECTED is what the
+# user fixes, ERROR is the typical "the engine got it wrong" entry
+# point.
+_RE_EXTRACTABLE_STATUSES = frozenset(
+    {
+        IngestionJob.Status.READY_FOR_REVIEW,
+        IngestionJob.Status.AWAITING_APPROVAL,
+        IngestionJob.Status.VALIDATED,
+        IngestionJob.Status.REJECTED,
+        IngestionJob.Status.CANCELLED,
+        IngestionJob.Status.ERROR,
+    }
+)
+
+
+@dataclass
+class ReExtractResult:
+    job: IngestionJob
+    engine_name: str
+    confidence: float
+    text_length: int
+
+
+def re_extract_job(
+    *,
+    job_id: UUID | str,
+    engine_slug: str,
+    actor_user_id: UUID | str | None = None,
+) -> ReExtractResult:
+    """Re-run extraction on an existing job using a caller-chosen engine.
+
+    Reset path: replace the IngestionJob's extracted text + engine +
+    confidence, blank the Invoice's structured fields, then re-run
+    structuring synchronously so the response shape mirrors a fresh
+    upload. We deliberately do NOT preserve user edits — the user
+    explicitly asked for "try with a different engine" and expects to
+    see what the new engine produced.
+
+    Audit: emits ``ingestion.job.re_extracted`` with the from / to
+    engine slugs and the actor so a customer can see who triggered
+    the re-run + which engine they picked.
+    """
+    from django.db import transaction as _txn
+
+    from apps.extraction.capabilities import VisionExtractEngine
+    from apps.submission.models import Invoice
+    from apps.submission.services import (
+        apply_structured_fields,
+        create_invoice_from_extraction,
+        finalize_invoice_without_structuring,
+        structure_invoice,
+    )
+
+    # Tenancy: caller has already set the active tenant (the view
+    # runs with the user's session context). Look up directly.
+    try:
+        job = IngestionJob.objects.get(id=job_id)
+    except IngestionJob.DoesNotExist as exc:
+        raise ReExtractError("Job not found.") from exc
+
+    if job.status not in _RE_EXTRACTABLE_STATUSES:
+        raise ReExtractError(
+            f"Job is in state {job.status!r}; re-extraction is only "
+            "available once the previous run is complete."
+        )
+
+    # Engine validation: must exist, be active, and support either
+    # text or vision extraction. We accept both because
+    # ClaudeVisionAdapter etc. produce structured fields directly,
+    # bypassing the text → structure split.
+    try:
+        engine = Engine.objects.get(name=engine_slug)
+    except Engine.DoesNotExist as exc:
+        raise ReExtractError(f"Unknown engine {engine_slug!r}.") from exc
+    if engine.status != Engine.Status.ACTIVE:
+        raise ReExtractError(f"Engine {engine_slug!r} is not active.")
+    if engine.capability not in {
+        Engine.Capability.TEXT_EXTRACT,
+        Engine.Capability.VISION_EXTRACT,
+    }:
+        raise ReExtractError(
+            f"Engine {engine_slug!r} (capability={engine.capability}) "
+            "doesn't support extraction."
+        )
+
+    try:
+        adapter = get_adapter(engine_slug)
+    except KeyError as exc:
+        raise ReExtractError(f"Engine {engine_slug!r} has no registered adapter.") from exc
+
+    body = _read_object(job)
+    previous_engine = job.extraction_engine
+
+    started_at = timezone.now()
+    started_perf = time.perf_counter()
+
+    if isinstance(adapter, VisionExtractEngine):
+        from apps.submission.services import INVOICE_HEADER_FIELDS, LINE_ITEMS_KEY  # noqa: PLC0415
+
+        target_schema = [*INVOICE_HEADER_FIELDS, LINE_ITEMS_KEY]
+        try:
+            vision_result = adapter.extract_vision(
+                body=body, mime_type=job.file_mime_type, target_schema=target_schema
+            )
+        except EngineUnavailable as exc:
+            _record_call(
+                engine=engine,
+                job=job,
+                started_at=started_at,
+                duration_ms=int((time.perf_counter() - started_perf) * 1000),
+                outcome=EngineCall.Outcome.UNAVAILABLE,
+                error_class=type(exc).__name__,
+                cost_micros=0,
+                confidence=None,
+                diagnostics={"detail": str(exc), "trigger": "re_extract"},
+            )
+            raise ReExtractError(f"{engine_slug} is unavailable: {exc}") from exc
+        except Exception as exc:
+            _record_call(
+                engine=engine,
+                job=job,
+                started_at=started_at,
+                duration_ms=int((time.perf_counter() - started_perf) * 1000),
+                outcome=EngineCall.Outcome.FAILURE,
+                error_class=type(exc).__name__,
+                cost_micros=0,
+                confidence=None,
+                diagnostics={"detail": str(exc)[:500], "trigger": "re_extract"},
+            )
+            raise ReExtractError(f"{type(exc).__name__}: {exc}") from exc
+
+        _record_call(
+            engine=engine,
+            job=job,
+            started_at=started_at,
+            duration_ms=int((time.perf_counter() - started_perf) * 1000),
+            outcome=EngineCall.Outcome.SUCCESS,
+            error_class="",
+            cost_micros=vision_result.cost_micros,
+            confidence=vision_result.overall_confidence,
+            diagnostics={"trigger": "re_extract"},
+        )
+        # Vision adapters produce structured fields directly without
+        # text. Leave raw_text empty — the user sees the populated
+        # fields panel; the "raw extracted text" section just won't
+        # render. We could later round-trip through OCR for the text
+        # if a user demands it.
+        text = ""
+        confidence = vision_result.overall_confidence
+        is_vision = True
+    elif isinstance(adapter, TextExtractEngine):
+        try:
+            text_result = adapter.extract_text(body=body, mime_type=job.file_mime_type)
+        except EngineUnavailable as exc:
+            _record_call(
+                engine=engine,
+                job=job,
+                started_at=started_at,
+                duration_ms=int((time.perf_counter() - started_perf) * 1000),
+                outcome=EngineCall.Outcome.UNAVAILABLE,
+                error_class=type(exc).__name__,
+                cost_micros=0,
+                confidence=None,
+                diagnostics={"detail": str(exc), "trigger": "re_extract"},
+            )
+            raise ReExtractError(f"{engine_slug} is unavailable: {exc}") from exc
+        except Exception as exc:
+            _record_call(
+                engine=engine,
+                job=job,
+                started_at=started_at,
+                duration_ms=int((time.perf_counter() - started_perf) * 1000),
+                outcome=EngineCall.Outcome.FAILURE,
+                error_class=type(exc).__name__,
+                cost_micros=0,
+                confidence=None,
+                diagnostics={"detail": str(exc)[:500], "trigger": "re_extract"},
+            )
+            raise ReExtractError(f"{type(exc).__name__}: {exc}") from exc
+
+        _record_call(
+            engine=engine,
+            job=job,
+            started_at=started_at,
+            duration_ms=int((time.perf_counter() - started_perf) * 1000),
+            outcome=EngineCall.Outcome.SUCCESS,
+            error_class="",
+            cost_micros=text_result.cost_micros,
+            confidence=text_result.confidence,
+            diagnostics={"trigger": "re_extract"},
+        )
+        text = text_result.text or ""
+        confidence = text_result.confidence
+        is_vision = False
+    else:
+        raise ReExtractError(
+            f"Engine {engine_slug!r} adapter type isn't text or vision."
+        )
+
+    # Persist the new extraction + reset the invoice in one transaction
+    # so a partial failure can't leave the job claiming the new engine
+    # while the invoice still shows the old structured fields.
+    with _txn.atomic():
+        job.extracted_text = text
+        job.extraction_engine = engine_slug
+        job.extraction_confidence = confidence
+        job.status = IngestionJob.Status.READY_FOR_REVIEW
+        job.completed_at = timezone.now()
+        job.error_message = ""
+        job.save(
+            update_fields=[
+                "extracted_text",
+                "extraction_engine",
+                "extraction_confidence",
+                "status",
+                "completed_at",
+                "error_message",
+                "updated_at",
+            ]
+        )
+
+        # Replace the invoice. Cascade drops line items + corrections;
+        # the new structuring run produces fresh ones from the new text.
+        # NOTE: this overwrites any manual edits the user made — the
+        # UI surfaces a confirm dialog before triggering re-extract so
+        # the user knows.
+        Invoice.objects.filter(ingestion_job_id=job.id).delete()
+        invoice = create_invoice_from_extraction(
+            organization_id=job.organization_id,
+            ingestion_job_id=job.id,
+            extracted_text=text,
+        )
+
+    record_event(
+        action_type="ingestion.job.re_extracted",
+        actor_type=AuditEvent.ActorType.USER if actor_user_id else AuditEvent.ActorType.SERVICE,
+        actor_id=str(actor_user_id) if actor_user_id else "extraction.re_extract",
+        organization_id=str(job.organization_id),
+        affected_entity_type="IngestionJob",
+        affected_entity_id=str(job.id),
+        payload={
+            "from_engine": previous_engine or "",
+            "to_engine": engine_slug,
+            "confidence": str(confidence),
+            "text_length": len(text),
+        },
+    )
+
+    if is_vision:
+        # Vision adapters return structured fields alongside text;
+        # write them straight to the invoice.
+        apply_structured_fields(
+            invoice=invoice,
+            engine_name=engine_slug,
+            fields=vision_result.fields,
+            per_field_confidence=vision_result.per_field_confidence,
+            overall_confidence=vision_result.overall_confidence,
+        )
+    elif text.strip():
+        # Run structuring synchronously so the API response carries the
+        # final review-ready state. The customer hit a button and is
+        # waiting on the result; async would need extra polling rounds.
+        try:
+            structure_invoice(invoice.id)
+        except Exception as exc:
+            logger.warning(
+                "re_extract: structuring failed for invoice %s: %s",
+                invoice.id,
+                exc,
+            )
+            finalize_invoice_without_structuring(
+                invoice=invoice,
+                reason=f"structuring failed after re-extract: {exc}",
+            )
+    else:
+        finalize_invoice_without_structuring(
+            invoice=invoice,
+            reason="re-extract produced empty text",
+        )
+
+    job.refresh_from_db()
+    return ReExtractResult(
+        job=job,
+        engine_name=engine_slug,
+        confidence=confidence,
+        text_length=len(text),
+    )
+
+
+def list_extraction_engines() -> list[dict]:
+    """Return active text + vision extraction engines for the re-extract UI.
+
+    Filters to engines that have a registered adapter (i.e., the slug
+    is wired in code, not only in the DB). The frontend uses this to
+    populate the "Re-extract with…" dropdown.
+    """
+    from apps.extraction.registry import _ADAPTER_FACTORIES  # noqa: PLC0415
+
+    engines = Engine.objects.filter(
+        status=Engine.Status.ACTIVE,
+        capability__in=[
+            Engine.Capability.TEXT_EXTRACT,
+            Engine.Capability.VISION_EXTRACT,
+        ],
+    ).order_by("name")
+    out: list[dict] = []
+    for engine in engines:
+        if engine.name not in _ADAPTER_FACTORIES:
+            continue
+        out.append(
+            {
+                "slug": engine.name,
+                # Engine model has no display label — derive a
+                # readable one from the slug for the UI.
+                "label": _humanise_engine_name(engine.name),
+                "capability": engine.capability,
+                "vendor": engine.vendor,
+            }
+        )
+    return out
+
+
+def _humanise_engine_name(slug: str) -> str:
+    """Turn ``anthropic-claude-sonnet-vision`` into ``Claude Sonnet (vision)``.
+
+    Best-effort cosmetic mapping; falls through to the slug for
+    unknown engines.
+    """
+    overrides = {
+        "pdfplumber": "pdfplumber (native PDF)",
+        "anthropic-claude-sonnet-vision": "Claude Sonnet (vision)",
+        "anthropic-claude-sonnet-structure": "Claude Sonnet (structure)",
+        "ollama-structure": "Ollama (local structure)",
+        "easyocr": "EasyOCR",
+        "rapidocr": "RapidOCR",
+    }
+    return overrides.get(slug, slug)
+
+
 # --- I/O helpers ---------------------------------------------------------------------
 
 

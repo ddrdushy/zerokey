@@ -33,6 +33,7 @@ import {
 } from "@/components/review/LineItemsTable";
 import { ValidationBanner } from "@/components/review/ValidationBanner";
 import { LhdnPanel } from "@/components/review/LhdnPanel";
+import { ReExtractMenu } from "@/components/review/ReExtractMenu";
 
 const TERMINAL = new Set(["validated", "rejected", "cancelled", "error", "ready_for_review"]);
 
@@ -87,6 +88,8 @@ export default function JobDetailPage() {
     summary: import("@/lib/api").ValidationSummary;
   } | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  // Slice 106 — bump on re-extract to force the load() effect to re-run.
+  const [reloadCount, setReloadCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,7 +140,7 @@ export default function JobDetailPage() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [params.id, router]);
+  }, [params.id, router, reloadCount]);
 
   // Slice 91 — live validation preview. Whenever any draft (header,
   // per-line cell, pending-add, or remove) changes, debounce 400ms
@@ -309,7 +312,23 @@ export default function JobDetailPage() {
   return (
     <AppShell>
       <div className="flex flex-col gap-6">
-        <Header job={job} onBack={() => router.push("/dashboard")} />
+        <Header
+          job={job}
+          onBack={() => router.push("/dashboard")}
+          onReExtracted={(next) => {
+            // Replace the job, drop drafts (the invoice is being
+            // recreated), and bump the reload counter so the load
+            // effect refetches the invoice.
+            setJob(next);
+            setInvoice(null);
+            setDraft({});
+            setLineDrafts({});
+            setPendingAdds([]);
+            setRemovedNumbers([]);
+            setPreview(null);
+            setReloadCount((c) => c + 1);
+          }}
+        />
 
         <div className="grid gap-6 lg:grid-cols-[1fr_1fr] lg:items-start">
           {/* Document pane: 70vh on small screens (so the user can
@@ -390,14 +409,22 @@ export default function JobDetailPage() {
   );
 }
 
-function Header({ job, onBack }: { job: IngestionJob; onBack: () => void }) {
+function Header({
+  job,
+  onBack,
+  onReExtracted,
+}: {
+  job: IngestionJob;
+  onBack: () => void;
+  onReExtracted: (next: IngestionJob) => void;
+}) {
   return (
-    <div className="flex items-center justify-between">
-      <div>
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
         <Button variant="ghost" size="sm" onClick={onBack}>
           ← Dashboard
         </Button>
-        <h1 className="mt-1 font-display text-2xl font-bold tracking-tight">
+        <h1 className="mt-1 truncate font-display text-2xl font-bold tracking-tight">
           {job.original_filename}
         </h1>
         <div className="mt-1 text-2xs uppercase tracking-wider text-slate-400">
@@ -407,7 +434,10 @@ function Header({ job, onBack }: { job: IngestionJob; onBack: () => void }) {
             ` · ${(job.extraction_confidence * 100).toFixed(0)}% confidence`}
         </div>
       </div>
-      <StatusPill status={job.status} />
+      <div className="flex flex-shrink-0 items-center gap-2">
+        <ReExtractMenu job={job} onComplete={onReExtracted} />
+        <StatusPill status={job.status} />
+      </div>
     </div>
   );
 }

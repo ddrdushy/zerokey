@@ -233,14 +233,19 @@ on the audit redaction pipeline being in place.
 
 ## Recommended next
 
-With Slices 104 + 105 shipped, the highest-leverage next step is
-**Slice 106 (audit signatures)** — without Ed25519 signing the
-"publicly verifiable audit chain" claim in ``AUDIT_LOG_SPEC.md`` is
-not actually true. Independent of 104 and 105.
+Slice 106 was used by user request for **re-extract with chosen
+engine** (a feature gap not in the original audit; shipped in this
+session). Audit signatures (originally Slice 106 in the plan) is now
+deferred to a later slot — call it **Slice 107' (audit signatures)**
+when picked up.
 
-After 106, **Slice 107 (identity QoL: password reset, customer
-master merge, sessions UI)** is a natural follow-on to 104's
-middleware.
+For continued progress, the highest-leverage remaining items are:
+
+- **Audit signatures** — without Ed25519 signing the "publicly
+  verifiable audit chain" claim in ``AUDIT_LOG_SPEC.md`` is not
+  actually true. Independent of 104/105/106.
+- **Identity QoL** (password reset, customer master merge, sessions
+  UI) — natural follow-on to 104's middleware.
 
 ---
 

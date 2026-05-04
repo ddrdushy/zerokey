@@ -9475,6 +9475,152 @@ to LHDN within the 24-hour window.
 
 ---
 
+### Slice 106 — Re-extract with a chosen engine
+
+User-driven extraction retry. The first-pick engine isn't
+always the best fit (a low-confidence native PDF may want
+Claude vision; a scanned PDF where pdfplumber returned
+empty text wants RapidOCR). Now the user can pick a
+different engine from the review surface and re-run end-
+to-end without re-uploading.
+
+**Backend.**
+``apps/extraction/services.py:re_extract_job`` and a
+``list_extraction_engines`` helper. The service:
+
+  1. Validates the job is in a re-extractable status —
+     anything terminal-ish (``ready_for_review``,
+     ``awaiting_approval``, ``validated``, ``rejected``,
+     ``cancelled``, ``error``). In-flight states are
+     refused so a second extraction can't race the first.
+     ``signing`` / ``submitting`` are also refused — the
+     LHDN call could be mid-flight.
+  2. Validates the engine slug exists, is active, and has
+     a registered adapter for ``TEXT_EXTRACT`` or
+     ``VISION_EXTRACT`` capability.
+  3. Re-fetches the original blob from S3 and runs the
+     chosen adapter. Records an ``EngineCall`` row with
+     ``diagnostics.trigger="re_extract"`` so the engine
+     activity dashboard can tell manual reruns apart from
+     pipeline calls.
+  4. In a single transaction: replaces the
+     ``IngestionJob.extracted_text``,
+     ``extraction_engine``, ``extraction_confidence``;
+     deletes the existing ``Invoice`` (cascade drops
+     line items + corrections); creates a fresh Invoice
+     from the new text.
+  5. For text adapters: runs ``structure_invoice``
+     synchronously so the API response carries the final
+     review-ready state — the customer hit a button and
+     is waiting on the result; an async path would force
+     extra polling rounds. For vision adapters
+     (``ClaudeVisionAdapter`` etc.): writes the structured
+     fields straight to the Invoice via
+     ``apply_structured_fields`` (vision adapters return
+     fields directly without an intermediate text step).
+  6. Records ``ingestion.job.re_extracted`` audit event
+     with ``from_engine``, ``to_engine``, actor user id,
+     confidence, and text length.
+
+**Why we don't preserve user edits.**
+The Invoice (and its line items + corrections) are
+deleted and recreated. A user who chose "re-extract with X"
+is explicitly saying "throw away what we have and try
+again" — preserving manual edits would mean a confusing
+half-merged state where some fields are from the old
+engine, some from the new, and some from manual edits.
+The UI surfaces a confirm dialog with the explicit
+"replaces … any manual edits" copy so it isn't a surprise.
+
+**Endpoints.**
+
+  * ``GET /api/v1/ingestion/extraction-engines/`` returns
+    ``[{slug, label, capability, vendor}]`` for active
+    engines with a registered adapter. Drives the UI
+    dropdown.
+  * ``POST /api/v1/ingestion/jobs/{id}/re-extract/`` with
+    body ``{"engine": "<slug>"}``. Returns the updated
+    job. ``ReExtractError`` (bad slug, wrong status,
+    adapter unavailable) maps to 400 with a clear
+    message — no envelope wrap because this is the
+    legacy ``{"detail": "..."}`` shape used elsewhere
+    in the customer auth surface (the platform
+    hardening from Slice 104 ships envelopes for
+    DRF-raised exceptions; this is a controlled return).
+
+**Frontend.**
+
+  * ``frontend/src/components/review/ReExtractMenu.tsx``
+    renders a "Re-extract" button + dropdown next to the
+    status pill on the job detail page. The dropdown
+    fetches engines on first open, marks the current
+    engine "current" (disabled), and lists the rest with
+    capability + vendor metadata. Selecting one opens a
+    confirm dialog ("This replaces … including any
+    manual edits"); confirming POSTs to the re-extract
+    endpoint and the parent page refetches.
+  * ``frontend/src/app/dashboard/jobs/[id]/page.tsx``
+    gains a ``reloadCount`` state that the menu bumps
+    on completion to re-trigger the ``load`` effect.
+    Drafts and preview state are cleared because the
+    invoice is being recreated.
+  * Types + API client methods land in
+    ``frontend/src/lib/api.ts``:
+    ``ExtractionEngineOption``,
+    ``api.listExtractionEngines``, ``api.reExtractJob``.
+
+**Smoke evidence**
+
+```
+$ curl /api/v1/ingestion/extraction-engines/
+{"engines":[
+  {"slug":"anthropic-claude-sonnet-vision","label":"Claude Sonnet (vision)","capability":"vision_extract","vendor":"anthropic"},
+  {"slug":"easyocr","label":"EasyOCR","capability":"text_extract","vendor":"easyocr"},
+  {"slug":"pdfplumber","label":"pdfplumber (native PDF)","capability":"text_extract","vendor":"pdfplumber"},
+  {"slug":"rapidocr","label":"RapidOCR","capability":"text_extract","vendor":"rapidocr"}
+]}
+
+$ curl -X POST /api/v1/ingestion/jobs/<id>/re-extract/ -d '{"engine":"pdfplumber"}'
+HTTP/1.1 200 OK    # full job returned, completed_at fresh, audit event recorded
+
+$ curl -X POST /api/v1/ingestion/jobs/<id>/re-extract/ -d '{"engine":"nonexistent"}'
+HTTP/1.1 400      {"detail": "Unknown engine 'nonexistent'."}
+
+$ curl -X POST /api/v1/ingestion/jobs/<id>/re-extract/ -d '{"engine":"anthropic-claude-sonnet-vision"}'
+HTTP/1.1 400      {"detail": "anthropic-claude-sonnet-vision is unavailable: api_key not configured ..."}
+```
+
+Audit chain:
+``ingestion.job.re_extracted | actor=2839c783 | payload={'from_engine': 'pdfplumber', 'to_engine': 'pdfplumber', 'confidence': '0.95', 'text_length': 2220}``
+
+UI verified via Playwright: button visible, dropdown opens
+with all 4 engines, current one marked "current" + disabled,
+confirm dialog shows engine label + warning copy, cancel
+restores prior state.
+
+**Files**
+- new: ``frontend/src/components/review/ReExtractMenu.tsx``
+- modified: ``backend/apps/extraction/services.py``,
+  ``backend/apps/ingestion/views.py``,
+  ``backend/apps/ingestion/urls.py``,
+  ``frontend/src/app/dashboard/jobs/[id]/page.tsx``,
+  ``frontend/src/lib/api.ts``
+
+**Limitations / future work**
+
+  * Vision re-extract leaves the Invoice's
+    ``raw_extracted_text`` empty (vision adapters skip
+    text). The "Raw extracted text" expandable section
+    just won't render — the structured fields panel still
+    populates. We could later do an optional OCR pass
+    alongside vision for users who want both.
+  * No "compare two engines side-by-side" mode. If a user
+    wants to evaluate, they re-extract once, screenshot,
+    re-extract again. Side-by-side compare belongs in a
+    future evals slice if customer demand surfaces.
+
+---
+
 ## How to run it
 
 ```bash

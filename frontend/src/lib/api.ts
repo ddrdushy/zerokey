@@ -801,6 +801,14 @@ export type InvoiceListResponse = {
   total: number;
 };
 
+// Slice 106 — re-extract dropdown option.
+export type ExtractionEngineOption = {
+  slug: string;
+  label: string;
+  capability: "text_extract" | "vision_extract" | string;
+  vendor: string;
+};
+
 export type IngestionJob = {
   id: string;
   source_channel: string;
@@ -1140,6 +1148,16 @@ export const api = {
     }),
   listJobs: () => request<{ results: IngestionJob[] }>("/ingestion/jobs/").then((r) => r.results),
   getJob: (id: string) => request<IngestionJob>(`/ingestion/jobs/${id}/`),
+  // Slice 106 — re-extract with a chosen engine.
+  listExtractionEngines: () =>
+    request<{ engines: ExtractionEngineOption[] }>(`/ingestion/extraction-engines/`).then(
+      (r) => r.engines,
+    ),
+  reExtractJob: (jobId: string, engineSlug: string) =>
+    request<IngestionJob>(`/ingestion/jobs/${jobId}/re-extract/`, {
+      method: "POST",
+      body: JSON.stringify({ engine: engineSlug }),
+    }),
   getInvoiceForJob: (jobId: string) => request<Invoice>(`/invoices/by-job/${jobId}/`),
   listInbox: (params?: { reason?: string; limit?: number }) => {
     const search = new URLSearchParams();

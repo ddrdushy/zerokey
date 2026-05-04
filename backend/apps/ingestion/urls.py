@@ -11,6 +11,17 @@ urlpatterns = [
     path("jobs/api-upload/", views.api_upload, name="api-upload"),
     path("throughput/", views.throughput, name="throughput"),
     path("jobs/<uuid:job_id>/", views.job_detail, name="job-detail"),
+    # Slice 106 — re-run extraction on an existing job using a chosen engine.
+    path(
+        "jobs/<uuid:job_id>/re-extract/",
+        views.re_extract_job_view,
+        name="re-extract-job",
+    ),
+    path(
+        "extraction-engines/",
+        views.list_extraction_engines_view,
+        name="extraction-engines",
+    ),
     # Slice 64 — email-forward inbound + per-org inbox address.
     path("inbox/address/", views.inbox_address_view, name="inbox-address"),
     # Slice 80 — rotate the per-tenant inbox token (owner / admin only).
