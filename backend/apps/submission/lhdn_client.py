@@ -535,6 +535,82 @@ def validate_tin(*, creds: LHDNCredentials, tin: str) -> bool:
     raise LHDNError(f"Unexpected LHDN TIN-validate response: HTTP {response.status_code}")
 
 
+def search_tin_by_other_id(
+    *,
+    creds: LHDNCredentials,
+    id_type: str,
+    id_value: str,
+    taxpayer_name: str = "",
+) -> str | None:
+    """Look up a TIN given a secondary ID (Slice 116).
+
+    LHDN spec endpoint: ``GET /api/v1.0/taxpayer/search/tin?idType=…&idValue=…``
+    with an optional ``taxpayerName`` cross-check parameter. The
+    server returns 200 + the matched TIN string in the body, or 404
+    when no record matches. The name parameter is a *match assertion*
+    not a search key — LHDN won't broaden the search if the name
+    doesn't match; instead it returns 404. We pass it when we have
+    it so a hostile caller can't enumerate TINs from a known BRN.
+
+    Returns the TIN on a hit, ``None`` on 404. Raises
+    ``LHDNError`` for connectivity / auth failures so the caller can
+    treat the lookup as "we don't know" rather than asserting "no
+    record exists" — same conservatism as ``validate_tin``.
+
+    Rate-limit-aware: 429 raises ``LHDNRateLimitError`` carrying
+    ``retry_after_seconds`` so the wrapping Celery task can re-queue.
+    """
+    id_type = (id_type or "").strip().upper()
+    id_value = (id_value or "").strip()
+    if id_type not in {"BRN", "NRIC", "PASSPORT", "ARMY"} or not id_value:
+        return None
+    base = urljoin(creds.base_url + "/", "api/v1.0/taxpayer/search/tin")
+    params: dict[str, str] = {"idType": id_type, "idValue": id_value}
+    if taxpayer_name:
+        params["taxpayerName"] = taxpayer_name.strip()
+    token = get_access_token(creds)
+    try:
+        response = httpx.get(
+            base,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            params=params,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError as exc:
+        raise LHDNError(f"LHDN TIN search failed: {type(exc).__name__}") from exc
+
+    if response.status_code == 401:
+        raise LHDNAuthError("LHDN rejected the bearer token.")
+    if response.status_code == 404:
+        return None
+    if response.status_code == 429:
+        raise LHDNRateLimitError(
+            "LHDN rate limit exceeded.",
+            retry_after_seconds=_parse_retry_after(response),
+        )
+    if response.status_code >= 500:
+        raise LHDNError(f"LHDN server error: HTTP {response.status_code}")
+    if response.status_code != 200:
+        raise LHDNError(f"Unexpected LHDN TIN-search response: HTTP {response.status_code}")
+    # The endpoint returns the TIN as either a JSON string or a plain
+    # text body depending on the deployment. Handle both defensively.
+    text = (response.text or "").strip()
+    try:
+        parsed = response.json()
+    except ValueError:
+        parsed = text
+    if isinstance(parsed, dict):
+        # Some MyInvois deployments wrap as {"tin": "...", "name": "..."}.
+        return (parsed.get("tin") or "").strip() or None
+    if isinstance(parsed, str):
+        cleaned = parsed.strip().strip('"')
+        return cleaned or None
+    return None
+
+
 def _authed_get(*, creds: LHDNCredentials, url: str, what: str) -> dict[str, Any]:
     """Common GET path: bearer auth + status-code routing.
 

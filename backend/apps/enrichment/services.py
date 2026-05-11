@@ -131,13 +131,25 @@ def enrich_invoice(invoice_id: UUID | str) -> EnrichmentResult:
         # the master is due. The check itself runs out-of-band so the
         # enrichment path doesn't block on the LHDN round-trip.
         if customer.master is not None:
-            from . import tin_verification
+            from . import tin_lookup, tin_verification
 
             if tin_verification.needs_verification(customer.master):
                 from .tasks import verify_master_tin
 
                 master_id = str(customer.master.id)
                 transaction.on_commit(lambda mid=master_id: verify_master_tin.delay(mid))
+            # Slice 116 — if the master has a BRN but no TIN, ask
+            # LHDN's search endpoint for the TIN. Runs async for the
+            # same reason as verify_master_tin: don't block the
+            # enrichment path on the round-trip. Result is cached on
+            # the master row so subsequent invoices for this buyer
+            # auto-resolve via _autofill_buyer without re-pinging
+            # LHDN.
+            if tin_lookup.needs_lookup(customer.master):
+                from .tasks import lookup_master_tin
+
+                master_id = str(customer.master.id)
+                transaction.on_commit(lambda mid=master_id: lookup_master_tin.delay(mid))
 
     return EnrichmentResult(
         customer_matched=customer.matched,

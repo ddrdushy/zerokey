@@ -10693,6 +10693,127 @@ tenant.tin). Submit button enabled.
 
 ---
 
+### Slice 116 — Look up TIN from LHDN given BRN + name
+
+User asked: "can't we search the BRN and TIN when we have
+company name and get from LHDN?" Short answer — partially. LHDN
+publishes ``GET /api/v1.0/taxpayer/search/tin`` which accepts a
+secondary identifier (BRN / NRIC / passport / army-id) plus an
+optional ``taxpayerName`` cross-check and returns the TIN.
+There's no public name-only search (privacy + anti-scraping).
+But on most LHDN-format invoices the BRN is visible in the
+"ID Type/Number" column even when the TIN field comes back
+empty / low-confidence from the structurer. With BRN + name in
+hand we can ask LHDN directly.
+
+**Client method.**
+``apps/submission/lhdn_client.search_tin_by_other_id`` —
+mirror of ``validate_tin`` but in the opposite direction.
+Takes ``id_type`` / ``id_value`` / optional ``taxpayer_name``,
+returns the TIN as a string on 200 or ``None`` on 404. Same
+typed-error model as the existing client (LHDNAuthError /
+LHDNRateLimitError / LHDNError) so the caller can degrade
+gracefully on transient failures.
+
+Defensive parsing: LHDN deployments return the TIN as either
+a plain JSON string or a wrapped object ``{"tin": "…",
+"name": "…"}``. The client handles both.
+
+**Service.**
+``apps/enrichment/tin_lookup.py`` ships
+``needs_lookup(master)`` + ``lookup_tin_from_brn(master_id)``.
+A master is eligible for lookup when:
+
+  - It has ``registration_number`` (BRN) AND ``legal_name``
+  - It does NOT already have a ``tin``
+  - It was never looked up before, OR last attempt was more
+    than ``LOOKUP_REFRESH_DAYS = 90`` ago
+
+The check parallels ``tin_verification.needs_verification``
+but on the *inverse* condition. The two paths handle the two
+directions of the same question: "I have a TIN, is it real?"
+(verify) vs "I have a BRN, what's the TIN?" (lookup).
+
+On a hit: ``master.tin`` = found value, state =
+``VERIFIED`` (LHDN just answered for the matching identity
+— that's strong verification), ``tin_last_verified_at`` =
+now. On a miss: state = ``FAILED``, ``tin_last_verified_at``
+= now so the cache cooldown applies. Transient errors leave
+the row untouched.
+
+**Cache via the master row.**
+Once ``master.tin`` is filled, the existing
+``_autofill_buyer`` path copies it onto every new invoice
+for the same buyer with zero LHDN round-trips. The
+master row IS the cache; we add no new tables. Rate-limited
+LHDN production endpoints (~60/min) stay safe even at high
+invoice volume.
+
+**Wiring.**
+``enrich_invoice`` fires ``enrichment.lookup_master_tin``
+post-commit when the buyer master needs a lookup. Async via
+Celery so the user's review screen renders immediately;
+when the worker resolves the TIN, the next page poll
+includes it.
+
+**Audit.**
+``enrichment.tin_looked_up`` event records
+``from_state`` / ``to_state`` / ``found: bool`` /
+``environment`` (sandbox vs production). The TIN value
+itself is excluded from the payload — same PII-adjacent
+convention as the existing ``tin_verified`` event.
+
+**End-to-end smoke**
+
+```
+Test master: BRN=202101012345, name="Test Buyer For Lookup"
+→ POST /connect/token       → 200  (LHDN auth)
+→ GET  /api/v1.0/taxpayer/search/tin
+       ?idType=BRN
+       &idValue=202101012345
+       &taxpayerName=Test+Buyer+For+Lookup
+                            → 404  (no record in sandbox)
+→ master.state = failed, tin_last_verified_at set
+→ audit: enrichment.tin_looked_up { from_state: unverified,
+                                     to_state: failed,
+                                     found: false,
+                                     environment: sandbox }
+```
+
+A real LHDN-registered BRN would return the TIN; the test
+fixture BRN is synthetic, so the sandbox correctly answers
+404. The full code path executes — auth, search, parse,
+persist, audit.
+
+**Files**
+- modified: ``backend/apps/submission/lhdn_client.py``
+  (``search_tin_by_other_id``)
+- new: ``backend/apps/enrichment/tin_lookup.py``
+- modified: ``backend/apps/enrichment/tasks.py``
+  (``lookup_master_tin`` celery task)
+- modified: ``backend/apps/enrichment/services.py``
+  (fire lookup task post-commit when master needs it)
+
+**Limitations / future work**
+- No SSM (Suruhanjaya Syarikat Malaysia) hop. SSM has a
+  name → BRN service (paid bizfile API). Once a tenant
+  provisions credentials, a name-only path becomes
+  feasible: name → BRN (SSM) → TIN (LHDN). Punt until
+  customer demand justifies the bizfile cost.
+- The 90-day cache cooldown is uniform. A "failed" lookup
+  doesn't auto-refresh if the customer fixes their SSM
+  registration in week 3 — they need to wait or trigger a
+  manual re-check. A future slice could add a "retry
+  lookup" button on the master detail page.
+- Rate-limit aware but doesn't queue. If LHDN returns 429
+  the task swallows and returns ``lhdn_rate_limit`` — no
+  retry-with-backoff. Existing celery infra would let us
+  re-queue using the ``Retry-After`` the typed error
+  carries; defer until rate-limit hits start showing up
+  in audit data.
+
+---
+
 ## How to run it
 
 ```bash
