@@ -129,6 +129,23 @@ def run_extraction(job_id: UUID | str) -> ExtractionResult:
 
     body = _read_object(job)
 
+    # Slice 109 — sniff embedded QRs on the PDF *before* the
+    # primary extractor runs. If the document carries a LHDN
+    # validation QR (typical for an e-invoice that's been
+    # resubmitted into the supplier's workflow), we'll lift the
+    # UUID + verification URL onto the Invoice once it's created
+    # in ``_complete``. Skipped silently for non-PDF MIME types
+    # and on any decoder error — the pipeline is unaffected.
+    decoded_qrs: list = []
+    if job.file_mime_type == "application/pdf":
+        from apps.extraction.qr import decode_qrs_from_pdf  # noqa: PLC0415
+
+        try:
+            decoded_qrs = decode_qrs_from_pdf(body)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("run_extraction: QR decode skipped: %s", exc)
+            decoded_qrs = []
+
     try:
         adapter = get_adapter(decision.engine.name)
     except KeyError as exc:
@@ -241,6 +258,7 @@ def run_extraction(job_id: UUID | str) -> ExtractionResult:
         confidence=result.confidence,
         page_count=result.page_count,
         vision_outcome=vision_outcome,
+        decoded_qrs=decoded_qrs,
     )
 
     return ExtractionResult(
@@ -681,6 +699,7 @@ def _complete(
     confidence: float,
     page_count: int,
     vision_outcome: VisionEscalationOutcome | None = None,
+    decoded_qrs: list | None = None,
 ) -> None:
     # If vision escalation succeeded, the recorded extraction_engine reflects
     # the combined path so the audit trail makes the escalation visible.
@@ -743,6 +762,40 @@ def _complete(
         ingestion_job_id=job.id,
         extracted_text=text,
     )
+
+    # Slice 109 — if the source PDF carried a LHDN validation QR,
+    # lift the UUID + verification URL onto the Invoice. Done
+    # before structuring kicks off so the structurer sees a
+    # populated lhdn_uuid (and downstream validation can recognise
+    # this as an already-validated re-upload).
+    if decoded_qrs:
+        from apps.extraction.qr import pick_lhdn_qr  # noqa: PLC0415
+
+        lhdn_qr = pick_lhdn_qr(decoded_qrs)
+        if lhdn_qr and (lhdn_qr.lhdn_uuid or lhdn_qr.raw_data):
+            update_fields: list[str] = []
+            if lhdn_qr.lhdn_uuid and not invoice.lhdn_uuid:
+                invoice.lhdn_uuid = lhdn_qr.lhdn_uuid[:64]
+                update_fields.append("lhdn_uuid")
+            if lhdn_qr.raw_data and not invoice.lhdn_qr_code_url:
+                invoice.lhdn_qr_code_url = lhdn_qr.raw_data[:2000]
+                update_fields.append("lhdn_qr_code_url")
+            if update_fields:
+                update_fields.append("updated_at")
+                invoice.save(update_fields=update_fields)
+            record_event(
+                action_type="invoice.lhdn_qr_detected",
+                actor_type=AuditEvent.ActorType.SERVICE,
+                actor_id="extraction.pipeline",
+                organization_id=str(invoice.organization_id),
+                affected_entity_type="Invoice",
+                affected_entity_id=str(invoice.id),
+                payload={
+                    "page_index": lhdn_qr.page_index,
+                    "lhdn_uuid": lhdn_qr.lhdn_uuid,
+                    "long_id": lhdn_qr.lhdn_long_id,
+                },
+            )
 
     if vision_outcome and vision_outcome.applied:
         # Vision already produced structured fields; write them straight to
@@ -1053,6 +1106,30 @@ def re_extract_job(
             ingestion_job_id=job.id,
             extracted_text=text,
         )
+
+    # Slice 109 — same embedded-QR detection as run_extraction. The
+    # original blob hasn't changed (re-extract reuses the same S3
+    # object), so any LHDN-validation QR is still there.
+    if job.file_mime_type == "application/pdf":
+        from apps.extraction.qr import decode_qrs_from_pdf, pick_lhdn_qr  # noqa: PLC0415
+
+        try:
+            decoded_qrs = decode_qrs_from_pdf(body)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("re_extract: QR decode skipped: %s", exc)
+            decoded_qrs = []
+        lhdn_qr = pick_lhdn_qr(decoded_qrs)
+        if lhdn_qr and (lhdn_qr.lhdn_uuid or lhdn_qr.raw_data):
+            update_fields: list[str] = []
+            if lhdn_qr.lhdn_uuid:
+                invoice.lhdn_uuid = lhdn_qr.lhdn_uuid[:64]
+                update_fields.append("lhdn_uuid")
+            if lhdn_qr.raw_data:
+                invoice.lhdn_qr_code_url = lhdn_qr.raw_data[:2000]
+                update_fields.append("lhdn_qr_code_url")
+            if update_fields:
+                update_fields.append("updated_at")
+                invoice.save(update_fields=update_fields)
 
     record_event(
         action_type="ingestion.job.re_extracted",

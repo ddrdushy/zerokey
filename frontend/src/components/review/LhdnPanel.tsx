@@ -373,8 +373,41 @@ function PreflightView({
     }
   }
 
+  // Slice 109 — the source PDF carried a LHDN-validation QR. The
+  // invoice hasn't been submitted through ZeroKey yet (this view
+  // only renders for the preflight phase) but a prior LHDN
+  // submission exists. Surface this so the user knows they're
+  // about to create a duplicate if they hit Submit.
+  const preExistingLhdn = !!invoice.lhdn_uuid;
+
   return (
     <>
+      {preExistingLhdn && (
+        <div className="rounded-md border border-info/30 bg-info/5 px-3 py-3 text-2xs text-slate-700">
+          <div className="font-medium text-ink">
+            This document already carries a LHDN-validated QR.
+          </div>
+          <p className="mt-1">
+            We decoded a MyInvois verification QR from the uploaded PDF — UUID{" "}
+            <code className="rounded bg-white px-1 py-0.5 font-mono text-[11px] text-ink">
+              {invoice.lhdn_uuid}
+            </code>
+            . If this is a re-upload of an already-validated invoice, submitting again will create a
+            duplicate at LHDN.
+          </p>
+          {invoice.lhdn_qr_code_url && (
+            <a
+              href={invoice.lhdn_qr_code_url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex items-center gap-1 text-2xs font-medium text-ink hover:underline"
+            >
+              Verify on MyInvois
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+      )}
       <p className="text-2xs text-slate-500">
         Once you submit, this invoice goes to LHDN for clearance. The validation UUID and QR code
         arrive in seconds. Cancellation is possible for 72 hours after.

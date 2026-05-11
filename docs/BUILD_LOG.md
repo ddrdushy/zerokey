@@ -9835,6 +9835,127 @@ with no signal.
 
 ---
 
+### Slice 109 — Decode embedded LHDN QR during extraction
+
+LHDN-validated e-invoices carry a verification QR (top-right of
+the PDF) that encodes the canonical MyInvois validation URL
+``https://myinvois.hasil.gov.my/{uuid}/{longId}``. When a
+supplier re-uploads such a PDF — common when the original
+finance system isn't ZeroKey but the user wants to review the
+filing — we should detect this, lift the UUID + verification
+URL onto the Invoice automatically, and warn before resubmit
+so a verified invoice doesn't get filed twice.
+
+Slice 107's BuyerQRScanner already had jsqr on the client. This
+slice is the server-side equivalent on the *source PDF* — the
+extraction worker decodes any embedded QRs as part of the
+pipeline, no separate user gesture required.
+
+**Decoder.**
+``apps/extraction/qr.py`` adds ``decode_qrs_from_pdf(body) ->
+list[DecodedQR]``. Renders each page via ``pypdfium2`` at 2x
+scale (~144 dpi — enough resolution for a typical 2.5 cm QR
+to decode reliably without bloating memory), then runs
+``pyzbar`` (binding libzbar0). All exceptions caught and
+turned into an empty list — a missing system library or a
+corrupt PDF can never break the pipeline.
+
+**Why pyzbar and not OpenCV.**
+Tried OpenCV's ``QRCodeDetector`` first; ``opencv-python``'s
+GUI build needs ``libxcb.so.1`` which the slim runtime
+doesn't ship, and ``opencv-python-headless`` conflicts with
+the version EasyOCR pulls in. ``libzbar0`` is a 70 KB system
+lib with no GUI deps — apt-installed in both Dockerfile and
+Dockerfile.dev.
+
+**Classification heuristic.**
+``_classify`` tags each decoded payload:
+
+  * ``lhdn_validation_url`` — URL host matches
+    ``myinvois.hasil.gov.my`` (prod or preprod). Splits the
+    path to lift out the UUID + longId.
+  * ``url`` — any other URL.
+  * ``uuid`` — payload matches the LHDN 24-32 char UUID
+    regex (some portal versions encode a raw UUID).
+  * ``other`` — payload kept on the record but no field
+    promotion.
+
+Only ``lhdn_validation_url`` triggers field stamping.
+
+**Pipeline integration.**
+``run_extraction`` calls ``decode_qrs_from_pdf`` right after
+the S3 read, before the text extractor runs (so it's
+independent of OCR success). The decoded result is passed to
+``_complete``; if a LHDN QR is present, ``_complete`` stamps
+``Invoice.lhdn_uuid`` and ``Invoice.lhdn_qr_code_url`` after
+``create_invoice_from_extraction`` returns and records an
+``invoice.lhdn_qr_detected`` audit event with the page index +
+UUID + longId. The same path runs at the end of
+``re_extract_job`` so manually-triggered re-extracts pick up
+the QR data too.
+
+**UI banner.**
+``LhdnPanel.PreflightView`` shows a yellow info banner when
+``invoice.lhdn_uuid`` is set during preflight. Copy: "This
+document already carries a LHDN-validated QR. We decoded a
+MyInvois verification QR from the uploaded PDF — UUID <code>.
+If this is a re-upload of an already-validated invoice,
+submitting again will create a duplicate at LHDN." Includes a
+"Verify on MyInvois" link that opens the decoded URL in a new
+tab. This is a real-world failure mode prevention — a user who
+doesn't notice the QR was already on the original PDF could
+trigger a duplicate filing.
+
+**Smoke evidence**
+
+```
+# synthetic LHDN-validation QR PDF → decoder
+Decoded 1 QR(s)
+  page=0 kind=lhdn_validation_url
+    lhdn_uuid='3VQNWS7QDJXF47VXQ1X3GBQK10'
+    lhdn_long_id='abc123longid'
+    raw_data='https://preprod.myinvois.hasil.gov.my/3VQNWS7QDJXF47VXQ1X3GBQK10/abc123longid'
+
+# full pipeline on the same PDF
+run_extraction → engine=pdfplumber confidence=0.95
+Invoice → lhdn_uuid='3VQNWS7QDJXF47VXQ1X3GBQK10'
+         lhdn_qr_code_url='https://preprod.myinvois.hasil.gov.my/...'
+Audit events: ['invoice.created', 'invoice.lhdn_qr_detected']
+  lhdn_qr_detected payload: { 'long_id': 'abc123longid',
+                              'lhdn_uuid': '3VQNWS7QDJXF47VXQ1X3GBQK10',
+                              'page_index': 0 }
+```
+
+Playwright walked the review page and confirmed the banner
+renders with the UUID, the "Verify on MyInvois" link, and the
+duplicate-submission warning copy.
+
+**Files**
+- new: ``backend/apps/extraction/qr.py``
+- modified: ``backend/apps/extraction/services.py`` (decoder
+  hook in ``run_extraction`` + ``_complete`` + ``re_extract_job``)
+- modified: ``backend/pyproject.toml`` (pyzbar dep)
+- modified: ``backend/Dockerfile`` + ``Dockerfile.dev`` (libzbar0)
+- modified: ``frontend/src/components/review/LhdnPanel.tsx``
+  (PreflightView pre-existing-LHDN banner)
+
+**Limitations / future work**
+- If a non-LHDN URL is encoded (custom vendor verification
+  page), we tag it ``kind=url`` and ignore. A future slice
+  could let an org register additional trusted-host patterns
+  and treat their QRs as auto-fill sources.
+- We don't *verify* the decoded URL against LHDN's API. The
+  UUID is taken at face value from the QR. A future slice
+  could call LHDN's GetDocument endpoint with our integration
+  credentials and use the canonical response to overwrite
+  fields — that's the difference between "looks signed" and
+  "we confirmed with LHDN."
+- TIN/BRN values still come back swapped by the structurer on
+  LHDN-format tabular layouts. That's a prompt-engineering
+  fix, separate from this slice.
+
+---
+
 ## How to run it
 
 ```bash

@@ -42,6 +42,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         curl \
+        # libzbar0: native ZBar barcode/QR decoder for the
+        # embedded-invoice-QR extractor (Slice 109).
+        libzbar0 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 1001 zerokey \
     && useradd --system --uid 1001 --gid zerokey --no-create-home zerokey

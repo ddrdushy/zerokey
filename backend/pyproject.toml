@@ -38,6 +38,11 @@ dependencies = [
     # PDF → image rasterisation for OCR. pypdfium2 is a single Python wheel
     # with no system deps, much leaner than pdf2image+poppler.
     "pypdfium2>=4,<5",
+    # Slice 109 — decode LHDN MyInvois QR codes already embedded in
+    # supplied invoice PDFs (validated e-invoices carry a signed QR at
+    # the top-right). pyzbar binds libzbar0 (installed in the Dockerfile)
+    # which is the fastest reliable QR decoder available without GPU.
+    "pyzbar>=0.1.9,<1.0",
     # Slice 104 — platform hardening.
     # django-axes: failed-login lockout (account lockout + progressive
     # delay per SECURITY.md "Failed login attempts trigger progressive
