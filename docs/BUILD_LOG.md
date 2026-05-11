@@ -10540,6 +10540,159 @@ post-sync ``Organization.tin``; a tenant whose org TIN is
 
 ---
 
+### Slice 115 — Supplier-from-tenant autofill
+
+User asked: "if supplier is equivalent to our tenant, we can
+get the TIN and BRN and all from our tenant details" — the
+exact buyer-from-CustomerMaster pattern we already had,
+mirrored onto the supplier side.
+
+Real cost of NOT having this: on every sales invoice the
+tenant issues, the supplier block re-extracts from the PDF
+through the structurer. The structurer gets the *name*
+right (it's in big bold text), but the TIN / BRN / MSIC /
+address are smaller numeric fields and confidence varies.
+The tenant ALREADY has all of that on their Organization
+row — there's no reason to re-derive it from the document.
+Pulling it from the org row gives 100% confidence with zero
+LLM round-trip.
+
+**Schema additions.**
+``apps/identity/models.py`` — Organization gains:
+
+  - ``registration_number`` (CharField, 64) — SSM-issued BRN
+  - ``msic_code`` (CharField, 8) — 5-digit LHDN industry code
+
+Migration ``0020_organization_msic_code_and_more.py``. Both
+fields blank-default so existing tenants need no backfill;
+the autofill rule no-ops when they're empty.
+
+**Service-layer changes.**
+
+  - ``EDITABLE_ORGANIZATION_FIELDS`` += ``registration_number``,
+    ``msic_code``. Both customer-editable from Settings →
+    Organization. Format validation: msic_code = ``^\d{5}$``
+    or empty; registration_number = ``^[0-9A-Z\-]{6,32}$`` or
+    empty (loose enough for foreign-business numbers,
+    tight enough to reject obvious junk).
+  - ``OrganizationDetailSerializer`` exposes both fields.
+
+**Autofill.**
+``apps/enrichment/services._autofill_supplier_from_tenant``
+is the new mirror of ``_autofill_buyer``. Triggers when the
+invoice's ``supplier_legal_name`` matches the tenant's
+``legal_name`` (normalised — uppercase, dots stripped, runs
+of whitespace collapsed — so "Skyrim Sdn. Bhd." matches
+"SKYRIM SDN BHD"). For each blank ``supplier_*`` field on
+the invoice, copies from the corresponding Organization
+attribute:
+
+| Organization | Invoice |
+|---|---|
+| ``tin`` | ``supplier_tin`` |
+| ``registration_number`` | ``supplier_registration_number`` |
+| ``msic_code`` | ``supplier_msic_code`` |
+| ``sst_number`` | ``supplier_sst_number`` |
+| ``registered_address`` | ``supplier_address`` |
+| ``contact_phone`` | ``supplier_phone`` |
+
+Plus a derived pair: when ``supplier_registration_number``
+gets filled and ``supplier_id_type`` / ``supplier_id_value``
+are both still blank, the function stamps ``id_type="BRN"``
++ ``id_value=registration_number``. The LHDN HITS validator
+matches TIN + secondary-ID together, so without this the
+user would still see a "pick a type first" placeholder
+where the LHDN-canonical pair could have auto-completed.
+
+Same format-gates as ``_autofill_buyer``: a malformed TIN
+or non-5-digit MSIC on the Organization row is skipped at
+the boundary rather than re-poisoning the invoice. (Slice
+114's input validation makes the case theoretical, but the
+gate is cheap belt-and-braces.)
+
+Confidence stamping = 1.0 ("from your verified tenant
+profile") — same convention as the buyer master autofill.
+
+**Wiring.**
+``enrich_invoice`` calls the new function in the same
+transaction as ``_autofill_buyer`` + ``_apply_myr_equivalent``.
+Order matters slightly: ``_autofill_buyer`` runs first (the
+buyer-master match is the more uncertain step); supplier
+fills last since "are you the supplier of this invoice"
+is a simple name compare. Both contribute to the
+``invoice.enriched`` audit event's ``fields_autofilled``
+list.
+
+**Frontend.**
+``app/dashboard/settings/page.tsx`` gains two FieldRow
+entries — BRN and MSIC — with helper copy:
+
+  - BRN: "SSM-issued. 12-digit format like 202101012345.
+    Auto-fills supplier ID on every sales invoice you issue."
+  - MSIC: "Malaysian Standard Industrial Classification — 5
+    digits (e.g. 62010 = Computer programming activities)."
+
+``frontend/src/lib/api.ts`` adds the two fields to
+``OrganizationDetail``.
+
+**End-to-end verified.**
+
+```
+Tenant identity (after a Settings → Organization save):
+  legal_name:          SKYRIM SDN. BHD.
+  tin:                 C24445084060
+  registration_number: 20031031530
+  msic_code:           62010
+  registered_address:  2-7, Tower A, ...
+
+Invoice BEFORE re-enrich (supplier blanks from a fresh upload):
+  supplier_legal_name: 'SKYRIM SDN. BHD.'
+  supplier_tin:        ''
+  supplier_msic_code:  ''
+
+Invoice AFTER re-enrich (autofilled: ['supplier_tin','supplier_msic_code']):
+  supplier_tin:                 C24445084060   ← from org.tin
+  supplier_msic_code:           62010          ← from org.msic_code
+  supplier_registration_number: 20031031530    ← was already set
+  supplier_id_type:             BRN            ← derived
+  supplier_id_value:            20031031530    ← derived
+
+Validation: 0 errors, 2 warnings.
+The Slice 113 pre-flight TIN-match rule clears (supplier_tin ==
+tenant.tin). Submit button enabled.
+```
+
+**Files**
+- new: ``backend/apps/identity/migrations/0020_organization_msic_code_and_more.py``
+- modified: ``backend/apps/identity/models.py`` (Organization
+  gains ``registration_number`` + ``msic_code``)
+- modified: ``backend/apps/identity/serializers.py`` (expose
+  new fields)
+- modified: ``backend/apps/identity/services.py`` (editable
+  allowlist + per-field format validation)
+- modified: ``backend/apps/enrichment/services.py``
+  (``_autofill_supplier_from_tenant`` + wire into ``enrich_invoice``)
+- modified: ``frontend/src/app/dashboard/settings/page.tsx``
+  (BRN + MSIC field rows)
+- modified: ``frontend/src/lib/api.ts``
+  (``OrganizationDetail`` carries the two new fields)
+
+**Limitations / future work**
+- The legal-name match is exact-after-normalisation. If a
+  tenant occasionally issues invoices under a trade name or
+  a slightly different legal entity, the autofill won't
+  fire and the user types the supplier info manually. A
+  future slice could allow registering aliases on the
+  Organization (the same pattern CustomerMaster already
+  supports for buyer name variants).
+- We don't sync MSIC / BRN through the LHDN-integration
+  credentials path the way TIN does (Slice 114). The LHDN
+  integration schema doesn't carry those fields, so there's
+  no second store to drift from — Organization is the only
+  home.
+
+---
+
 ## How to run it
 
 ```bash

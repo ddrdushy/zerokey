@@ -45,6 +45,10 @@ class OrganizationDetailSerializer(serializers.ModelSerializer):
             "id",
             "legal_name",
             "tin",
+            # Slice 115 — tenant tax-identity fields used by the
+            # supplier-from-tenant autofill in enrichment.
+            "registration_number",
+            "msic_code",
             "sst_number",
             "registered_address",
             "contact_email",

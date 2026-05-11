@@ -23,6 +23,11 @@ type EditableOrgField =
   // Single source of truth; the integrations page write-through
   // also lands on this same field.
   | "tin"
+  // Slice 115 — BRN + MSIC code editable. Enrichment fills supplier_*
+  // fields on sales invoices from these values when the invoice's
+  // supplier name matches the tenant's legal name.
+  | "registration_number"
+  | "msic_code"
   | "sst_number"
   | "registered_address"
   | "contact_email"
@@ -135,6 +140,34 @@ export default function OrganizationSettingsPage() {
                 LHDN format: <code className="font-mono">C</code> + 11 digits (corporate) or{" "}
                 <code className="font-mono">IG</code>/<code className="font-mono">OG</code> + 11
                 digits (individual). Changes here also update your LHDN integration TIN.
+              </p>
+            </div>
+            <div>
+              <FieldRow
+                label="Business Registration Number (BRN)"
+                name="registration_number"
+                value={valueOf("registration_number")}
+                dirty={isDirty("registration_number")}
+                onChange={onChangeField}
+                mono
+              />
+              <p className="mt-1 px-1 text-[10px] text-slate-400">
+                SSM-issued. 12-digit format like <code className="font-mono">202101012345</code>.
+                Auto-fills supplier ID on every sales invoice you issue.
+              </p>
+            </div>
+            <div>
+              <FieldRow
+                label="MSIC code"
+                name="msic_code"
+                value={valueOf("msic_code")}
+                dirty={isDirty("msic_code")}
+                onChange={onChangeField}
+                mono
+              />
+              <p className="mt-1 px-1 text-[10px] text-slate-400">
+                Malaysian Standard Industrial Classification — 5 digits (e.g.{" "}
+                <code className="font-mono">62010</code> = Computer programming activities).
               </p>
             </div>
             <FieldRow

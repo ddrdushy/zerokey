@@ -97,6 +97,13 @@ def enrich_invoice(invoice_id: UUID | str) -> EnrichmentResult:
     with transaction.atomic():
         customer = _enrich_customer(invoice)
         autofilled = _autofill_buyer(invoice, customer.master) if customer.master else []
+        # Slice 115 — when the supplier_legal_name on the invoice
+        # matches our tenant's legal_name, the tenant IS the supplier.
+        # Fill blank supplier_* fields from the Organization row so
+        # the user doesn't retype their own TIN / BRN / MSIC / address
+        # on every sales invoice they issue.
+        supplier_autofilled = _autofill_supplier_from_tenant(invoice)
+        autofilled = autofilled + supplier_autofilled
         items_matched, items_created = _enrich_line_items(invoice)
         myr_filled = _apply_myr_equivalent(invoice)
 
@@ -348,6 +355,110 @@ def _master_value_passes_format(invoice_field: str, value: str) -> bool:
     if invoice_field == "buyer_tin":
         return bool(_BUYER_TIN_RE.match(value))
     return True
+
+
+# --- Supplier-from-tenant autofill (Slice 115) --------------------------------
+
+
+# Map: Organization attribute → Invoice supplier_* attribute.
+# When a tenant issues a sales invoice, supplier == tenant; the
+# Org row has the tenant's authoritative tax identity, so we pull
+# any blanks on the Invoice from here. Mirrors the
+# CustomerMaster→buyer_* pattern in _autofill_buyer.
+_TENANT_TO_SUPPLIER: tuple[tuple[str, str], ...] = (
+    ("tin", "supplier_tin"),
+    ("registration_number", "supplier_registration_number"),
+    ("msic_code", "supplier_msic_code"),
+    ("sst_number", "supplier_sst_number"),
+    ("registered_address", "supplier_address"),
+    ("contact_phone", "supplier_phone"),
+)
+
+
+def _normalise_legal_name(s: str) -> str:
+    """Loose normalisation for matching invoice supplier name vs tenant legal name.
+
+    Uppercase, strip whitespace, strip common corporate suffixes that
+    LLMs often punctuate differently ("Sdn. Bhd." vs "SDN BHD" vs
+    "Sdn Bhd."). Same approach the CustomerMaster matcher uses for
+    buyer aliasing.
+    """
+    out = (s or "").upper().strip()
+    # Collapse internal whitespace + remove dots so "Sdn. Bhd." matches
+    # "Sdn Bhd".
+    out = " ".join(out.replace(".", " ").split())
+    return out
+
+
+def _autofill_supplier_from_tenant(invoice: Invoice) -> list[str]:
+    """Copy blank supplier_* fields from the tenant's Organization row.
+
+    Only triggers when ``supplier_legal_name`` on the invoice matches
+    the tenant's ``legal_name`` (normalised compare — tolerates dot /
+    case / spacing differences the LLM produces). Returns the list of
+    fields filled, for the audit payload.
+
+    Never overwrites a non-empty value. Format-gates the same fields
+    as _autofill_buyer so a poisoned Organization row (theoretically;
+    Slice 114's validation makes this hard) can't re-infect invoices.
+    """
+    if not invoice.supplier_legal_name:
+        return []
+    # Cross-context import allowed by service-only rule.
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="enrichment.supplier_from_tenant"):
+        org = Organization.objects.filter(id=invoice.organization_id).first()
+    if org is None:
+        return []
+
+    if _normalise_legal_name(invoice.supplier_legal_name) != _normalise_legal_name(org.legal_name):
+        return []
+
+    confidence = dict(invoice.per_field_confidence or {})
+    filled: list[str] = []
+    for tenant_field, invoice_field in _TENANT_TO_SUPPLIER:
+        if getattr(invoice, invoice_field):
+            continue
+        value = (getattr(org, tenant_field) or "").strip()
+        if not value:
+            continue
+        # Skip values that fail the same format gates we apply to the
+        # buyer side. A stray malformed MSIC on the tenant row would
+        # otherwise re-poison every sales invoice.
+        check_field = invoice_field
+        if check_field == "supplier_tin":
+            # Use the same regex shape as the buyer-tin gate.
+            if not _BUYER_TIN_RE.match(value):
+                continue
+        if check_field == "supplier_msic_code":
+            if not re.match(r"^\d{5}$", value):
+                continue
+        setattr(invoice, invoice_field, value)
+        confidence[invoice_field] = 1.0
+        filled.append(invoice_field)
+
+    # Slice 115 — the LHDN secondary-ID picker (BRN / NRIC / ARMY /
+    # PASSPORT). When we just filled supplier_registration_number,
+    # also stamp supplier_id_type="BRN" + supplier_id_value=that
+    # number, since for a tenant on the SSM register that's the
+    # canonical pair. Skip if id_type/value already set so we never
+    # overwrite a deliberate value.
+    if (
+        "supplier_registration_number" in filled
+        and not invoice.supplier_id_type
+        and not invoice.supplier_id_value
+    ):
+        invoice.supplier_id_type = "BRN"
+        invoice.supplier_id_value = invoice.supplier_registration_number
+        confidence["supplier_id_type"] = 1.0
+        confidence["supplier_id_value"] = 1.0
+        filled.extend(["supplier_id_type", "supplier_id_value"])
+
+    if filled:
+        invoice.per_field_confidence = confidence
+    return filled
 
 
 # --- Item master ------------------------------------------------------------

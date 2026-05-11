@@ -177,6 +177,13 @@ EDITABLE_ORGANIZATION_FIELDS: frozenset[str] = frozenset(
         # Now: one canonical TIN, edit-from-the-org-page,
         # write-through from the integration credentials path.
         "tin",
+        # Slice 115 — BRN + MSIC editable on the org page. The
+        # supplier-from-tenant autofill reads these to populate
+        # supplier_registration_number / supplier_msic_code on
+        # every sales invoice the tenant issues, mirroring the
+        # buyer-from-CustomerMaster pattern.
+        "registration_number",
+        "msic_code",
         "sst_number",
         "registered_address",
         "contact_email",
@@ -241,6 +248,29 @@ def update_organization(
                 f"extraction_mode must be one of {sorted(_EXTRACTION_MODE_VALUES)}; "
                 f"got {new_value!r}."
             )
+        if field_name == "msic_code":
+            # Slice 115 — exactly 5 digits or empty. Mirrors the
+            # apply-boundary gate in apps/submission/services.py so a
+            # malformed value never lands here either.
+            normalized = new_value.strip()
+            if normalized and not __import__("re").match(r"^\d{5}$", normalized):
+                raise OrganizationUpdateError(
+                    f"msic_code must be empty or exactly 5 digits "
+                    f"(LHDN industry classification, e.g. 62010); got "
+                    f"{new_value!r}."
+                )
+            new_value = normalized
+        if field_name == "registration_number":
+            # Slice 115 — BRN is 12 digits for Malaysian corporates;
+            # allow any digit-string up to 64 chars so unusual cases
+            # (foreign-business numbers via SSM) don't false-fail.
+            normalized = new_value.strip()
+            if normalized and not __import__("re").match(r"^[0-9A-Z\-]{6,32}$", normalized.upper()):
+                raise OrganizationUpdateError(
+                    f"registration_number must be 6-32 chars "
+                    f"(digits / letters / dash); got {new_value!r}."
+                )
+            new_value = normalized
         if field_name == "tin":
             # Slice 114 — format validation. Empty is allowed (tenant
             # may not yet have a TIN issued, e.g. mid-onboarding); any

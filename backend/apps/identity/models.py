@@ -147,6 +147,15 @@ class Organization(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     legal_name = models.CharField(max_length=255)
     tin = models.CharField(max_length=32, unique=True)
+    # Slice 115 — the tenant's other tax-identity fields. Mirror what
+    # already exists on enrichment.CustomerMaster: BRN (12-digit
+    # business registration number) and MSIC (5-digit industry
+    # classification). Every sales invoice the tenant issues carries
+    # these as supplier_* — when the structurer reads them off the
+    # PDF, enrichment now fills any blanks from this row, the same
+    # way buyer fields fill from CustomerMaster.
+    registration_number = models.CharField(max_length=64, blank=True, default="")
+    msic_code = models.CharField(max_length=8, blank=True, default="")
     sst_number = models.CharField(max_length=32, blank=True)
 
     # PII — plain text in dev, encrypted column in production (Phase 6 swap).

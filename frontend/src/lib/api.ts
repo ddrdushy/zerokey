@@ -656,6 +656,10 @@ export type OrganizationDetail = {
   id: string;
   legal_name: string;
   tin: string;
+  /** Slice 115 — BRN + MSIC on the tenant; supplier-from-tenant
+   *  autofill reads these on every sales invoice. */
+  registration_number: string;
+  msic_code: string;
   sst_number: string;
   registered_address: string;
   contact_email: string;
