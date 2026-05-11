@@ -332,6 +332,29 @@ def update_organization(
             actor_user_id=actor_user_id,
         )
 
+        # Slice 117 — regenerate the self-signed dev cert under the new
+        # TIN. The cert subject's OU encodes the TIN; LHDN validates
+        # cert.subject.TIN against the document's supplier_tin at
+        # submission. A stale cert silently breaks every submission
+        # with "authenticated TIN and documents TIN is not matching".
+        # Skipped for customer-uploaded certs — those are bound to a
+        # real LHDN identity we mustn't tamper with.
+        from apps.submission.certificates import regenerate_self_signed_for_tin_change
+
+        if regenerate_self_signed_for_tin_change(organization_id=organization_id):
+            record_event(
+                action_type="submission.cert.regenerated",
+                actor_type=AuditEvent.ActorType.SERVICE,
+                actor_id="identity.tin_change",
+                organization_id=str(organization_id),
+                affected_entity_type="Organization",
+                affected_entity_id=str(organization_id),
+                payload={
+                    "reason": "tin_change",
+                    "kind": "self_signed_dev",
+                },
+            )
+
     return org
 
 

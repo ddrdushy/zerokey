@@ -101,6 +101,41 @@ def ensure_certificate(*, organization_id) -> LoadedCertificate:
         return _load(org)
 
 
+def regenerate_self_signed_for_tin_change(*, organization_id) -> bool:
+    """Slice 117 — re-mint the self-signed dev cert under the org's current TIN.
+
+    Called when ``Organization.tin`` changes. Only affects rows where
+    ``certificate_kind == 'self_signed_dev'`` — an uploaded production
+    cert is the customer's responsibility and must NEVER be touched
+    by us (it's bound to their LHDN-issued identity).
+
+    Returns True if a regeneration happened, False otherwise. The
+    audit event is recorded by the caller so the actor (the user
+    who edited the TIN) is on the row.
+
+    Why this exists: the self-signed dev cert's subject OU encodes
+    the org's TIN. LHDN validates the cert subject TIN against the
+    document's supplier_tin at submission. A stale cert (generated
+    under an old TIN) silently makes every submission fail with
+    "authenticated TIN and documents TIN is not matching" until the
+    cert is regenerated.
+    """
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="submission.cert.regen_on_tin_change"):
+        org = Organization.objects.filter(id=organization_id).first()
+        if org is None:
+            return False
+        if org.certificate_kind != "self_signed_dev":
+            # Customer-uploaded cert: keep our hands off. The TIN
+            # mismatch will surface as a submission rejection but
+            # that's the right ownership boundary.
+            return False
+        _generate_and_store_self_signed(org)
+        return True
+
+
 def _generate_and_store_self_signed(org) -> None:
     """Mint an RSA-2048 self-signed cert for the org + persist it."""
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=RSA_KEY_SIZE_BITS)

@@ -851,6 +851,85 @@ def rule_supplier_tin_matches_tenant(invoice: Invoice) -> list[Issue]:
     ]
 
 
+def rule_cert_tin_matches_supplier(invoice: Invoice) -> list[Issue]:
+    """Slice 117 — catch stale signing cert before LHDN does.
+
+    LHDN's "authenticated TIN and documents TIN is not matching"
+    rejection has two upstream causes:
+      (1) OAuth-authenticated TIN ≠ supplier_tin (Slice 113 catches this)
+      (2) Signing cert subject's TIN ≠ supplier_tin (this rule)
+
+    The self-signed dev cert's subject OU encodes the org's TIN at
+    generation time. If the user later changes their tenant TIN
+    without regenerating the cert, LHDN rejects every submission
+    because the document body says supplier=X but the signature
+    chain says cert.subject=Y. Slice 117's update_organization
+    auto-regenerates on TIN change going forward; this rule
+    surfaces any orgs that drifted before that fix (or whose
+    customer-uploaded cert is bound to a different TIN — the
+    customer can't ignore that case the way the dev-cert path
+    auto-recovers).
+
+    Parses the cert subject for ``OU=TIN=...`` and ``cn=...`` —
+    ZeroKey's self-signed format. If the cert doesn't carry a TIN
+    we can read, the rule no-ops (LHDN-issued certs may encode
+    the TIN elsewhere; we don't want false-positives).
+    """
+    if _is_blank(invoice.supplier_tin):
+        return []
+
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    with super_admin_context(reason="validation.cert_tin_check"):
+        org = Organization.objects.filter(id=invoice.organization_id).first()
+    if org is None or not org.certificate_pem:
+        return []
+
+    try:
+        from cryptography import x509  # noqa: PLC0415
+        from cryptography.hazmat.backends import default_backend  # noqa: PLC0415
+
+        cert = x509.load_pem_x509_certificate(
+            org.certificate_pem.encode("ascii") if isinstance(org.certificate_pem, str)
+            else org.certificate_pem,
+            default_backend(),
+        )
+        ou_value = ""
+        for attr in cert.subject:
+            # NameOID.ORGANIZATIONAL_UNIT_NAME = 2.5.4.11. ZeroKey
+            # stores TIN there as "TIN=<value>".
+            if attr.oid.dotted_string == "2.5.4.11":
+                ou_value = str(attr.value)
+                break
+    except Exception:
+        return []
+
+    if not ou_value.startswith("TIN="):
+        return []
+    cert_tin = ou_value[len("TIN="):].strip().upper()
+    inv_tin = invoice.supplier_tin.strip().upper()
+    if not cert_tin or cert_tin == inv_tin:
+        return []
+
+    return [
+        Issue(
+            code="supplier_tin.cert_mismatch",
+            severity=SEVERITY_ERROR,
+            field_path="supplier_tin",
+            message=(
+                f"The signing certificate is bound to TIN {cert_tin} but this "
+                f"invoice's supplier TIN is {inv_tin}. LHDN will reject with "
+                f"\"authenticated TIN and documents TIN is not matching\". "
+                f"Fix: open Settings → Organization and resave the TIN to "
+                f"trigger a fresh dev certificate (or upload a production "
+                f"certificate bound to {inv_tin})."
+            ),
+            detail={"cert_tin": cert_tin, "invoice_tin": inv_tin},
+        )
+    ]
+
+
 def rule_invoice_number_uniqueness(invoice: Invoice) -> list[Issue]:
     """LHDN requires unique invoice numbers within the supplier sequence.
 
@@ -911,6 +990,7 @@ RULES: list[RuleFn] = [
     rule_sst_consistency,
     rule_self_billed_detection,
     rule_supplier_tin_matches_tenant,
+    rule_cert_tin_matches_supplier,
     rule_invoice_number_uniqueness,
 ]
 

@@ -10814,6 +10814,114 @@ persist, audit.
 
 ---
 
+### Slice 117 — Regenerate self-signed dev cert when TIN changes
+
+User kept hitting LHDN's ``"The authenticated TIN and documents
+TIN is not matching"`` rejection even after Slice 113's pre-
+flight passed and Slice 114 synced the org/integration TINs.
+Root cause: LHDN's "authenticated TIN" in that error message
+isn't the OAuth-bound TIN (the JWT confirmed that as
+``IG25331633020``, matching the invoice supplier_tin). It's the
+**signing certificate's** subject TIN.
+
+The self-signed dev cert that ZeroKey mints in
+``apps/submission/certificates._generate_and_store_self_signed``
+encodes the org's TIN in the subject OU (``OU=TIN=<value>``) at
+generation time. When the user later edited their TIN through
+Slice 114's editable surface, the cert was never regenerated —
+so the cert subject still said ``TIN=C1234567890`` (a sign-up
+placeholder) while every downstream field said
+``TIN=IG25331633020``. LHDN validates the signature chain
+against the document body; the cert-vs-document mismatch
+produces the same wording as the OAuth mismatch, which is why
+the symptom looked identical to Slice 113's case.
+
+**Three fixes shipped together:**
+
+1. **``regenerate_self_signed_for_tin_change`` in
+   ``apps/submission/certificates.py``** — public helper that
+   re-mints the cert under the org's current TIN. Skips
+   ``certificate_kind == 'uploaded'`` rows because real
+   LHDN-issued certs are the customer's responsibility and
+   must never be silently re-keyed by us.
+
+2. **Auto-regen wired into ``update_organization``** — when
+   the user edits their TIN through Settings → Organization
+   (or the integration write-through from Slice 114), the
+   service now calls the regenerator and records a
+   ``submission.cert.regenerated`` audit event. Customer-
+   uploaded certs are left alone (the regenerator no-ops).
+
+3. **New pre-flight rule
+   ``rule_cert_tin_matches_supplier``** — parses the cert
+   subject's OU for ``TIN=<value>``, compares against
+   ``invoice.supplier_tin``. Mismatch → ERROR
+   ``supplier_tin.cert_mismatch`` with copy:
+   > "The signing certificate is bound to TIN X but this
+   > invoice's supplier TIN is Y. LHDN will reject with
+   > 'authenticated TIN and documents TIN is not matching'.
+   > Fix: open Settings → Organization and resave the TIN to
+   > trigger a fresh dev certificate (or upload a production
+   > certificate bound to Y)."
+
+   Sits in the validation registry between
+   ``rule_supplier_tin_matches_tenant`` (Slice 113) and
+   ``rule_invoice_number_uniqueness``. The two TIN-related
+   pre-flight rules together cover both upstream causes of
+   LHDN's "not matching" rejection — Slice 113 catches
+   OAuth-bound TIN drift, Slice 117 catches cert-bound TIN
+   drift.
+
+**Customer-state fix-up.**
+The user's tenant had ``cert OU=TIN=C1234567890`` from sign-up
+and ``Organization.tin=IG25331633020`` after the Slice 114
+edit. Regenerated in-session: new cert with
+``OU=TIN=IG25331633020``, the previously-rejected invoice
+flipped back to ``ready_for_review``, full re-validation pass:
+0 errors. Re-submission should now reach LHDN with consistent
+TIN signals across the document body, the OAuth JWT, and the
+signature chain.
+
+**Smoke evidence**
+
+```
+Before regen:
+  Organization.tin: IG25331633020
+  Cert subject OU: TIN=C1234567890   ← stale from sign-up
+  Invoice supplier_tin: IG25331633020
+  LHDN: rejected ("authenticated TIN and documents TIN is not matching")
+
+After regen (one call to regenerate_self_signed_for_tin_change):
+  Organization.tin: IG25331633020
+  Cert subject OU: TIN=IG25331633020   ← now matches
+  Invoice supplier_tin: IG25331633020
+  Pre-flight: 0 errors, ready to re-submit
+```
+
+**Files**
+- modified: ``backend/apps/submission/certificates.py``
+  (``regenerate_self_signed_for_tin_change``)
+- modified: ``backend/apps/identity/services.py``
+  (auto-regen + ``submission.cert.regenerated`` audit event
+  when TIN changes via ``update_organization``)
+- modified: ``backend/apps/validation/rules.py``
+  (``rule_cert_tin_matches_supplier`` + registry entry)
+
+**Limitations / future work**
+- The cert OU format parsing is ZeroKey-self-signed-specific
+  (``TIN=<value>``). Real LHDN-issued certs encode the TIN
+  via different OID extensions (per LHDN cert profile); the
+  rule no-ops when the OU doesn't carry the expected
+  prefix, which means customer-uploaded production certs
+  won't be cross-checked here. A future slice could parse
+  the LHDN-specific cert extension and surface the same
+  pre-flight signal for production-cert customers.
+- We regenerate on every TIN change, including transient
+  edits ("I typed it wrong, undo"). Cheap (~50ms RSA-2048
+  on a laptop) and idempotent, so not worth a debounce.
+
+---
+
 ## How to run it
 
 ```bash
