@@ -34,6 +34,7 @@ import {
 import { ValidationBanner } from "@/components/review/ValidationBanner";
 import { LhdnPanel } from "@/components/review/LhdnPanel";
 import { ReExtractMenu } from "@/components/review/ReExtractMenu";
+import { BuyerQRScanner } from "@/components/review/BuyerQRScanner";
 
 const TERMINAL = new Set(["validated", "rejected", "cancelled", "error", "ready_for_review"]);
 
@@ -748,8 +749,26 @@ function PartyBlock({
   const addressField = `${prefix}_address` as EditableField;
   const idTypeField = `${prefix}_id_type` as EditableField;
   const idValueField = `${prefix}_id_value` as EditableField;
+  const msicField = `${prefix}_msic_code` as EditableField;
+  const countryField = `${prefix}_country_code` as EditableField;
   return (
     <div className="flex flex-col gap-3">
+      {prefix === "buyer" && (
+        <div className="flex items-center justify-end">
+          <BuyerQRScanner
+            currentValues={{
+              buyer_legal_name: valueOf(nameField),
+              buyer_tin: valueOf(tinField),
+              buyer_address: valueOf(addressField),
+              buyer_id_type: valueOf(idTypeField),
+              buyer_id_value: valueOf(idValueField),
+              buyer_msic_code: valueOf(msicField),
+              buyer_country_code: valueOf(countryField),
+            }}
+            onApply={(field, value) => onChange(field, value)}
+          />
+        </div>
+      )}
       <FieldRow
         label={`${label} name`}
         name={nameField}

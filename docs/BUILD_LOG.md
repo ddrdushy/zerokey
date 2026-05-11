@@ -9621,6 +9621,104 @@ restores prior state.
 
 ---
 
+### Slice 107 — MyInvois buyer-info QR scanner
+
+LHDN's MyInvois portal lets a buyer generate a QR code
+that encodes their tax info (TIN, legal name, registration
+number, MSIC code, SST number, address) so a supplier
+doesn't have to type every field for a first-time buyer.
+This slice lets ZeroKey customers scan that QR from the
+invoice review surface and auto-fill the buyer panel.
+
+**Frontend-only slice.** The QR is decoded client-side
+with ``jsqr``; nothing about the buyer's tax details
+leaves the browser. The values land in the existing
+draft state via the same ``onChange`` path as manual
+edits, so the "Save corrections" + validation preview
+machinery from prior slices just works — the user gets
+the customary "N unsaved corrections" bar and can review
+the validation impact before saving.
+
+**Two input modes, no live camera.**
+``getUserMedia`` adds a permission prompt that scares
+users away from a feature most people will reach for
+once per new buyer. v1 ships *upload image* (decode any
+photo or screenshot of the QR) and *paste decoded text*
+(when the user already has the payload string). If
+demand surfaces, a third "scan with camera" mode wires
+on top of the existing parser without API changes.
+
+**Why a liberal parser.**
+LHDN's actual QR payload format isn't tightly published
+and varies across MyInvois portal versions. We try three
+strategies in order, and field-name aliases for each
+field cover both ``snake_case`` and ``camelCase`` and
+short codes (``tin``, ``regNo``, ``brn``, ``msic``):
+
+  1. JSON object.
+  2. URL with known query params. If the URL is a
+     ``myinvois.hasil.gov.my`` host with no extractable
+     params (a path-token share link), we surface a
+     warning explaining we can't resolve the token
+     offline.
+  3. ``key: value`` lines (some local tools generate
+     this for offline use).
+
+The parser is in ``BuyerQRScanner.tsx`` next to the UI
+because the format is volatile — pinning it to a server
+service would force a deploy every time LHDN nudges the
+payload shape.
+
+**The "what's about to change" preview is the trust
+contract.** A QR that came from an untrusted source could
+encode anything. We never silently overwrite a field;
+the preview screen lists every detected value with the
+current-on-file value next to it, highlights any
+overwrite with a ``Replaces current: …`` warning, and
+lets the user untick anything they want to keep. Only
+ticked rows apply on submit.
+
+**Files**
+- new: ``frontend/src/components/review/BuyerQRScanner.tsx``
+- modified: ``frontend/src/app/dashboard/jobs/[id]/page.tsx``
+  (button appears on the buyer side of ``PartyBlock``
+  only — supplier side never shows it).
+- modified: ``frontend/package.json`` (new dep: ``jsqr``).
+
+**Playwright evidence**
+
+```
+Scan buyer QR button: ✅
+Scan button count: 1 (buyer side only): ✅
+Modal opens: ✅
+Detected field rows: 15 (legal name, TIN, address, MSIC, country, regNo + labels + values): ✅
+Inputs containing "SKYRIM" after apply: ✅
+Deep-link warning for myinvois.hasil.gov.my URL: ✅
+Unparseable feedback for random text: ✅
+```
+
+After applying a JSON payload with 6 buyer fields, the
+review page shows the buyer panel populated and the
+save bar at "6 unsaved corrections" — the same path a
+manual edit takes.
+
+**Limitations / future work**
+
+  * No live camera scan yet — only file upload + paste.
+    Add ``getUserMedia`` + a video-frame loop when the
+    feature warrants the permission prompt.
+  * No portal-side resolution of MyInvois deep-link
+    tokens. Surfaces a clear warning when one is
+    detected. If LHDN publishes an API endpoint that
+    resolves these tokens, we can wire it later.
+  * Address parsing is single-field. If a payload
+    splits address line / city / postcode / state,
+    we currently take only the first address-shaped
+    field. The validation rule for the address still
+    fires correctly on save, so the user learns.
+
+---
+
 ## How to run it
 
 ```bash
