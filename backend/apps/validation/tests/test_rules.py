@@ -468,3 +468,51 @@ class TestInvoiceNumberUniqueness:
         )
         # Each tenant has its own invoice-number namespace.
         assert rules.rule_invoice_number_uniqueness(clash) == []
+
+
+@pytest.mark.django_db
+class TestSupplierTinMatchesTenant:
+    """Slice 113 — pre-flight catch for LHDN identity-fraud rejection."""
+
+    def test_matching_tin_passes(self, org) -> None:
+        # The baseline factory uses supplier_tin == org.tin == C10000000001.
+        invoice = _make_valid_invoice(org)
+        assert rules.rule_supplier_tin_matches_tenant(invoice) == []
+
+    def test_mismatched_tin_fires_error(self, org) -> None:
+        invoice = _make_valid_invoice(org)
+        # Pretend this invoice is from someone else's supplier — same
+        # case as the user uploading a purchase invoice.
+        invoice.supplier_tin = "C99999999999"
+        invoice.save(update_fields=["supplier_tin"])
+
+        issues = rules.rule_supplier_tin_matches_tenant(invoice)
+        codes = _codes(issues)
+        assert "supplier_tin.not_your_tenant" in codes
+        # Must be an error so the submit gate blocks it.
+        assert any(
+            i.code == "supplier_tin.not_your_tenant" and i.severity == rules.SEVERITY_ERROR
+            for i in issues
+        )
+
+    def test_blank_invoice_tin_does_not_fire(self, org) -> None:
+        # The required-fields rule covers the blank case; this rule
+        # should stay quiet so the user sees one canonical message.
+        invoice = _make_valid_invoice(org)
+        invoice.supplier_tin = ""
+        invoice.save(update_fields=["supplier_tin"])
+        assert rules.rule_supplier_tin_matches_tenant(invoice) == []
+
+    def test_blank_tenant_tin_does_not_fire(self, org) -> None:
+        # Fresh / unconfigured tenants shouldn't get spurious failures;
+        # the submission credentials check covers that path.
+        org.tin = ""
+        org.save(update_fields=["tin"])
+        invoice = _make_valid_invoice(org)
+        assert rules.rule_supplier_tin_matches_tenant(invoice) == []
+
+    def test_case_and_whitespace_tolerated(self, org) -> None:
+        invoice = _make_valid_invoice(org)
+        invoice.supplier_tin = " c10000000001 "  # leading/trailing + lowercase
+        invoice.save(update_fields=["supplier_tin"])
+        assert rules.rule_supplier_tin_matches_tenant(invoice) == []

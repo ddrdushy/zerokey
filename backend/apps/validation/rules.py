@@ -795,6 +795,62 @@ def rule_self_billed_detection(invoice: Invoice) -> list[Issue]:
 # --- Invoice number uniqueness within supplier namespace -----------------------
 
 
+def rule_supplier_tin_matches_tenant(invoice: Invoice) -> list[Issue]:
+    """Slice 113 — pre-flight catch for the LHDN identity-fraud rule.
+
+    LHDN's submission API authenticates as one specific TIN and only
+    accepts documents where THAT TIN is the supplier. If a tenant
+    uploads someone else's invoice (e.g. a purchase invoice they
+    received) and tries to submit it, LHDN rejects with
+    ``"The authenticated TIN and documents TIN is not matching"`` —
+    a 30-second round-trip just to learn what we can already know
+    locally.
+
+    Fire this rule as an ERROR before submission, so the Submit
+    button greys out and the user gets a clear "this invoice is
+    not yours to file" explanation up-front.
+
+    Blanket-skip when the tenant has no TIN configured (some seed
+    fixtures, fresh super-admin orgs); the existing
+    ``required_header_fields`` rule already covers a missing
+    supplier TIN on the invoice.
+    """
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    if _is_blank(invoice.supplier_tin):
+        return []
+    # We need the org row but enrichment / validation already runs
+    # under the invoice's tenant context — direct query is fine.
+    with super_admin_context(reason="validation.supplier_tin_vs_tenant"):
+        tenant_tin = (
+            Organization.objects.filter(id=invoice.organization_id)
+            .values_list("tin", flat=True)
+            .first()
+        ) or ""
+    tenant_tin = tenant_tin.strip().upper()
+    inv_tin = invoice.supplier_tin.strip().upper()
+    if not tenant_tin or tenant_tin == inv_tin:
+        return []
+    return [
+        Issue(
+            code="supplier_tin.not_your_tenant",
+            severity=SEVERITY_ERROR,
+            field_path="supplier_tin",
+            message=(
+                f"This invoice's supplier TIN ({invoice.supplier_tin}) is not "
+                f"your tenant's TIN ({tenant_tin}). LHDN only accepts invoices "
+                "where you are the supplier. If you received this as a buyer, "
+                "you don't submit it — the supplier already did (look for the "
+                "LHDN QR on the PDF). For sales invoices: check that your "
+                "organisation profile carries the right TIN, or that this "
+                "invoice's supplier_tin reflects your business."
+            ),
+            detail={"invoice_tin": invoice.supplier_tin, "tenant_tin": tenant_tin},
+        )
+    ]
+
+
 def rule_invoice_number_uniqueness(invoice: Invoice) -> list[Issue]:
     """LHDN requires unique invoice numbers within the supplier sequence.
 
@@ -854,6 +910,7 @@ RULES: list[RuleFn] = [
     rule_rm10k_threshold,
     rule_sst_consistency,
     rule_self_billed_detection,
+    rule_supplier_tin_matches_tenant,
     rule_invoice_number_uniqueness,
 ]
 

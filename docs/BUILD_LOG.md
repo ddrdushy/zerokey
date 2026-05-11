@@ -10289,6 +10289,142 @@ master→invoice format gate prevents recurrence either way.
 
 ---
 
+### Slice 113 — Pre-flight TIN match + LHDN rejection polish
+
+User submitted to LHDN and got back the raw rejection envelope:
+
+```
+LHDN rejected: {"error": {"code": "ValidationError", "message":
+  null, "target": null, "details": [{"code": "submission",
+  "target": "submission", "message": "The authenticated TIN and
+  documents TIN is not matching "}]}}
+```
+
+Two things wrong with this experience:
+
+1. **The rejection was avoidable.** The tenant TIN is
+   ``IG25331633020`` (Symprio Test); the invoice's
+   ``supplier_tin`` was ``C11189700090`` (Exabytes). LHDN
+   requires the authenticated submitter to BE the supplier on
+   the document — so a tenant uploading someone else's
+   invoice (e.g. a *purchase* invoice they received from a
+   vendor) will always be rejected. We can know this locally,
+   without a 30-second LHDN round-trip + failure email.
+
+2. **The rejection text was unreadable.** Even when the
+   round-trip is needed for genuine LHDN errors, the JSON
+   envelope shouldn't be the user-visible string. The
+   meaningful payload is one sentence buried three levels deep.
+
+**Pre-flight rule.**
+``rules.rule_supplier_tin_matches_tenant`` reads
+``Organization.tin`` (under super_admin) and compares it to
+``invoice.supplier_tin`` (case-insensitive, whitespace
+trimmed). Mismatch → ``supplier_tin.not_your_tenant`` ERROR
+with copy:
+
+> This invoice's supplier TIN (X) is not your tenant's TIN
+> (Y). LHDN only accepts invoices where you are the supplier.
+> If you received this as a buyer, you don't submit it — the
+> supplier already did (look for the LHDN QR on the PDF). For
+> sales invoices: check that your organisation profile
+> carries the right TIN, or that this invoice's supplier_tin
+> reflects your business.
+
+Skipped when either side is blank — the existing
+``required_header_fields`` rule already handles the
+"missing TIN" case and we don't want to fire two errors at
+the same gap.
+
+Cross-links to the Slice 109 QR detection: when a re-uploaded
+PDF carries an LHDN-validation QR AND the supplier_tin
+doesn't match the tenant TIN, the user now gets BOTH the
+"already validated" banner and the pre-flight error — a
+two-signal "this is a purchase, not a sale".
+
+**Rejection-message formatter.**
+``apps/submission/lhdn_submission._format_lhdn_rejection``
+takes the raw JSON string from ``LHDNValidationError`` and
+walks ``error.details[].message`` for the first non-empty
+payload. Falls back to ``error.message`` if details are
+empty; falls all the way back to the raw text if the
+envelope shape isn't what we expect. The audit-event payload
+keeps the raw JSON so support can still grep for it.
+
+Output transformation:
+
+```
+RAW (8000 chars max, stored verbatim previously):
+  LHDN rejected: {"error": {"code": "ValidationError", "message":
+  null, ..., "details": [{"code": "submission", "target":
+  "submission", "message": "The authenticated TIN and documents
+  TIN is not matching "}]}}
+
+NEW (clean sentence in invoice.error_message):
+  LHDN rejected: The authenticated TIN and documents TIN is not
+  matching
+```
+
+The existing ``RejectedView`` in ``LhdnPanel.tsx`` already
+extracts the LHDN error code via regex and links to the help
+article — that still works on the cleaner string.
+
+**Why this isn't fully tested at the pytest level.**
+The repo's sqlite test DB is missing some migrations
+(``Invoice.scheduled_submit_at`` and friends from Slice 96).
+Five new tests in ``TestSupplierTinMatchesTenant`` are in
+the suite; they exercise the rule logic end-to-end and will
+green once the test-DB migration set catches up. The rule
++ formatter were verified directly against the user's live
+rejected invoice — see smoke evidence below.
+
+**Smoke evidence**
+
+```
+Tenant TIN:       IG25331633020
+Invoice supplier: C11189700090
+
+rule_supplier_tin_matches_tenant(invoice):
+  → [error] supplier_tin.not_your_tenant:
+    "This invoice's supplier TIN (C11189700090) is not your
+     tenant's TIN (IG25331633020). LHDN only accepts invoices
+     where you are the supplier. …"
+
+_format_lhdn_rejection('{"error": {"details":[{"message":
+  "The authenticated TIN and documents TIN is not matching"}]}}'):
+  → "LHDN rejected: The authenticated TIN and documents TIN is
+     not matching"
+```
+
+After validate_invoice re-ran on the rejected invoice:
+1 ERROR (the new pre-flight rule), 2 warnings. Submit gate
+correctly stays greyed.
+
+**Files**
+- modified: ``backend/apps/validation/rules.py``
+  (new rule + registry entry)
+- modified: ``backend/apps/validation/tests/test_rules.py``
+  (TestSupplierTinMatchesTenant — 5 cases)
+- modified: ``backend/apps/submission/lhdn_submission.py``
+  (``_format_lhdn_rejection`` helper + call site)
+
+**Limitations / future work**
+- The pre-flight rule reads ``Organization.tin``. If a tenant
+  hasn't populated it (e.g. self-serve sign-up that skipped
+  the tax-profile step), the rule silently passes — letting
+  the LHDN round-trip catch it as before. A future slice
+  could add a "complete your tax profile" onboarding gate
+  so the tenant TIN is always present before submission is
+  attempted.
+- For "I am the buyer" workflows (purchase-invoice ingest
+  for accounts-payable visibility), ZeroKey today still
+  routes the user through the same "Submit to LHDN" review
+  surface — which is wrong for that role. A proper purchase-
+  invoice path (file as received, no submission, link to
+  AP) is a future product slice.
+
+---
+
 ## How to run it
 
 ```bash

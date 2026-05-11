@@ -191,7 +191,13 @@ def submit_invoice_to_lhdn(invoice_id: uuid.UUID | str, *, format: str = "json")
         response = lhdn_client.submit_documents(creds=creds, signed_xml_documents=[envelope])
     except lhdn_client.LHDNValidationError as exc:
         invoice.status = Invoice.Status.REJECTED
-        invoice.error_message = f"LHDN rejected: {exc!s}"[:8000]
+        # Slice 113 — LHDN's rejection body is a JSON envelope
+        # ({"error": {"code": ..., "details": [{"code": ..., "message": ...}]}}).
+        # The raw form is unreadable in the review UI; format the
+        # inner message + LHDN code into a single human sentence
+        # while keeping the raw JSON in the audit-event payload so
+        # support can still grep for it.
+        invoice.error_message = _format_lhdn_rejection(str(exc))[:8000]
         invoice.save(update_fields=["status", "error_message", "updated_at"])
         record_event(
             action_type="submission.submit.lhdn_rejected",
@@ -504,6 +510,62 @@ def cancel_invoice(
         "lhdn_uuid": invoice.lhdn_uuid,
         "cancelled_at": invoice.cancellation_timestamp.isoformat(),
     }
+
+
+def _format_lhdn_rejection(raw: str) -> str:
+    """Slice 113 — render LHDN's JSON rejection envelope as a clean sentence.
+
+    LHDN returns a body shaped like::
+
+        {"error": {"code": "ValidationError", "details": [
+            {"code": "submission", "message": "The authenticated TIN ..."}
+        ]}}
+
+    The rejection text passes through ``str(exception)``, which is the raw
+    JSON. Surfacing that in the review UI produced a wall of braces. We
+    parse out the first non-empty detail message, prefix the LHDN error
+    code if present, and fall back to the raw string if the envelope
+    shape we know isn't there.
+    """
+    import json as _json  # noqa: PLC0415
+
+    text = raw.strip()
+    # Strip the "LHDN rejected: " caller prefix if the raw still has it.
+    if text.startswith("LHDN rejected: "):
+        text = text[len("LHDN rejected: ") :]
+    # Look for the JSON envelope. Many transport errors come through as
+    # plain strings; in that case we return them unchanged.
+    json_start = text.find("{")
+    if json_start < 0:
+        return f"LHDN rejected: {text}"
+    try:
+        parsed = _json.loads(text[json_start:])
+    except _json.JSONDecodeError:
+        return f"LHDN rejected: {text}"
+
+    err = parsed.get("error") if isinstance(parsed, dict) else None
+    if not isinstance(err, dict):
+        return f"LHDN rejected: {text}"
+
+    details = err.get("details") or []
+    pieces: list[str] = []
+    for d in details:
+        if not isinstance(d, dict):
+            continue
+        msg = (d.get("message") or "").strip()
+        code = (d.get("code") or "").strip()
+        if msg:
+            pieces.append(f"{code}: {msg}" if code and code != "submission" else msg)
+    if not pieces:
+        # Fall through to the envelope-level message if details are empty.
+        outer_msg = (err.get("message") or "").strip()
+        outer_code = (err.get("code") or "").strip()
+        if outer_msg:
+            return f"LHDN rejected ({outer_code}): {outer_msg}" if outer_code else f"LHDN rejected: {outer_msg}"
+        return f"LHDN rejected: {text}"
+    if len(pieces) == 1:
+        return f"LHDN rejected: {pieces[0]}"
+    return "LHDN rejected: " + "; ".join(pieces)
 
 
 def _get_invoice(invoice_id) -> Invoice:
