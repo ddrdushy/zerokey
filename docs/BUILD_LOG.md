@@ -10922,6 +10922,127 @@ After regen (one call to regenerate_self_signed_for_tin_change):
 
 ---
 
+### Slice 118 — Soft-delete for Organizations
+
+User asked to "remove all tenants" except their own (SKYRIM).
+First attempt issued a per-tenant data wipe (Invoice / LineItem
+/ Job / Master / etc.) but the Organization rows themselves
+couldn't be dropped:
+
+```
+ProtectedError: Cannot delete some instances of model 'Organization'
+because they are referenced through protected foreign keys:
+'AuditEvent.organization'.
+```
+
+This is by design. ``AuditEvent.organization`` is
+``on_delete=PROTECT`` — the audit chain hashes ``organization_id``
+into every event's ``content_hash``, so even nulling the FK after
+the fact would invalidate every previously-computed chain link
+for that tenant. The spec is explicit: audit events are immutable,
+including their tenant binding.
+
+Hard-deleting wasn't an option. Soft-delete is.
+
+**Schema.**
+``Organization.deleted_at`` (nullable DateTimeField,
+``db_index=True``). Migration ``0021_organization_deleted_at.py``.
+
+**Query filtering.**
+
+  - ``apps.identity.services.memberships_for(user)`` now filters
+    ``organization__deleted_at__isnull=True``. A soft-deleted
+    tenant disappears from the user's workspace switcher, /me
+    response, and sign-in landing path.
+  - ``apps.administration.services.list_platform_tenants`` gains
+    an ``include_deleted: bool = False`` kwarg. Default hides
+    soft-deleted tenants from the admin tenant directory;
+    operators can flip the flag for audit-trail forensics.
+  - ``register_organization``'s TIN-uniqueness pre-check now
+    scopes to ``deleted_at__isnull=True`` so a tenant can
+    re-register with the same TIN after the previous account
+    was soft-deleted (the original audit history stays attached
+    to the deleted row; the new tenant gets a fresh
+    ``Organization.id``).
+
+**Soft-delete operation.**
+Direct SQL update via the in-session script — no new admin UI
+yet. The 15 fixture orgs were all marked
+``deleted_at=2026-05-11T15:21:20Z`` in one transaction, with a
+single ``admin.tenants_soft_deleted`` audit event recording the
+batch (count + list of affected ids + reason).
+
+A future slice could add a ``soft_delete_organization`` admin
+service + a "Delete tenant" button on the admin tenant detail
+page. Today the operator runs a shell.
+
+**Customer-state result.**
+
+```
+Before:
+  Active orgs: 16 (all listed in admin + every user's switcher)
+
+After:
+  Active orgs: 1   ← only SKYRIM SDN. BHD.
+  Soft-deleted: 15  ← tombstone rows with deleted_at set
+  Audit events: untouched (immutable; the 15 tombstones still
+                 reference their original tenant binding)
+```
+
+The user's /me/ response returns exactly one membership; the
+admin tenant list returns exactly one row by default; the
+audit chain integrity verification still passes because every
+event row's ``organization`` FK still resolves to a real (if
+soft-deleted) Organization.
+
+**Smoke evidence**
+
+```
+$ list_platform_tenants(actor=...)
+→ 1 org: SKYRIM SDN. BHD. (tin=IG25331633020)
+
+$ list_platform_tenants(actor=..., include_deleted=True)
+→ 16 orgs
+
+$ /api/v1/identity/me/  (as dushy@symprio.com)
+{
+  "active_organization_id": "e7771cef-...",
+  "memberships": [
+    {"organization": {"id": "e7771cef-...", "legal_name": "SKYRIM SDN. BHD."},
+     "role": "owner"}
+  ]
+}
+```
+
+**Files**
+- modified: ``backend/apps/identity/models.py`` (deleted_at)
+- new: ``backend/apps/identity/migrations/0021_organization_deleted_at.py``
+- modified: ``backend/apps/identity/services.py``
+  (memberships_for filter; register_organization TIN uniqueness
+  scoped to active)
+- modified: ``backend/apps/administration/services.py``
+  (list_platform_tenants gains ``include_deleted`` kwarg, defaults
+  to hiding tombstones)
+
+**Limitations / future work**
+- No customer-facing self-serve "delete my organization" button.
+  Soft-deletion via the admin shell only, today. A self-serve
+  flow would land alongside the eventual "data export +
+  account deletion" PDPA feature called out in earlier slices.
+- The TIN uniqueness constraint at the DB level is still a
+  plain ``unique=True``. The application-layer pre-check filters
+  by ``deleted_at`` so a soft-deleted tenant's TIN is reusable,
+  but a manual DB write could still collide. A future migration
+  could convert to a partial unique index (PostgreSQL ``WHERE
+  deleted_at IS NULL``) for defense in depth.
+- We didn't add a "purge" path for orgs that have NO audit
+  events (e.g. orgs created and immediately deleted in a single
+  dev session). Those could be hard-dropped without breaking
+  the chain, but the wiring isn't worth the complexity for a
+  one-shot operation we ran via shell.
+
+---
+
 ## How to run it
 
 ```bash

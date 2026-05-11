@@ -147,6 +147,16 @@ class Organization(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     legal_name = models.CharField(max_length=255)
     tin = models.CharField(max_length=32, unique=True)
+    # Slice 118 — soft-delete column. ``AuditEvent.organization`` is
+    # PROTECT-FK by design (the audit chain is immutable, including
+    # the org binding that's hashed into the chain), so we can't
+    # actually drop org rows once they have audit history. Setting
+    # ``deleted_at`` hides the org from admin listings, sign-in flows,
+    # and customer-facing lookups while preserving the chain. The
+    # ``unique=True`` on ``tin`` becomes a partial-unique-on-not-
+    # deleted constraint in the migration so a tenant can re-sign-up
+    # with the same TIN after their previous account was deleted.
+    deleted_at = models.DateTimeField(null=True, blank=True, db_index=True)
     # Slice 115 — the tenant's other tax-identity fields. Mirror what
     # already exists on enrichment.CustomerMaster: BRN (12-digit
     # business registration number) and MSIC (5-digit industry

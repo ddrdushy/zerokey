@@ -557,7 +557,11 @@ def platform_overview(*, actor_user_id: UUID | str) -> dict[str, Any]:
 
 
 def list_platform_tenants(
-    *, actor_user_id: UUID | str, search: str | None = None, limit: int = 100
+    *,
+    actor_user_id: UUID | str,
+    search: str | None = None,
+    limit: int = 100,
+    include_deleted: bool = False,
 ) -> list[dict[str, Any]]:
     """Cross-tenant directory of every Organization on the platform.
 
@@ -585,6 +589,11 @@ def list_platform_tenants(
 
     with super_admin_context(reason="admin.platform_tenants:list"):
         qs = Organization.objects.all()
+        # Slice 118 — hide soft-deleted tenants by default. Operator
+        # can pass include_deleted=True for the "show all including
+        # tombstones" admin view (useful for audit trail forensics).
+        if not include_deleted:
+            qs = qs.filter(deleted_at__isnull=True)
         if search:
             # Case-insensitive contains across the two display fields the
             # operator might paste in. Plain SQL ILIKE under the hood.

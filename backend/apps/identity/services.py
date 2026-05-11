@@ -54,7 +54,10 @@ def register_owner(
     """
     if User.objects.filter(email__iexact=email).exists():
         raise RegistrationError(f"User with email {email!r} already exists.")
-    if Organization.objects.filter(tin=organization_tin).exists():
+    # Slice 118 — TIN uniqueness only against active (non-soft-deleted)
+    # orgs. A deleted org's TIN is free for re-registration; the
+    # original audit history stays attached to the deleted row.
+    if Organization.objects.filter(tin=organization_tin, deleted_at__isnull=True).exists():
         raise RegistrationError(f"Organization with TIN {organization_tin!r} already exists.")
 
     try:
@@ -148,8 +151,16 @@ def memberships_for(user: User) -> list[OrganizationMembership]:
     the caller never receives a connection in elevated state.
     """
     with super_admin_context(reason="identity.memberships_for:user_org_lookup"):
+        # Slice 118 — filter out memberships whose organization has
+        # been soft-deleted. The membership row itself stays (audit
+        # trail), but a deleted org shouldn't appear in the user's
+        # workspace switcher / /me response.
         return list(
-            OrganizationMembership.objects.filter(user=user, is_active=True)
+            OrganizationMembership.objects.filter(
+                user=user,
+                is_active=True,
+                organization__deleted_at__isnull=True,
+            )
             .select_related("organization", "role")
             .order_by("organization__legal_name")
         )
