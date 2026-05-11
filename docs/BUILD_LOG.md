@@ -10425,6 +10425,121 @@ correctly stays greyed.
 
 ---
 
+### Slice 114 — Unify the two TIN stores (org settings ↔ LHDN integration)
+
+User reported: "I changed the TIN in [LHDN] integration, it's
+not reflecting on the org settings page." Root cause: there
+were **two separate TIN stores** that the product treated as
+one but never actually synced:
+
+  - ``Organization.tin`` — the identity-level TIN, displayed
+    on Settings → Organization with a "LHDN-issued. Contact
+    support to change." hint, read-only.
+  - ``OrganizationIntegration("lhdn_myinvois").credentials.tin``
+    — the per-integration TIN, edited via Settings →
+    Integrations → LHDN MyInvois card, free-text required
+    field labelled "Your TIN".
+
+The user edited the second one (correctly — it's marked
+required + editable). The first one (the one the org page
+reads) stayed unchanged. The Slice 113 pre-flight rule was
+also reading the first one, so the user's intended TIN never
+took effect for validation either. Two stores, no sync, no
+indication to the user which one mattered for what.
+
+**Decision: one logical TIN, two surfaces, write-through both
+ways.** The TIN is one piece of data — the tenant's tax
+identity. Both UI surfaces should edit the same value.
+
+**Backend changes.**
+
+  - ``apps/identity/services.py`` — ``EDITABLE_ORGANIZATION_FIELDS``
+    gains ``tin``. ``update_organization`` validates the LHDN
+    format (``^(C|IG|OG|G)\d{11}$``), normalises to uppercase /
+    trimmed, and enforces the existing unique-TIN constraint
+    with a clean error message ("TIN X is already registered
+    to another tenant").
+  - New helper ``_sync_tin_to_lhdn_integration`` mirrors the
+    new value into both sandbox and production credential
+    blobs of the ``lhdn_myinvois`` integration row. Runs
+    under super-admin elevation because
+    ``OrganizationIntegration`` is RLS-scoped and the caller
+    may be running from a fix-up path with no tenant set.
+  - ``apps/identity/integrations.py`` —
+    ``upsert_credentials`` now write-throughs in the reverse
+    direction: when the LHDN integration's ``tin`` field
+    changes, ``Organization.tin`` is updated to match (also
+    under super-admin). Records an
+    ``identity.organization.tin_synced`` audit event for the
+    direction-aware paper trail.
+
+  Net behaviour: edit the TIN from either surface, both
+  surfaces show the same value, and the Slice 113 pre-flight
+  rule sees the right value too.
+
+**Frontend changes.**
+
+  - ``app/dashboard/settings/page.tsx`` — TIN row swapped
+    from ``ReadOnlyRow`` to ``FieldRow``. Helper copy
+    under the field documents the LHDN format
+    (``C``/``IG``/``OG`` + 11 digits) and notes "Changes
+    here also update your LHDN integration TIN".
+
+**Customer-state fix-up.**
+The user's tenant had ``Organization.tin=IG25331633020``
+(sign-up value) while ``integration.sandbox.tin=C24445084060``
+(their later edit). We reconciled in-session by routing the
+edit through ``update_organization``, which fired the reverse
+sync. ``production_credentials`` had no ``tin`` key
+beforehand; the sync now back-fills it so a production-mode
+switch doesn't surprise the user with an empty field.
+
+**Smoke evidence**
+
+```
+BEFORE Slice 114:
+  Organization.tin       = IG25331633020
+  integration.sandbox.tin = C24445084060   ← user's intended value
+  integration.prod.tin   = (missing)
+
+AFTER (one round-trip via update_organization):
+  Organization.tin       = C24445084060   ✓
+  integration.sandbox.tin = C24445084060  ✓
+  integration.prod.tin   = C24445084060   ✓ (back-filled)
+```
+
+**Validation rules trigger cleanly.**
+Slice 113's pre-flight TIN-match rule now reads the
+post-sync ``Organization.tin``; a tenant whose org TIN is
+``C24445084060`` and uploads an invoice with
+``supplier_tin=C24445084060`` clears the gate.
+
+**Files**
+- modified: ``backend/apps/identity/services.py``
+  (``EDITABLE_ORGANIZATION_FIELDS`` += ``tin``; format +
+  uniqueness validation; ``_sync_tin_to_lhdn_integration``)
+- modified: ``backend/apps/identity/integrations.py``
+  (write-through into ``Organization.tin`` on LHDN
+  credentials save)
+- modified: ``frontend/src/app/dashboard/settings/page.tsx``
+  (TIN row is editable + format hint)
+
+**Limitations / future work**
+- The TIN write-through is direction-specific to
+  ``lhdn_myinvois``. If a future integration card surfaces
+  another TIN-shaped field (unlikely — LHDN is the only one
+  that owns it), the sync needs to know about it. Punt; a
+  more generic "linked-fields" registry would over-engineer
+  a problem that doesn't exist yet.
+- Changing the TIN doesn't invalidate previously-submitted
+  invoices — those keep the supplier_tin they were sent
+  with. The audit chain captures the org-level change.
+  Customers occasionally need to re-issue invoices after a
+  TIN change; that's a downstream product flow we don't yet
+  formalise.
+
+---
+
 ## How to run it
 
 ```bash

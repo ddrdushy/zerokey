@@ -229,6 +229,43 @@ def upsert_credentials(
                 ]
             )
 
+            # Slice 114 — write-through for the LHDN integration's TIN
+            # field. Until now, the per-integration "Your TIN" lived
+            # in its own credentials blob and never propagated to
+            # ``Organization.tin``; users edited it here and were
+            # surprised when the org settings page still showed the
+            # old value. The integration's TIN is the same legal
+            # entity as the org's TIN — they should never disagree.
+            # If the user changed ``tin`` here, mirror that change
+            # onto the canonical Organization.tin (under super-admin
+            # because the integration row already lives under the
+            # tenant; we lift just the org write to bypass any RLS
+            # nuance on the cross-table update).
+            if integration_key == "lhdn_myinvois" and "tin" in changed:
+                from apps.identity.models import Organization
+                from apps.identity.tenancy import super_admin_context
+
+                # Whatever value we just persisted (could be empty if
+                # the user cleared the field; we mirror that too).
+                new_tin = (current_plain.get("tin") or "").strip().upper()
+                with super_admin_context(reason="lhdn_integration.tin_writethrough"):
+                    org = Organization.objects.filter(id=organization_id).first()
+                    if org is not None and (org.tin or "") != new_tin:
+                        org.tin = new_tin
+                        org.save(update_fields=["tin", "updated_at"])
+                        record_event(
+                            action_type="identity.organization.tin_synced",
+                            actor_type=AuditEvent.ActorType.SERVICE,
+                            actor_id="lhdn_integration.tin_writethrough",
+                            organization_id=str(organization_id),
+                            affected_entity_type="Organization",
+                            affected_entity_id=str(organization_id),
+                            payload={
+                                "via": "lhdn_myinvois.credentials.tin",
+                                "environment": environment,
+                            },
+                        )
+
             record_event(
                 action_type="identity.integration.credentials_updated",
                 actor_type=AuditEvent.ActorType.USER,

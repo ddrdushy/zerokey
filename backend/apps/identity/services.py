@@ -166,6 +166,17 @@ def memberships_for(user: User) -> list[OrganizationMembership]:
 EDITABLE_ORGANIZATION_FIELDS: frozenset[str] = frozenset(
     {
         "legal_name",
+        # Slice 114 — TIN is now customer-editable. Was locked with
+        # a "Contact support to change" hint historically, on the
+        # theory that LHDN-issued TINs shouldn't move. In practice
+        # (a) support couldn't actually change it either (admin
+        # allowlist also excluded it), (b) sign-up typos and tenant
+        # restructures legitimately need to update it, and (c) we
+        # already had a separate per-integration TIN field that the
+        # user could edit, producing a confusing two-stores split.
+        # Now: one canonical TIN, edit-from-the-org-page,
+        # write-through from the integration credentials path.
+        "tin",
         "sst_number",
         "registered_address",
         "contact_email",
@@ -177,6 +188,12 @@ EDITABLE_ORGANIZATION_FIELDS: frozenset[str] = frozenset(
         "extraction_mode",
     }
 )
+
+# LHDN TIN format — letter prefix (C corporate, IG/OG/G individual)
+# followed by 11 digits. Same regex as the structuring sanitiser in
+# apps/enrichment/services.py; duplicated to preserve the bounded-
+# context boundary.
+_TIN_RE = __import__("re").compile(r"^(C|IG|OG|G)\d{11}$")
 
 # extraction_mode is constrained to one of these literal values; the
 # update path validates explicitly so an attacker can't poke through
@@ -224,6 +241,32 @@ def update_organization(
                 f"extraction_mode must be one of {sorted(_EXTRACTION_MODE_VALUES)}; "
                 f"got {new_value!r}."
             )
+        if field_name == "tin":
+            # Slice 114 — format validation. Empty is allowed (tenant
+            # may not yet have a TIN issued, e.g. mid-onboarding); any
+            # non-empty value must match the LHDN shape.
+            normalized = new_value.strip().upper()
+            if normalized and not _TIN_RE.match(normalized):
+                raise OrganizationUpdateError(
+                    f"tin must be empty or LHDN-format ({{C,IG,OG,G}}+11 "
+                    f"digits, e.g. C20880050010 or IG12345678901); got "
+                    f"{new_value!r}."
+                )
+            # Also enforce the unique constraint on tin (Organization
+            # has it indexed) up-front so the error message is clean
+            # rather than an IntegrityError at .save() time.
+            if normalized:
+                taken = (
+                    Organization.objects.filter(tin=normalized)
+                    .exclude(id=organization_id)
+                    .exists()
+                )
+                if taken:
+                    raise OrganizationUpdateError(
+                        f"TIN {normalized} is already registered to another "
+                        "tenant. If you believe this is yours, contact support."
+                    )
+            new_value = normalized
         previous = getattr(org, field_name) or ""
         if previous == new_value:
             continue
@@ -246,7 +289,76 @@ def update_organization(
             "changed_fields": sorted(changed),
         },
     )
+
+    # Slice 114 — reverse-sync. When the user edits the TIN here, also
+    # update the LHDN integration's credentials.tin so the two surfaces
+    # never disagree. The forward direction (integration → org) lives
+    # in apps.identity.integrations.upsert_credentials; together they
+    # make the two stores feel like one logical field.
+    if "tin" in changed:
+        _sync_tin_to_lhdn_integration(
+            organization_id=organization_id,
+            tin=org.tin or "",
+            actor_user_id=actor_user_id,
+        )
+
     return org
+
+
+def _sync_tin_to_lhdn_integration(
+    *, organization_id: uuid.UUID | str, tin: str, actor_user_id: uuid.UUID | str
+) -> None:
+    """Mirror Organization.tin onto the lhdn_myinvois integration credentials.
+
+    Applies the value to BOTH environment blobs (sandbox + production) —
+    the org's TIN is the same legal identity regardless of which LHDN
+    endpoint the tenant is currently targeting. Best-effort: a malformed
+    integration row or missing crypto key logs a warning and returns
+    rather than rolling back the Organization save.
+    """
+    from apps.administration.crypto import (
+        decrypt_dict_values,
+        encrypt_dict_values,
+    )
+    from apps.identity.models import OrganizationIntegration
+
+    # OrganizationIntegration is TenantScopedModel — RLS-scoped.
+    # update_organization runs under whichever context the user's
+    # request landed in (typically their tenant), but a fix-up call
+    # from a management command may run with no tenant set. Lift
+    # the cross-table writes under super-admin so we hit the row
+    # regardless of caller context.
+    with super_admin_context(reason="identity.tin_reverse_sync"):
+        try:
+            row = OrganizationIntegration.objects.filter(
+                organization_id=organization_id,
+                integration_key="lhdn_myinvois",
+            ).first()
+        except Exception:
+            return
+        if row is None:
+            return
+        dirty = False
+        for column in ("sandbox_credentials", "production_credentials"):
+            plain = decrypt_dict_values(getattr(row, column) or {})
+            if (plain.get("tin") or "") == tin:
+                continue
+            if tin:
+                plain["tin"] = tin
+            else:
+                plain.pop("tin", None)
+            setattr(row, column, encrypt_dict_values(plain))
+            dirty = True
+        if dirty:
+            row.updated_by_user_id = actor_user_id
+            row.save(
+                update_fields=[
+                    "sandbox_credentials",
+                    "production_credentials",
+                    "updated_by_user_id",
+                    "updated_at",
+                ]
+            )
 
 
 def can_user_act_for_organization(user: User, organization_id: uuid.UUID | str) -> bool:

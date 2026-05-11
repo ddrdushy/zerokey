@@ -19,6 +19,10 @@ import { SettingsTabs } from "@/components/settings/SettingsTabs";
 
 type EditableOrgField =
   | "legal_name"
+  // Slice 114 — TIN moved from read-only to customer-editable.
+  // Single source of truth; the integrations page write-through
+  // also lands on this same field.
+  | "tin"
   | "sst_number"
   | "registered_address"
   | "contact_email"
@@ -118,12 +122,21 @@ export default function OrganizationSettingsPage() {
               dirty={isDirty("legal_name")}
               onChange={onChangeField}
             />
-            <ReadOnlyRow
-              label="TIN"
-              value={org.tin}
-              hint="LHDN-issued. Contact support to change."
-              mono
-            />
+            <div>
+              <FieldRow
+                label="TIN"
+                name="tin"
+                value={valueOf("tin")}
+                dirty={isDirty("tin")}
+                onChange={onChangeField}
+                mono
+              />
+              <p className="mt-1 px-1 text-[10px] text-slate-400">
+                LHDN format: <code className="font-mono">C</code> + 11 digits (corporate) or{" "}
+                <code className="font-mono">IG</code>/<code className="font-mono">OG</code> + 11
+                digits (individual). Changes here also update your LHDN integration TIN.
+              </p>
+            </div>
             <FieldRow
               label="SST number"
               name="sst_number"
