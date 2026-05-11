@@ -29,6 +29,12 @@ type ReadProps = {
   confidence?: number | null;
   issues?: ValidationIssue[];
   mono?: boolean;
+  // Slice 111 — when the parent knows structuring is still in
+  // flight, every empty field shows a shimmering skeleton bar
+  // instead of the static "—" placeholder. Saves the user from
+  // wondering whether the document was scanned poorly or whether
+  // the engine just hasn't finished yet.
+  loading?: boolean;
 };
 
 type EditProps = ReadProps & {
@@ -39,12 +45,17 @@ type EditProps = ReadProps & {
 };
 
 export function FieldRow(props: ReadProps | EditProps) {
-  const { label, value, confidence, issues = [], mono = false } = props;
+  const { label, value, confidence, issues = [], mono = false, loading = false } = props;
   const isEdit = "onChange" in props;
   const dirty = isEdit ? props.dirty === true : false;
   const hasError = issues.some((i) => i.severity === "error");
   const hasWarning = issues.some((i) => i.severity === "warning");
   const isMissing = !value;
+  // While structuring is in flight, the validation issues are stale (they
+  // were computed against the previous empty state). Hide them; the next
+  // poll tick replaces them with the real set.
+  const showIssues = !loading && issues.length > 0;
+  const showSkeleton = loading && isMissing && !dirty;
 
   return (
     <div
@@ -63,10 +74,19 @@ export function FieldRow(props: ReadProps | EditProps) {
         <span className="text-2xs font-medium uppercase tracking-wider text-slate-400">
           {label}
         </span>
-        {dirty ? <DirtyMarker /> : confidence != null ? <ConfidenceDot value={confidence} /> : null}
+        {dirty ? (
+          <DirtyMarker />
+        ) : showSkeleton ? null : confidence != null ? (
+          <ConfidenceDot value={confidence} />
+        ) : null}
       </div>
 
-      {isEdit ? (
+      {showSkeleton ? (
+        <div
+          className="mt-2 h-4 w-2/3 animate-skeleton-pulse rounded bg-slate-200"
+          aria-hidden="true"
+        />
+      ) : isEdit ? (
         <input
           name={props.name}
           type={inputType((props as EditProps).kind)}
@@ -96,7 +116,7 @@ export function FieldRow(props: ReadProps | EditProps) {
         </div>
       )}
 
-      {issues.length > 0 && (
+      {showIssues && (
         <div className="mt-2 flex flex-col gap-1.5">
           {issues.map((issue) => (
             // Slice 91 — issues here are the LIVE preview from the

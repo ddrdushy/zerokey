@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import { api, ApiError, type IngestionJob, type Invoice, type ValidationIssue } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -576,12 +577,26 @@ function ReviewPanel({
       )}
 
       {structuringPending && (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs">
-          <div className="font-medium text-ink">Extracting fields…</div>
-          <p className="mt-1 text-slate-600">
-            The structuring engine is reading your document. Fields will
-            populate here in a few seconds — no need to refresh.
-          </p>
+        <div
+          className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-xs"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-start gap-3 px-4 py-3">
+            <Loader2 className="mt-0.5 h-4 w-4 flex-shrink-0 animate-spin text-ink" />
+            <div className="flex-1">
+              <div className="font-medium text-ink">Extracting fields…</div>
+              <p className="mt-1 text-slate-600">
+                The structuring engine is reading your document. Fields will
+                populate here in a few seconds — no need to refresh.
+              </p>
+            </div>
+          </div>
+          {/* Indeterminate progress bar — slides left-to-right to signal
+              live work without claiming a percentage we don't know. */}
+          <div className="relative h-0.5 overflow-hidden bg-slate-200">
+            <div className="absolute inset-y-0 left-0 w-1/3 animate-[progress-slide_1.6s_ease-in-out_infinite] bg-ink/60" />
+          </div>
         </div>
       )}
 
@@ -604,6 +619,7 @@ function ReviewPanel({
             issues={issuesByPath["invoice_number"]}
             dirty={isDirty("invoice_number")}
             onChange={onChangeField}
+            loading={structuringPending}
           />
           <FieldRow
             label="Issue date"
@@ -614,6 +630,7 @@ function ReviewPanel({
             issues={issuesByPath["issue_date"]}
             dirty={isDirty("issue_date")}
             onChange={onChangeField}
+            loading={structuringPending}
           />
           <FieldRow
             label="Due date"
@@ -624,6 +641,7 @@ function ReviewPanel({
             issues={issuesByPath["due_date"]}
             dirty={isDirty("due_date")}
             onChange={onChangeField}
+            loading={structuringPending}
           />
           <FieldRow
             label="Currency"
@@ -633,6 +651,7 @@ function ReviewPanel({
             issues={issuesByPath["currency_code"]}
             dirty={isDirty("currency_code")}
             onChange={onChangeField}
+            loading={structuringPending}
           />
         </div>
       </section>
@@ -648,6 +667,7 @@ function ReviewPanel({
             confidence={conf}
             issuesByPath={issuesByPath}
             onChange={onChangeField}
+            loading={structuringPending}
           />
           <PartyBlock
             label="Buyer"
@@ -657,6 +677,7 @@ function ReviewPanel({
             confidence={conf}
             issuesByPath={issuesByPath}
             onChange={onChangeField}
+            loading={structuringPending}
           />
         </div>
       </section>
@@ -674,6 +695,7 @@ function ReviewPanel({
             dirty={isDirty("subtotal")}
             onChange={onChangeField}
             mono
+            loading={structuringPending}
           />
           <FieldRow
             label="Total tax"
@@ -685,6 +707,7 @@ function ReviewPanel({
             dirty={isDirty("total_tax")}
             onChange={onChangeField}
             mono
+            loading={structuringPending}
           />
           <FieldRow
             label="Grand total"
@@ -696,6 +719,7 @@ function ReviewPanel({
             dirty={isDirty("grand_total")}
             onChange={onChangeField}
             mono
+            loading={structuringPending}
           />
         </div>
       </section>
@@ -740,6 +764,7 @@ type PartyBlockProps = {
   confidence: Record<string, number>;
   issuesByPath: Record<string, ValidationIssue[]>;
   onChange: (name: string, value: string) => void;
+  loading?: boolean;
 };
 
 function PartyBlock({
@@ -750,6 +775,7 @@ function PartyBlock({
   confidence,
   issuesByPath,
   onChange,
+  loading = false,
 }: PartyBlockProps) {
   const nameField = `${prefix}_legal_name` as EditableField;
   const tinField = `${prefix}_tin` as EditableField;
@@ -784,6 +810,7 @@ function PartyBlock({
         issues={issuesByPath[nameField]}
         dirty={isDirty(nameField)}
         onChange={onChange}
+        loading={loading}
       />
       <FieldRow
         label={`${label} TIN`}
@@ -794,6 +821,7 @@ function PartyBlock({
         dirty={isDirty(tinField)}
         onChange={onChange}
         mono
+        loading={loading}
       />
       <PartyIdTypeRow
         idTypeField={idTypeField}
@@ -801,6 +829,7 @@ function PartyBlock({
         valueOf={valueOf}
         isDirty={isDirty}
         onChange={onChange}
+        loading={loading}
       />
       <FieldRow
         label={`${label} address`}
@@ -810,6 +839,7 @@ function PartyBlock({
         issues={issuesByPath[addressField]}
         dirty={isDirty(addressField)}
         onChange={onChange}
+        loading={loading}
       />
     </div>
   );
@@ -829,15 +859,19 @@ function PartyIdTypeRow({
   valueOf,
   isDirty,
   onChange,
+  loading = false,
 }: {
   idTypeField: EditableField;
   idValueField: EditableField;
   valueOf: (name: EditableField) => string;
   isDirty: (name: EditableField) => boolean;
   onChange: (name: string, value: string) => void;
+  loading?: boolean;
 }) {
   const idType = valueOf(idTypeField);
+  const idValue = valueOf(idValueField);
   const dirty = isDirty(idTypeField) || isDirty(idValueField);
+  const showSkeleton = loading && !idType && !idValue && !dirty;
   return (
     <div
       className={[
@@ -848,7 +882,13 @@ function PartyIdTypeRow({
       <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">
         ID type / number
       </div>
-      <div className="mt-1.5 grid grid-cols-[110px_1fr] gap-2">
+      {showSkeleton ? (
+        <div
+          className="mt-2 h-4 w-2/3 animate-skeleton-pulse rounded bg-slate-200"
+          aria-hidden="true"
+        />
+      ) : null}
+      <div className={["mt-1.5 grid grid-cols-[110px_1fr] gap-2", showSkeleton ? "hidden" : ""].join(" ")}>
         <select
           aria-label="ID type"
           value={idType}

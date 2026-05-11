@@ -115,8 +115,13 @@ _FIELD_HINTS: dict[str, str] = {
         "time-of-day component."
     ),
     "due_date": (
-        "the payment due date, ISO 8601 (YYYY-MM-DD). Empty if not "
-        "stated — many invoices use payment_terms_code instead."
+        "the payment due date, ISO 8601 (YYYY-MM-DD). When the "
+        "document says \"e-Invoice Type: Paid Invoice\" (or is marked "
+        "Valid + has a Submission Date in the past), the invoice was "
+        "settled at issuance — default due_date to the issue_date in "
+        "that case. A service period like \"(13/05/2026 - 12/05/2029)\" "
+        "in a line description is the service window, NOT the due "
+        "date. Empty only if the document has no payment timing at all."
     ),
     "currency_code": (
         "ISO 4217 3-letter currency code (e.g. MYR, USD, SGD). "

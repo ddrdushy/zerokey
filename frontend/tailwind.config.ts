@@ -76,6 +76,27 @@ const config: Config = {
         panel: "220ms",
         ctx: "340ms",
       },
+      keyframes: {
+        // Slice 111 — indeterminate progress bar (extraction wait).
+        // Slides a partial-width track left → right → off-screen and
+        // loops. Used in the "Extracting fields…" banner so the user
+        // sees live motion instead of static placeholder text.
+        "progress-slide": {
+          "0%": { transform: "translateX(-100%)" },
+          "50%": { transform: "translateX(150%)" },
+          "100%": { transform: "translateX(350%)" },
+        },
+        // Skeleton shimmer for empty fields while the structurer
+        // works. Pulses opacity to convey "this will fill in" without
+        // implying a deterministic timeline.
+        "skeleton-pulse": {
+          "0%, 100%": { opacity: "0.45" },
+          "50%": { opacity: "0.8" },
+        },
+      },
+      animation: {
+        "skeleton-pulse": "skeleton-pulse 1.5s ease-in-out infinite",
+      },
     },
   },
   plugins: [],

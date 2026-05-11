@@ -10069,6 +10069,113 @@ bare-bullet rendering for hintless fields. 11/11 pass.
 
 ---
 
+### Slice 111 — Loading animations + due-date inference
+
+Two small UX fixes the user asked for after the Slice 110
+structurer ran on the exabytes invoice:
+
+1. **The "extracting" wait felt inert.** Plain text "Fields
+   will populate here in a few seconds" with no motion.
+   Users on slow structurer calls (Nemotron 49B can take
+   30-60s when warming up) would refresh the page out of
+   habit, which is exactly what the existing 2-second poll
+   was meant to prevent. Replace with a spinner + animated
+   progress bar in the banner, and replace the static "—"
+   placeholder in every empty field with a shimmering
+   skeleton bar.
+2. **Due date was empty on a Paid Invoice.** The source PDF
+   carried no explicit "Due Date" field — but LHDN's "Paid
+   Invoice" type implies payment was settled at issuance,
+   so ``due_date == issue_date`` is the right default. The
+   structurer didn't know to do this.
+
+**Loading state.**
+
+  - ``app/dashboard/jobs/[id]/page.tsx`` — the ``Extracting
+    fields…`` banner gains a spinning ``Loader2`` icon and
+    an indeterminate progress bar that slides left-to-right
+    on a 1.6s loop. Indeterminate because we don't know the
+    finish time — the structurer's wall-clock varies with
+    document size and engine warm-up state.
+  - ``components/review/FieldRow.tsx`` gains an optional
+    ``loading?: boolean`` prop. When true and the field is
+    empty (and not dirty), the row replaces the value /
+    "—" placeholder with a ``h-4 w-2/3`` div tinted slate-
+    200 and pulsed via the new ``animate-skeleton-pulse``
+    keyframe. Confidence dots and validation issue pills
+    hide during loading (the issues are stale — they were
+    computed against the previous empty state and will
+    regenerate after the next poll tick).
+  - ``PartyBlock`` and ``PartyIdTypeRow`` thread the
+    ``loading`` flag through to every leaf row so the
+    supplier / buyer panels stay visually consistent with
+    the header.
+  - ``tailwind.config.ts`` adds two keyframes:
+    ``progress-slide`` (the banner bar) and
+    ``skeleton-pulse`` (the field placeholders).
+
+**Due-date hint.**
+``_FIELD_HINTS["due_date"]`` in ``apps/extraction/prompts.py``
+now teaches the model that:
+
+  > When the document says ``e-Invoice Type: Paid Invoice``
+  > (or is marked Valid + has a Submission Date in the
+  > past), the invoice was settled at issuance — default
+  > due_date to issue_date. A service period like
+  > ``"(13/05/2026 - 12/05/2029)"`` in a line description is
+  > the service window, NOT the due date.
+
+This catches the most common LHDN-format ambiguity (paid
+e-invoices) without false-positiving on free-form
+"net 14 days" invoices where an explicit due date is
+expected.
+
+**Why Celery had to be restarted to pick up Slice 110.**
+The user re-uploaded after Slice 110 shipped and the
+structurer *still* returned the BRN-in-TIN values. Root
+cause: the Celery worker process caches Python modules
+after first import. Django's dev server auto-reloads on
+file change; Celery doesn't. The pattern to standardise:
+``docker compose restart worker`` is part of every
+deploy that touches a worker-imported module
+(``apps/extraction/*``, ``apps/submission/services.py``,
+shared adapters, prompts). The fix Slice 110 documents
+the cause; Slice 111 also restarts the worker as part
+of its own shipping flow.
+
+**Playwright evidence.**
+
+```
+Spinner:                                  ✅
+"Extracting fields…" banner:              ✅
+Progress bar:                             ✅
+Skeleton placeholders:                    14 ✅
+Static "—" placeholders visible:           0 ✅ (replaced by skeletons)
+```
+
+Screenshot saved as ``/tmp/loading-state.png``: spinner
+icon + dark progress bar in the banner; every empty
+header field (Invoice Number, Issue Date, Due Date)
+shows a slate shimmer; populated fields (Currency = MYR,
+the LHDN QR banner) render normally. After structuring
+completes, the same poll loop that drove the wait
+silently swaps in the real values — no flicker, no
+manual refresh.
+
+**Files**
+- modified: ``frontend/src/app/dashboard/jobs/[id]/page.tsx``
+  (Loader2 import, banner upgrade, ``loading`` plumbed
+  to every FieldRow + PartyBlock + PartyIdTypeRow)
+- modified: ``frontend/src/components/review/FieldRow.tsx``
+  (``loading`` prop, skeleton bar, issue-pill suppression
+  during loading)
+- modified: ``frontend/tailwind.config.ts`` (two new
+  keyframes + ``animate-skeleton-pulse`` shortcut)
+- modified: ``backend/apps/extraction/prompts.py``
+  (due_date hint for the Paid-Invoice case)
+
+---
+
 ## How to run it
 
 ```bash
