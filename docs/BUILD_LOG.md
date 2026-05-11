@@ -9956,6 +9956,119 @@ duplicate-submission warning copy.
 
 ---
 
+### Slice 110 — Field-specific hints for the structuring prompt
+
+User reproduced the TIN/BRN swap on a real exabytes invoice:
+the structurer returned ``supplier_tin: "200201008429"`` (the
+BRN) instead of ``"C11189700090"`` (the actual TIN). On top
+of that, ``issue_date`` was empty and the ``supplier_id_type``
+/ ``supplier_id_value`` / ``buyer_id_type`` / ``buyer_id_value``
+fields were missing entirely — they weren't even in the
+structuring schema, so the structurer never tried to fill
+them. The review screen showed "Pick a type first" placeholders
+and a "1 unsaved correction" bar where the user had hand-typed
+an invented TIN with a ``C`` prefix on the BRN.
+
+**Root cause.**
+The original ``build_field_structure_prompt`` listed every
+field as a bare bullet ("extract verbatim, use empty string
+if absent"). For totals and addresses that's enough — they're
+unambiguous. For the LHDN tabular layout where ``ID
+Type/Number`` and ``TIN`` sit in adjacent columns, the model
+has no signal to disambiguate and defaults to the first
+numeric value it sees under the supplier block (the BRN).
+
+**Fix.**
+``apps/extraction/prompts.py`` gains a ``_FIELD_HINTS`` map
+with per-field disambiguation copy for the ten fields where
+the bare instruction has proven insufficient. The builder
+emits ``- field: <hint>`` for fields with a registered hint
+and ``- field`` for the rest, so the prompt stays tight for
+the easy ones.
+
+Hints registered:
+
+  - ``supplier_tin`` / ``buyer_tin``: must start with ``C``
+    (corporate) or ``IG``/``OG`` (individual), explicitly NOT
+    the BRN.
+  - ``supplier_registration_number`` / ``buyer_registration_number``:
+    12-digit BRN, explicitly NOT the TIN.
+  - ``supplier_id_type`` / ``buyer_id_type`` (new in schema):
+    one of ``BRN`` / ``NRIC`` / ``PASSPORT`` / ``ARMY``.
+  - ``supplier_id_value`` / ``buyer_id_value`` (new in
+    schema): the value matching the chosen id_type; for BRN
+    duplicates the registration_number.
+  - ``issue_date``: labelled "Issuance Date" on LHDN format;
+    return ISO 8601 YYYY-MM-DD; strip time.
+  - ``due_date``: ISO 8601 or empty.
+  - ``currency_code``: ISO 4217 (``MYR``), never the ``RM``
+    symbol.
+  - ``supplier_msic_code`` / ``buyer_msic_code``: 5 digits.
+  - ``buyer_country_code``: ISO 3166-1 alpha-2, default ``MY``
+    for Malaysian addresses.
+
+**Schema additions.**
+``INVOICE_HEADER_FIELDS`` in ``apps/submission/services.py``
+gains ``supplier_id_type``, ``supplier_id_value``,
+``buyer_id_type``, ``buyer_id_value``. These were already
+allowlisted in ``EDITABLE_HEADER_FIELDS`` (so the manual
+review surface could write them) but the structurer never
+saw them. Now they round-trip cleanly: auto-fill →
+review-with-edit → save.
+
+**Live evidence.**
+Running the new prompt against the exact pdfplumber output
+from the user's invoice through ``nvidia/llama-3.3-nemotron-
+super-49b-v1`` (the Slice 108 default):
+
+```
+completed in 21.0s, overall_confidence=0.658
+✅ supplier_tin:                'C11189700090'   (was '200201008429')
+✅ buyer_tin:                   'C24445084060'   (was '201601011111')
+✅ issue_date:                  '2026-04-29'     (was empty)
+✅ supplier_id_type:            'BRN'            (was empty)
+✅ supplier_id_value:           '200201008429'   (was empty)
+✅ buyer_id_type:               'BRN'            (was empty)
+✅ buyer_id_value:              '201601011111'   (was empty)
+✅ supplier_registration_number:'200201008429'
+✅ buyer_registration_number:   '201601011111'
+✅ grand_total:                 '854.93'
+✅ total_tax:                   '63.33'
+✅ currency_code:                'MYR'
+```
+
+Every field now matches the source PDF. The "1 unsaved
+correction" pattern (user hand-fixing a wrong TIN) disappears
+— the bare upload arrives review-ready.
+
+**Tests.**
+``apps/extraction/tests/test_prompts.py`` gains seven new
+contract tests covering each hint group: TIN pattern,
+registration vs TIN distinction, id_type allowed values,
+id_value cross-link to registration_number, issue_date ISO
+format, currency code blocking the RM symbol, and the
+bare-bullet rendering for hintless fields. 11/11 pass.
+
+**Files**
+- modified: ``backend/apps/extraction/prompts.py`` (hints + builder)
+- modified: ``backend/apps/extraction/tests/test_prompts.py``
+- modified: ``backend/apps/submission/services.py``
+  (INVOICE_HEADER_FIELDS gains id_type / id_value)
+
+**Limitations / future work**
+- We don't validate the *cross-field consistency* in the
+  prompt — e.g. if id_type=BRN then id_value should be 12
+  digits. The model gets it right on the LHDN format, but
+  on a free-form invoice a smaller model might pick
+  inconsistently. The downstream LHDN validator catches
+  this regardless; tightening the prompt is a follow-up.
+- The hints are baked into the codebase. If LHDN changes
+  the TIN format (e.g. introduces a new prefix), the hints
+  go stale until a code change. A future slice could move
+  hints into a versioned admin-configurable table.
+
+---
+
 ## How to run it
 
 ```bash

@@ -47,6 +47,14 @@ INVOICE_HEADER_FIELDS = [
     "supplier_address",
     "supplier_phone",
     "supplier_sst_number",
+    # Slice 110 — LHDN's HITS validator matches TIN + secondary-ID
+    # together. ``id_type`` is one of NRIC / PASSPORT / BRN / ARMY;
+    # ``id_value`` is the corresponding number. For Malaysian
+    # corporates the pair is BRN + 12-digit number, which duplicates
+    # ``supplier_registration_number`` in the BRN case but keeps the
+    # LHDN-native shape so the submitter doesn't have to guess.
+    "supplier_id_type",
+    "supplier_id_value",
     "buyer_legal_name",
     "buyer_tin",
     "buyer_registration_number",
@@ -55,6 +63,8 @@ INVOICE_HEADER_FIELDS = [
     "buyer_phone",
     "buyer_sst_number",
     "buyer_country_code",
+    "buyer_id_type",
+    "buyer_id_value",
     "subtotal",
     "total_tax",
     "grand_total",

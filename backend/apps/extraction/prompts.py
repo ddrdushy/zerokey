@@ -16,6 +16,25 @@ a single builder that special-cases the structured key.
 If we add a second structured key in future (e.g. ``allowances``,
 ``discount_breakdown``), it lands here as another branch alongside
 ``line_items``. Adapters stay unchanged.
+
+Field-specific hints (Slice 110)
+--------------------------------
+LHDN MyInvois e-invoice PDFs lay out the supplier and buyer blocks
+with TWO adjacent identifier columns: an "ID Type/Number" column
+(holding the Malaysian BRN — 12 digits starting with the year of
+incorporation) and a "TIN" column (holding the LHDN TIN — letter-
+prefixed: ``C`` for corporate, ``IG``/``OG`` for individual). Before
+this slice the prompt asked the model for ``supplier_tin`` and
+``buyer_tin`` without describing the value pattern; on the tabular
+layout the model would default to the first numeric field it saw
+under the supplier block, which is the BRN. The result: every LHDN-
+format invoice came back with the BRN sitting in the TIN field, and
+the user (who knew the validation rule expected a ``C`` prefix)
+would manually add it — producing a non-existent TIN like
+``C201601011111`` (BRN with C prepended). The fix is to give the
+model the value pattern, and to keep the BRN separately on
+``supplier_registration_number`` / ``buyer_registration_number``
+where it belongs.
 """
 
 from __future__ import annotations
@@ -58,6 +77,94 @@ _LINE_ITEM_FIELDS = [
 LINE_ITEMS_KEY = "line_items"
 
 
+# Field-specific hints (Slice 110). One entry per flat field where the
+# generic "extract verbatim" instruction has proven insufficient — most
+# commonly because the LHDN-format e-invoice lays out adjacent
+# look-alike values that the model conflates without explicit pattern
+# guidance. Keys missing from this map fall through to the bare
+# instruction; the prompt stays short for the easy fields.
+_FIELD_HINTS: dict[str, str] = {
+    "supplier_tin": (
+        "the LHDN tax identifier of the supplier — corporate TIN "
+        '"C" + 11 digits (e.g. C11189700090), or individual TIN '
+        '"IG"/"OG" + 11 digits. Do NOT use the business registration '
+        "number (BRN): if you see two adjacent identifier columns "
+        "labelled \"ID Type/Number\" and \"TIN\", the TIN is the one "
+        "that begins with a letter. Empty if the document doesn't "
+        "carry one."
+    ),
+    "buyer_tin": (
+        "the LHDN tax identifier of the buyer — same shape as "
+        "supplier_tin (corporate \"C\" + 11 digits, or individual "
+        '"IG"/"OG" + 11 digits). NOT the BRN. Empty if absent.'
+    ),
+    "supplier_registration_number": (
+        "Malaysian Business Registration Number (BRN) of the supplier "
+        "— 12 digits, typically starting with the year of "
+        'incorporation (e.g. 200201008429). This is the value in the '
+        '"ID Type/Number" column, NOT the TIN column.'
+    ),
+    "buyer_registration_number": (
+        "Malaysian BRN of the buyer — 12 digits. Same rules as "
+        "supplier_registration_number. NOT the TIN."
+    ),
+    "issue_date": (
+        "the date the supplier issued the invoice. On LHDN-format "
+        "e-invoices this is labelled \"Issuance Date\" or "
+        '"Issue Date". Return ISO 8601 (YYYY-MM-DD); strip any '
+        "time-of-day component."
+    ),
+    "due_date": (
+        "the payment due date, ISO 8601 (YYYY-MM-DD). Empty if not "
+        "stated — many invoices use payment_terms_code instead."
+    ),
+    "currency_code": (
+        "ISO 4217 3-letter currency code (e.g. MYR, USD, SGD). "
+        "Malaysian invoices default to MYR; never use \"RM\" — that's "
+        "the symbol, not the code."
+    ),
+    "supplier_id_type": (
+        "the LHDN secondary-ID scheme for the supplier. One of: "
+        '"BRN" (Malaysian corporates — registration number), "NRIC" '
+        '(Malaysian individuals — citizen ID), "PASSPORT" (foreigners), '
+        '"ARMY" (military ID). For a Malaysian Sdn Bhd / Bhd, this is '
+        'always "BRN". Empty only if the document has no identifier at '
+        "all."
+    ),
+    "supplier_id_value": (
+        "the value matching supplier_id_type — the 12-digit BRN, the "
+        "NRIC number, the passport number, etc. For a BRN this is the "
+        "same 12-digit number that goes in supplier_registration_number "
+        "(populate both). NOT the TIN."
+    ),
+    "buyer_id_type": (
+        "the LHDN secondary-ID scheme for the buyer. Same allowed "
+        'values as supplier_id_type ("BRN" / "NRIC" / "PASSPORT" / '
+        '"ARMY"). Look at the buyer block of the document, not the '
+        "supplier block."
+    ),
+    "buyer_id_value": (
+        "the value matching buyer_id_type — the buyer's BRN, NRIC, or "
+        "passport number. For a BRN this is the same 12-digit number "
+        "that goes in buyer_registration_number (populate both). NOT "
+        "the TIN."
+    ),
+    "supplier_msic_code": (
+        'Malaysian Standard Industrial Classification code — 5 digits '
+        "(e.g. 63111). Empty if not stated on the document."
+    ),
+    "buyer_msic_code": (
+        "MSIC code of the buyer — 5 digits. Empty if absent (buyer "
+        "MSIC is only required for B2B; the supplier's is mandatory)."
+    ),
+    "buyer_country_code": (
+        "ISO 3166-1 alpha-2 country code of the buyer (e.g. MY, SG, "
+        "US). Default to MY if the buyer address ends in a Malaysian "
+        "state."
+    ),
+}
+
+
 def build_field_structure_prompt(*, text: str, target_schema: list[str]) -> str:
     """Build the full FieldStructure prompt for an Ollama / Claude / etc.
 
@@ -85,11 +192,18 @@ def build_field_structure_prompt(*, text: str, target_schema: list[str]) -> str:
     )
 
     if flat_fields:
-        flat_listing = "\n".join(f"  - {f}" for f in flat_fields)
+        # Slice 110 — emit a hint per field where one is registered.
+        # Fields without a hint render as a bare bullet so the prompt
+        # stays tight for the easy ones (totals, addresses, etc.).
+        flat_listing = "\n".join(
+            f"  - {f}: {_FIELD_HINTS[f]}" if f in _FIELD_HINTS else f"  - {f}"
+            for f in flat_fields
+        )
         parts.append(
             "Header fields — each value is a string extracted verbatim from "
             "the document. Use an empty string for fields not present in the "
-            f"text. Do NOT guess.\n{flat_listing}"
+            "text. Do NOT guess. Field-specific notes are inline where the "
+            f"LHDN format needs disambiguation:\n{flat_listing}"
         )
 
     if has_line_items:
