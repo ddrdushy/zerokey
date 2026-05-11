@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -309,6 +310,22 @@ def apply_structured_fields(
 
 
 def _set_invoice_field(invoice: Invoice, field: str, value: str) -> None:
+    # Slice 112 — server-side sanitisation for fields where the
+    # structurer's hint compliance has been inconsistent. We accept
+    # values that match the LHDN format and discard otherwise; an
+    # over-eager model that pasted an SST registration number into
+    # an MSIC field would silently land a wrong value through the
+    # rest of the pipeline. Better to leave the field empty and let
+    # validation flag it than to keep junk that the user has to find
+    # and undo.
+    if field in {"supplier_msic_code", "buyer_msic_code"}:
+        if not _MSIC_CODE_RE.match(value or ""):
+            return
+    if field in {"buyer_country_code"}:
+        # ISO 3166-1 alpha-2 is two letters. Anything else discarded.
+        if not value or len(value) != 2 or not value.isalpha():
+            return
+        value = value.upper()
     if field in {"issue_date", "due_date"}:
         setattr(invoice, field, _parse_date(value))
     elif field in {"subtotal", "total_tax", "grand_total", "discount_amount"}:
@@ -316,6 +333,14 @@ def _set_invoice_field(invoice: Invoice, field: str, value: str) -> None:
     else:
         max_len = invoice._meta.get_field(field).max_length or 8192
         setattr(invoice, field, str(value)[:max_len])
+
+
+# Slice 112 — exactly five digits, no letters / dashes / whitespace.
+# Matches the LHDN MSIC catalog format (e.g. 63111 = Wired telecommunications
+# activities). The structurer occasionally produces "W10-1808" when the
+# buyer block has only an SST registration number; this regex blocks it
+# at the apply boundary so the field stays empty for the user to fill.
+_MSIC_CODE_RE = re.compile(r"^\d{5}$")
 
 
 def _parse_date(value: str) -> date | None:
@@ -408,6 +433,21 @@ def _materialise_line_items(invoice: Invoice, raw: Any) -> int:
             tax_amount = (subtotal * tax_rate / Decimal("100")).quantize(Decimal("0.01"))
         if line_total is None and subtotal is not None:
             line_total = (subtotal + (tax_amount or Decimal("0.00"))).quantize(Decimal("0.01"))
+        # Slice 112 — if the structurer DID return line_total_incl_tax
+        # but it disagrees with subtotal + tax by more than 1 cent, the
+        # arithmetic is the source of truth. The LLM occasionally
+        # rounds the final figure (e.g. 854.93 → 855.00); we'd rather
+        # let ``line.total.mismatch`` flag a real input error than
+        # silently land an LLM-rounded value that contradicts the line
+        # math.
+        if (
+            line_total is not None
+            and subtotal is not None
+            and tax_amount is not None
+        ):
+            expected = (subtotal + tax_amount).quantize(Decimal("0.01"))
+            if abs(line_total - expected) > Decimal("0.01"):
+                line_total = expected
         LineItem.objects.create(
             organization_id=invoice.organization_id,
             invoice=invoice,

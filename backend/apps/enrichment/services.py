@@ -43,6 +43,7 @@ Auto-fill rules:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -307,6 +308,16 @@ def _autofill_buyer(invoice: Invoice, master: CustomerMaster) -> list[str]:
         master_value = getattr(master, master_field) or ""
         if not master_value:
             continue
+        # Slice 112 — format-gate sensitive fields at the master→invoice
+        # boundary. A previously-poisoned master (bad MSIC, malformed TIN)
+        # would otherwise re-infect every new invoice for the same buyer,
+        # defeating the structurer-side sanitisation. Skip the autofill
+        # for fields where the master's stored value clearly violates
+        # the LHDN format; downstream validation will then flag the
+        # field as "missing" rather than "wrong", which is the truthful
+        # signal.
+        if not _master_value_passes_format(invoice_field, master_value):
+            continue
         setattr(invoice, invoice_field, master_value)
         # 1.0 = "from your verified master". The review UI's three-band
         # scheme renders this as the highest-confidence green dot.
@@ -315,6 +326,28 @@ def _autofill_buyer(invoice: Invoice, master: CustomerMaster) -> list[str]:
     if filled:
         invoice.per_field_confidence = confidence
     return filled
+
+
+# Format gates shared with apps.submission.services._set_invoice_field.
+# Duplicated here intentionally — the bounded-context rule says
+# enrichment must not import from submission models/services beyond
+# the public service API.
+_BUYER_MSIC_RE = re.compile(r"^\d{5}$")
+_BUYER_TIN_RE = re.compile(r"^(C\d{11}|IG\d{11}|OG\d{11}|G\d{11})$")
+
+
+def _master_value_passes_format(invoice_field: str, value: str) -> bool:
+    """Reject malformed master values at the enrichment boundary.
+
+    Returns True for values that should be copied through; False for
+    values that look wrong enough that copying them would silently
+    re-introduce the very issue the validation rules just fixed.
+    """
+    if invoice_field == "buyer_msic_code":
+        return bool(_BUYER_MSIC_RE.match(value))
+    if invoice_field == "buyer_tin":
+        return bool(_BUYER_TIN_RE.match(value))
+    return True
 
 
 # --- Item master ------------------------------------------------------------

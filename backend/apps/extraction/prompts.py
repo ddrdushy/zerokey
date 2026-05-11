@@ -155,12 +155,21 @@ _FIELD_HINTS: dict[str, str] = {
         "the TIN."
     ),
     "supplier_msic_code": (
-        'Malaysian Standard Industrial Classification code — 5 digits '
-        "(e.g. 63111). Empty if not stated on the document."
+        "Malaysian Standard Industrial Classification code of the "
+        "supplier — EXACTLY 5 numeric digits (e.g. 63111). Only fill "
+        "if the document explicitly labels a field as \"MSIC\" or "
+        "\"MSIC Code\". Do NOT use SST registration numbers (which "
+        "contain letters and dashes like W10-1808-31031530), tax "
+        "registration numbers, or any value that contains anything "
+        "other than 5 digits. Empty if no explicit MSIC label exists."
     ),
     "buyer_msic_code": (
-        "MSIC code of the buyer — 5 digits. Empty if absent (buyer "
-        "MSIC is only required for B2B; the supplier's is mandatory)."
+        "MSIC code of the buyer — same rules as supplier_msic_code "
+        "(exactly 5 numeric digits, only if explicitly labelled "
+        "\"MSIC\" under the BUYER block). The buyer block on most "
+        "LHDN-format invoices does NOT carry an MSIC code; if you "
+        "only see SST or contact numbers under the buyer, leave this "
+        "empty rather than guessing."
     ),
     "buyer_country_code": (
         "ISO 3166-1 alpha-2 country code of the buyer (e.g. MY, SG, "

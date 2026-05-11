@@ -534,10 +534,13 @@ function ReviewPanel({
     return !FIELD_PATHS.has(i.field_path);
   });
 
-  // Slice 59B: blocking issues for the LHDN submit gate. We treat
-  // any open validation issue as blocking — same threshold the
-  // ValidationBanner shows.
-  const blockingIssues = activeIssues.filter((i) => i.severity !== "info").length;
+  // Slice 112: only ERROR-severity issues block the LHDN submit
+  // gate. Warnings are explicitly "worth a second look but won't
+  // block submission" per the banner copy (and per
+  // ValidationSummary.has_blocking_errors). Counting warnings here
+  // contradicted that — a "due date in the past" warning would
+  // grey out Submit even though LHDN itself accepts the invoice.
+  const blockingIssues = activeIssues.filter((i) => i.severity === "error").length;
 
   // Auto-fill ran and produced nothing — surface that explicitly
   // rather than letting the user think extraction silently failed.

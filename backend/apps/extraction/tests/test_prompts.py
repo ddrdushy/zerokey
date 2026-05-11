@@ -124,6 +124,22 @@ def test_id_value_hint_mentions_brn_for_corporates_and_excludes_tin() -> None:
     assert "NOT the TIN" in prompt
 
 
+def test_msic_hint_blocks_sst_registration_numbers() -> None:
+    # Real failure mode (Slice 111 follow-up): structurer grabbed
+    # "W10-1808" from the buyer's SST registration number and put it
+    # in buyer_msic_code. The hint must explicitly reject that shape.
+    prompt = build_field_structure_prompt(
+        text="x", target_schema=["supplier_msic_code", "buyer_msic_code"]
+    )
+    # Calls out the exact failure pattern.
+    assert "SST" in prompt
+    # And the format constraint.
+    assert "5 numeric digits" in prompt or "5 digits" in prompt
+    # And tells the model to leave the buyer side empty when the
+    # block doesn't carry an explicit MSIC label.
+    assert "leave this" in prompt or "empty" in prompt.lower()
+
+
 def test_hintless_fields_render_as_bare_bullets() -> None:
     # Most fields don't have a hint registered — they should render
     # as a plain bullet without empty colon noise.

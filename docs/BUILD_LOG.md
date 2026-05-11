@@ -10176,6 +10176,119 @@ manual refresh.
 
 ---
 
+### Slice 112 — Submit gate fixes + LLM-output sanitisation
+
+User reported that after Slice 110/111 fixed the structurer's
+output, the review screen still wouldn't let them submit — the
+banner read "1 error, 1 warning" and the Submit button stayed
+greyed out. Three distinct root causes, all addressed in this
+slice:
+
+**1. Submit gate counted warnings as blocking.**
+``app/dashboard/jobs/[id]/page.tsx`` line 540 computed
+``blockingIssues = activeIssues.filter(i => i.severity !==
+"info").length`` — which lumped warnings in with errors. But
+the gate banner copy said warnings "won't block submission"
+and the backend ``ValidationSummary.has_blocking_errors``
+counts only errors. The gate now filters to
+``severity === "error"`` only. Warnings (due-date in past,
+catalog-miss MSIC, etc.) still surface in the banner and
+inline issue pills; they just don't grey out the button.
+
+**2. The structurer kept poisoning ``buyer_msic_code``.**
+The LHDN-format buyer block has SST + Contact columns where
+the supplier block has SST + MSIC. The model couldn't
+disambiguate and grabbed ``W10-1808`` (first 8 chars of the
+buyer's SST registration number) for ``buyer_msic_code``.
+The Slice 111 prompt hint warned against this explicitly,
+and Nemotron 49B still got it wrong. Belt-and-braces fix:
+``_set_invoice_field`` now format-gates MSIC + country-code
+values at the apply boundary. ``W10-1808`` doesn't match
+``^\d{5}$`` so it's silently dropped before reaching the
+Invoice. Validation then sees an empty field (a truthful
+"missing" signal) instead of a wrong one (a false "invalid
+format" error).
+
+**3. The poisoned master kept re-infecting new invoices.**
+After multiple failed re-extracts and a user-side TIN edit,
+the CustomerMaster for "Skyrim Sdn Bhd" had ``msic_code =
+'W10-1808'`` and ``tin = 'C201601011111'`` (the user's
+hand-fixed BRN-with-C-prefix). Enrichment's
+``_autofill_buyer`` copies blank invoice fields from the
+master — so even after the structurer-side sanitisation
+correctly produced empty values, enrichment refilled them
+with the master's bad data on a fresh re-extract. Fixed by
+adding ``_master_value_passes_format`` as a gate at the
+master→invoice copy boundary in
+``apps/enrichment/services.py``. Same MSIC regex; new TIN
+regex (``^(C|IG|OG|G)\d{11}$``). Master values that fail the
+gate are skipped, not copied. The validation rules then
+flag the field as missing rather than wrong. The poisoned
+master rows for this tenant were also cleaned up in-session
+as a one-off.
+
+**4. LLM rounding error on line totals.**
+The structurer returned ``line_total_incl_tax = "855.00"``
+for a line whose ``subtotal (791.60) + tax (63.33)`` equals
+``854.93``. 7-cent rounding error. ``line.total.mismatch``
+ERROR fired correctly — but the math was off by definition
+not by data. The model rounded the final figure rather than
+copying it from the source. Fix in ``_materialise_line_items``:
+when the structurer returns all three (subtotal, tax,
+line_total) and the line_total disagrees with subtotal + tax
+by more than 1 cent, the deterministic arithmetic wins.
+Existing 1-cent tolerance for genuine source rounding stays
+in place via the validation rule.
+
+**End-to-end verification on the user's invoice.**
+
+```
+Before this slice:
+  Validation: 1 error, 2 warnings
+    [error  ] buyer_msic_code.format: must be 5 digits
+    [warning] dates.due_in_past
+    [warning] supplier_msic_code.unknown
+  Submit button: greyed out (warnings counted)
+
+After this slice (same invoice, re-extracted):
+  Validation: 0 errors, 2 warnings
+    [warning] dates.due_in_past
+    [warning] supplier_msic_code.unknown
+  Submit button: enabled ✅
+```
+
+Field values that came out clean:
+
+  - ``supplier_tin``: ``C11189700090``
+  - ``buyer_tin``: ``C24445084060``
+  - ``buyer_msic_code``: ``""`` (was ``"W10-1808"``)
+  - line 1: ``791.60 + 63.33 = 854.93`` (was rounded to ``855.00``)
+
+**Operational follow-up.**
+We now have two enrichment-master cleanup needs: the poisoned
+"Skyrim" + "SkyRim" rows from prior failures were cleaned in
+this session, but every dev tenant accumulates these. A
+future slice could surface a "master row health" audit in
+the admin console — flag rows whose stored values fail their
+format gates, surface them for operator review or auto-
+cleanup. Punt until customer demand surfaces; the
+master→invoice format gate prevents recurrence either way.
+
+**Files**
+- modified: ``frontend/src/app/dashboard/jobs/[id]/page.tsx``
+  (Submit gate: errors only)
+- modified: ``backend/apps/submission/services.py``
+  (``_set_invoice_field`` MSIC + country-code gates; line
+  total deterministic recompute)
+- modified: ``backend/apps/enrichment/services.py``
+  (``_master_value_passes_format`` gate on autofill)
+- modified: ``backend/apps/extraction/prompts.py``
+  (stronger MSIC hint — SST values explicitly excluded)
+- modified: ``backend/apps/extraction/tests/test_prompts.py``
+  (test pinning the SST→MSIC failure-mode guard)
+
+---
+
 ## How to run it
 
 ```bash
