@@ -559,12 +559,19 @@ function ReviewPanel({
     <>
       {structuringSkipped && (
         <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-xs">
-          <div className="font-medium text-warning">Auto-fill is offline.</div>
-          <p className="mt-1 text-slate-600">
-            We couldn&apos;t reach a structuring engine for this upload, so the
-            fields below are blank. Fill them in manually — validation will
-            still run on save and the audit log captures the skip reason.
-          </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-medium text-warning">Auto-fill is offline.</div>
+              <p className="mt-1 text-slate-600">
+                Every structuring engine in the routing chain was unavailable
+                for this upload, so the fields below are blank. Try another
+                engine via <span className="font-medium">Re-extract</span> at
+                the top of the page, or fill the fields in manually —
+                validation runs either way and the audit log captures the
+                skip reason.
+              </p>
+            </div>
+          </div>
         </div>
       )}
 

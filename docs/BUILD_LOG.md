@@ -9719,6 +9719,122 @@ manual edit takes.
 
 ---
 
+### Slice 108 — NVIDIA NIM structuring engine
+
+Direct response to a real failure observed in a dev tenant:
+the user uploaded ``3VQNWS7QDJXF47VXQ1X3GBQK10.pdf``;
+extraction worked (pdfplumber, 1,678 chars, clean text), but
+every routing rule in the FieldStructure chain failed —
+
+  1. Ollama Cloud (``gpt-oss:120b-cloud``) → 60s read timeout
+  2. Anthropic Claude (fallback) → ``ANTHROPIC_API_KEY`` unset
+
+The pipeline correctly walked the chain, fell through to
+``finalize_invoice_without_structuring`` and stamped the
+``invoice.error_message`` + inbox item + audit event. But the
+user saw empty fields and read it as "extraction broken." The
+fix has two parts: add a third structuring rail so a single
+vendor's outage doesn't take auto-fill offline, and make the
+"auto-fill is offline" banner more discoverable + linked to the
+Slice 106 ``Re-extract`` menu so a user has a one-click
+recovery path.
+
+**Adapter — NVIDIA NIM.**
+``apps/extraction/adapters/nvidia_mistral_adapter.py`` wraps
+NIM's OpenAI-compatible ``/v1/chat/completions`` endpoint.
+Same contract as the Ollama adapter (host + api_key + model
+via ``Engine.credentials``); same JSON-mode envelope; same
+graceful-degrade-via-``EngineUnavailable`` so the router can
+fall through cleanly.
+
+**Model choice.**
+Shipped, tested, and abandoned
+``mistralai/mistral-large-3-675b-instruct-2512`` — clean JSON
+but routinely 80-180s per call which is incompatible with a
+synchronous re-extract UX (verified: 82s for a 16-token
+prompt). The default is now
+``nvidia/llama-3.3-nemotron-super-49b-v1`` — cold-start round
+trip under 1s, full invoice prompt ~15s, every expected field
+populated on the live failing invoice. The slug stays
+``nvidia-mistral-structure`` for migration-history reasons;
+the actual model is per-credential and an operator can swap
+it from the admin engines surface without code changes.
+
+**Routing priority.**
+``0007_seed_nvidia_mistral_structure`` seeds an
+``EngineRoutingRule`` at priority 25 — ahead of Ollama (50)
+and Anthropic Claude (100). Tenants get NIM by default, with
+Ollama and Anthropic as the fallback chain.
+
+**Credentials path — admin DB, not .env.**
+Per the standing convention from ``credentials.py``,
+``Engine.credentials`` (Fernet-encrypted at rest via
+``apps.administration.crypto``) is the canonical store; env
+is dev fallback only. Credentials were populated through the
+admin ``update_engine`` service — the same path the
+``/admin/engines/<id>/`` operator UI takes. ``.env`` retains
+``NVIDIA_HOST``/``NVIDIA_API_KEY``/``NVIDIA_MODEL``
+placeholders empty so a fresh checkout doesn't ship plaintext
+secrets.
+
+**Timeout = 180s** with ``NVIDIA_STRUCTURING_TIMEOUT`` env
+override. The default Nemotron 49B finishes in ~15s; the
+180s ceiling protects against an operator swapping to a
+slower model.
+
+**Banner copy update.**
+The "Auto-fill is offline" banner on the review page now
+explicitly mentions the Slice 106 ``Re-extract`` menu as the
+recovery path — a user hitting the rare structuring outage
+has a documented one-click path to try a different engine
+instead of typing every field by hand.
+
+**Smoke evidence**
+
+```
+$ # adapter latency probe
+$ curl /v1/chat/completions ... model=nvidia/llama-3.3-nemotron-super-49b-v1
+  → 0.77s (16-token prompt, 10-token completion)
+
+$ # full structure_invoice against the failing invoice
+structure_invoice completed in 15.4s
+engine: nvidia-mistral-structure
+overall_confidence: 0.630
+fields: { supplier_legal_name='Exabytes Network Sdn. Bhd.',
+          buyer_legal_name='Skyrim Sdn Bhd',
+          invoice_number='MY-PAID-81259318',
+          grand_total=854.93, issue_date=2026-04-29, ... }
+```
+
+End-to-end (extraction + structuring + enrichment + validation
++ inbox sync) ran in 53.3s on the previously-failing invoice;
+fields populated where they were blank before. TIN/BRN values
+came back swapped on the LHDN tabular layout — the user
+corrects on review, which is much better than empty fields
+with no signal.
+
+**Files**
+- new: ``backend/apps/extraction/adapters/nvidia_mistral_adapter.py``
+- new: ``backend/apps/extraction/migrations/0007_seed_nvidia_mistral_structure.py``
+- modified: ``backend/apps/extraction/registry.py`` (one factory entry)
+- modified: ``infra/docker-compose.yml`` (env passthrough for ``NVIDIA_*``)
+- modified: ``frontend/src/app/dashboard/jobs/[id]/page.tsx``
+  (banner copy + cross-link to Re-extract)
+- modified: ``.env.example`` (docs for the new credentials)
+
+**Limitations / future work**
+- TIN/BRN swap on the LHDN tabular layout is a prompt-
+  engineering target. The structuring prompt could be
+  augmented with "TIN values for LHDN customers start with
+  ``C`` followed by 11 digits." Punt to a future slice that
+  improves the prompt across all FieldStructure engines.
+- NIM's free-tier rate limits aren't documented per-account.
+  If a tenant churns enough invoices to hit a 429, the
+  routing chain falls through to Ollama → Claude cleanly. A
+  future slice could surface per-engine quota dashboards.
+
+---
+
 ## How to run it
 
 ```bash
