@@ -25,6 +25,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from apps.billing.decorators import feature_required
 from apps.identity.api_key_auth import APIKeyAuthentication
 from apps.identity.models import APIKey
 
@@ -216,6 +217,7 @@ _API_MAX_DECODED_BYTES = services.MAX_UPLOAD_BYTES
 @authentication_classes([APIKeyAuthentication])
 @permission_classes([IsAuthenticated])
 @parser_classes([JSONParser])
+@feature_required("api_ingestion")
 def api_upload(request: Request) -> Response:
     """Public API ingestion endpoint (Slice 78).
 
@@ -310,6 +312,7 @@ def api_upload(request: Request) -> Response:
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+@feature_required("email_forwarding")
 def inbox_address_view(request: Request) -> Response:
     """Return the per-tenant magic email-forward address.
 

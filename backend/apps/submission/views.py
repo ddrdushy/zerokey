@@ -17,6 +17,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from apps.billing.decorators import feature_required
+
 from . import services
 from .models import Invoice
 from .serializers import InvoiceListSummarySerializer, InvoiceSerializer
@@ -877,6 +879,7 @@ def pending_approvals_view(request: Request) -> Response:
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+@feature_required("csv_export")
 def export_invoices_csv_view(request: Request) -> Response:
     """Stream the active org's submission stream as CSV.
 

@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from apps.billing.decorators import feature_required
 from apps.identity import services as identity_services
 
 from . import services
@@ -30,6 +31,7 @@ def _check_org(request: Request):
 
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
+@feature_required("webhooks")
 def webhooks(request: Request) -> Response:
     """List + create. POST returns plaintext secret ONCE."""
     organization_id, err = _check_org(request)
@@ -73,6 +75,7 @@ def webhooks(request: Request) -> Response:
 
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
+@feature_required("webhooks")
 def revoke_webhook(request: Request, webhook_id: str) -> Response:
     organization_id, err = _check_org(request)
     if err is not None:
@@ -93,6 +96,7 @@ def revoke_webhook(request: Request, webhook_id: str) -> Response:
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@feature_required("webhooks")
 def test_webhook(request: Request, webhook_id: str) -> Response:
     """Send a synthetic test delivery (no real HTTP yet)."""
     organization_id, err = _check_org(request)
