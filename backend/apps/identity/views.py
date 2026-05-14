@@ -1172,6 +1172,14 @@ def organization_certificate(request: Request) -> Response:
                 "expires_at": (
                     org.certificate_expiry_date.isoformat() if org.certificate_expiry_date else None
                 ),
+                # Phase 1 PORTAL_PLAN — expose signing mode so the
+                # frontend can render the right Compliance panel.
+                "signing_mode": org.signing_mode,
+                "intermediary_consent_at": (
+                    org.intermediary_consent_at.isoformat()
+                    if org.intermediary_consent_at is not None
+                    else None
+                ),
             }
         )
 
@@ -1234,6 +1242,170 @@ def organization_certificate(request: Request) -> Response:
         {
             "uploaded": True,
             **result,
+        }
+    )
+
+
+# --- Phase 1 of PORTAL_PLAN — intermediary signing mode ----------------
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def organization_signing_mode(request: Request) -> Response:
+    """Read + update the org's signing mode.
+
+    GET returns:
+        signing_mode: "intermediary" | "self_signed"
+        intermediary_consent_at: iso timestamp or null
+        intermediary_cert: { subject_common_name, serial_hex,
+                             expires_at, lhdn_registration_number }
+            (the Symprio intermediary cert; same for every org but
+            handy to surface in the Settings panel)
+
+    PATCH body shape:
+        { "signing_mode": "intermediary" | "self_signed",
+          "accept_consent": true }  // required when switching to intermediary
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    from apps.administration.services import system_setting
+    from apps.submission.certificates import INTERMEDIARY_SETTING_NAMESPACE
+
+    from .models import Organization
+    from .tenancy import super_admin_context
+
+    def _intermediary_cert_dict() -> dict:
+        return {
+            "subject_common_name": system_setting(
+                namespace=INTERMEDIARY_SETTING_NAMESPACE,
+                key="subject_common_name",
+                default="",
+            ),
+            "serial_hex": system_setting(
+                namespace=INTERMEDIARY_SETTING_NAMESPACE,
+                key="serial_hex",
+                default="",
+            ),
+            "expires_at": system_setting(
+                namespace=INTERMEDIARY_SETTING_NAMESPACE,
+                key="expiry_date",
+                default="",
+            ),
+            "lhdn_registration_number": system_setting(
+                namespace=INTERMEDIARY_SETTING_NAMESPACE,
+                key="lhdn_registration_number",
+                default="",
+            ),
+        }
+
+    if request.method == "GET":
+        with super_admin_context(reason="identity.signing_mode.read"):
+            org = Organization.objects.filter(id=organization_id).first()
+        if org is None:
+            return Response(
+                {"detail": "Organization not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(
+            {
+                "signing_mode": org.signing_mode,
+                "intermediary_consent_at": (
+                    org.intermediary_consent_at.isoformat()
+                    if org.intermediary_consent_at is not None
+                    else None
+                ),
+                "intermediary_cert": _intermediary_cert_dict(),
+            }
+        )
+
+    if not _is_owner_or_admin(request.user, organization_id):
+        return Response(
+            {"detail": "Only owners and admins can change signing mode."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    body = request.data or {}
+    new_mode = str(body.get("signing_mode") or "").strip()
+    if new_mode not in {
+        Organization.SigningMode.INTERMEDIARY,
+        Organization.SigningMode.SELF_SIGNED,
+    }:
+        return Response(
+            {
+                "detail": "signing_mode must be 'intermediary' or 'self_signed'.",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    accept_consent = bool(body.get("accept_consent"))
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    with super_admin_context(reason="identity.signing_mode.update"):
+        org = Organization.objects.filter(id=organization_id).first()
+        if org is None:
+            return Response(
+                {"detail": "Organization not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        previous_mode = org.signing_mode
+        org.signing_mode = new_mode
+
+        if new_mode == Organization.SigningMode.INTERMEDIARY:
+            if org.intermediary_consent_at is None:
+                if not accept_consent:
+                    return Response(
+                        {
+                            "detail": (
+                                "Switching to intermediary mode requires explicit consent. "
+                                "Resubmit with accept_consent=true."
+                            ),
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                from django.utils import timezone as _tz
+
+                org.intermediary_consent_at = _tz.now()
+
+        org.save(update_fields=["signing_mode", "intermediary_consent_at", "updated_at"])
+
+        record_event(
+            action_type="identity.signing_mode_changed",
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(request.user.id),
+            organization_id=str(org.id),
+            affected_entity_type="Organization",
+            affected_entity_id=str(org.id),
+            payload={
+                "previous_mode": previous_mode,
+                "new_mode": new_mode,
+                "consent_recorded": (
+                    org.intermediary_consent_at is not None
+                    and new_mode == Organization.SigningMode.INTERMEDIARY
+                ),
+            },
+        )
+
+    return Response(
+        {
+            "signing_mode": org.signing_mode,
+            "intermediary_consent_at": (
+                org.intermediary_consent_at.isoformat()
+                if org.intermediary_consent_at is not None
+                else None
+            ),
+            "intermediary_cert": _intermediary_cert_dict(),
         }
     )
 

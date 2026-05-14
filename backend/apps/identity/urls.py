@@ -112,6 +112,12 @@ urlpatterns = [
         views.organization_certificate,
         name="organization-certificate",
     ),
+    # PORTAL_PLAN Phase 1 — intermediary signing mode + consent
+    path(
+        "organization/signing-mode/",
+        views.organization_signing_mode,
+        name="organization-signing-mode",
+    ),
     # Slice 99 — feature-flag map for the active org (resolved server-side)
     path(
         "feature-flags/",

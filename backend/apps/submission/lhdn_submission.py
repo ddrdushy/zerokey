@@ -91,6 +91,24 @@ def sign_invoice(invoice_id: uuid.UUID | str) -> dict:
         },
     )
 
+    # Phase 1 of PORTAL_PLAN.md — every intermediary submission lands a
+    # dedicated audit row so Symprio's compliance team has a single feed
+    # of "what did we sign on behalf of customers." Hashed into the same
+    # tamper-evident chain as everything else.
+    if cert.kind == "intermediary":
+        record_event(
+            action_type="submission.signed_as_intermediary",
+            actor_type=AuditEvent.ActorType.SERVICE,
+            actor_id="submission.signing",
+            organization_id=str(invoice.organization_id),
+            affected_entity_type="Invoice",
+            affected_entity_id=str(invoice.id),
+            payload={
+                "cert_serial_hex": cert.serial_hex,
+                "digest_hex": digest_hex,
+            },
+        )
+
     return {
         "ok": True,
         "signed_xml_b64": base64.b64encode(signed).decode("ascii"),

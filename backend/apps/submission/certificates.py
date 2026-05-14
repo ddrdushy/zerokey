@@ -1,22 +1,29 @@
-"""Customer signing-certificate management (Slice 58).
+"""Customer signing-certificate management (Slice 58 + Portal Phase 1).
 
-Two paths today:
+Three paths today (`LoadedCertificate.kind`):
 
-  - **Self-signed dev cert**: when an org has no certificate uploaded
-    yet, the first signing attempt auto-generates an RSA-2048
-    self-signed cert (1-year validity). Stored inline on the
-    Organization row, private key encrypted via Slice 55. This is
-    sufficient for LHDN sandbox testing + the entire end-to-end
-    signing pipeline — but NOT acceptable for LHDN production
-    submissions, where LHDN requires a cert chained to a recognized
-    Malaysian CA (MSC Trustgate, Pos Digicert, Telekom Applied
-    Business).
+  - **``self_signed_dev``**: when a `self_signed`-mode org has no
+    certificate uploaded yet, the first signing attempt auto-
+    generates an RSA-2048 self-signed cert (1-year validity).
+    Stored inline on the Organization row, private key encrypted
+    via Slice 55. Sufficient for LHDN sandbox testing + the entire
+    end-to-end signing pipeline — but NOT acceptable for LHDN
+    production submissions.
 
-  - **Customer-uploaded cert**: when the customer obtains a real
-    cert from a recognized CA, they upload it (UI lands in Slice
-    59). The same encrypted-private-key field stores the upload;
-    ``certificate_kind="uploaded"`` distinguishes it from the dev
-    cert.
+  - **``uploaded``**: when a `self_signed`-mode customer obtains a
+    real cert from a recognized CA (MSC Trustgate, Pos Digicert,
+    Telekom Applied Business), they upload it. The same encrypted-
+    private-key field stores the upload; ``certificate_kind="uploaded"``
+    distinguishes it from the dev cert.
+
+  - **``intermediary``** (Phase 1 of PORTAL_PLAN.md): the default for
+    new orgs. Symprio Sdn Bhd is registered with LHDN as a software
+    intermediary; we sign the customer's invoice with Symprio's cert.
+    The TIN on the signed MyInvois XML is the customer's; the
+    signing material is Symprio's. The intermediary cert + key live
+    in ``SystemSetting('intermediary_signing')`` — singleton, not
+    tenant-scoped. Dispatch happens in ``ensure_certificate`` on the
+    org's ``signing_mode``.
 
 Production swap point: when ZeroKey deploys to AWS, the
 inline-encrypted private key field gets replaced by a KMS-encrypted
@@ -75,16 +82,46 @@ class LoadedCertificate:
     cert: x509.Certificate
     private_key: rsa.RSAPrivateKey
     cert_pem: bytes
-    kind: str  # "self_signed_dev" | "uploaded"
+    kind: str  # "self_signed_dev" | "uploaded" | "intermediary"
+    # Serial of the cert that signed the submission. Same as the x509
+    # serial number formatted as hex; lifted to the dataclass so audit
+    # callers don't have to re-parse the cert just to record it.
+    serial_hex: str = ""
+
+
+# SystemSetting namespace storing Symprio's LHDN intermediary cert. Values:
+#   cert_pem                — the public certificate PEM
+#   private_key_pem_encrypted — encrypted with the same Slice 55 helper as
+#                              customer certs
+#   subject_common_name     — for display in the admin
+#   serial_hex              — for audit + display
+#   expiry_date             — ISO date string, "" if not parsed yet
+#   lhdn_registration_number — Symprio's LHDN intermediary registration id
+INTERMEDIARY_SETTING_NAMESPACE = "intermediary_signing"
+
+
+class IntermediaryNotConfigured(CertificateError):
+    """Raised when intermediary signing is requested but the platform cert
+    hasn't been seeded yet."""
+
+
+class IntermediaryConsentMissing(CertificateError):
+    """Raised when an org in intermediary mode hasn't accepted the consent
+    terms. The submission pipeline must not sign for them."""
 
 
 def ensure_certificate(*, organization_id) -> LoadedCertificate:
-    """Load the org's signing cert; generate a self-signed dev one if missing.
+    """Load the right signing certificate for an org.
 
-    Idempotent — calling repeatedly for the same org returns the
-    same cert (no churn). The first call when no cert exists takes
-    a couple of seconds (RSA key gen); subsequent calls are
-    sub-millisecond.
+    Dispatch lives here so the submission pipeline doesn't need to
+    know about signing modes. For intermediary orgs, returns the
+    platform-level Symprio cert. For self-signed orgs, returns the
+    org's own cert (auto-generating a dev cert on first call if
+    there's no uploaded one).
+
+    Idempotent — repeated calls return the same cert. The first call
+    on a self-signed org with no cert yet takes ~2s for RSA keygen;
+    every other path is sub-millisecond.
     """
     from apps.identity.models import Organization
     from apps.identity.tenancy import super_admin_context
@@ -94,11 +131,216 @@ def ensure_certificate(*, organization_id) -> LoadedCertificate:
         if org is None:
             raise CertificateError(f"Organization {organization_id} not found.")
 
+        if org.signing_mode == Organization.SigningMode.INTERMEDIARY:
+            if org.intermediary_consent_at is None:
+                raise IntermediaryConsentMissing(
+                    "Organization is in intermediary mode but has not accepted the "
+                    "intermediary consent. Submission refused."
+                )
+            return load_intermediary_certificate()
+
         if not org.certificate_uploaded or not org.certificate_pem:
             _generate_and_store_self_signed(org)
             org.refresh_from_db()
 
         return _load(org)
+
+
+def load_intermediary_certificate() -> LoadedCertificate:
+    """Decrypt + parse Symprio's platform-level intermediary certificate.
+
+    Reads from ``SystemSetting('intermediary_signing')``. Raises
+    ``IntermediaryNotConfigured`` when no certificate has been seeded
+    yet — the platform admin has to install one before any
+    intermediary submission can sign.
+    """
+    # Lazy import to avoid circular: administration imports identity which
+    # imports submission via various reverse chains.
+    from apps.administration.services import system_setting
+
+    cert_pem = system_setting(
+        namespace=INTERMEDIARY_SETTING_NAMESPACE, key="cert_pem", default=""
+    )
+    key_pem_encrypted = system_setting(
+        namespace=INTERMEDIARY_SETTING_NAMESPACE,
+        key="private_key_pem_encrypted",
+        default="",
+    )
+
+    if not cert_pem or not key_pem_encrypted:
+        raise IntermediaryNotConfigured(
+            "Symprio intermediary certificate is not configured. Seed it via "
+            "`seed_intermediary_certificate(...)` before enabling intermediary mode."
+        )
+
+    key_pem_plain = decrypt_value(key_pem_encrypted)
+    if not key_pem_plain:
+        raise IntermediaryNotConfigured(
+            "Intermediary private key is empty or could not be decrypted."
+        )
+
+    try:
+        cert = x509.load_pem_x509_certificate(cert_pem.encode("ascii"))
+        private_key = serialization.load_pem_private_key(
+            key_pem_plain.encode("ascii"), password=None
+        )
+    except (ValueError, TypeError) as exc:
+        raise CertificateError(
+            f"Failed to parse intermediary certificate: {type(exc).__name__}"
+        ) from exc
+
+    if not isinstance(private_key, rsa.RSAPrivateKey):
+        raise CertificateError(
+            "Intermediary private key is not an RSA key. LHDN requires RSA-2048+."
+        )
+
+    return LoadedCertificate(
+        cert=cert,
+        private_key=private_key,
+        cert_pem=cert_pem.encode("ascii"),
+        kind="intermediary",
+        serial_hex=format(cert.serial_number, "x"),
+    )
+
+
+def seed_intermediary_certificate(
+    *,
+    cert_pem: str,
+    private_key_pem: str,
+    lhdn_registration_number: str = "",
+    actor_user_id: uuid.UUID | str | None = None,
+) -> dict:
+    """Install / rotate the Symprio intermediary certificate.
+
+    Called from a platform-admin code path (shell command for
+    bootstrap, admin endpoint for rotation). Validates the cert + key
+    are a matched RSA pair before persisting. The previous values are
+    overwritten — rotation is a single-step replace.
+    """
+    from apps.administration.services import upsert_system_setting
+
+    try:
+        cert = x509.load_pem_x509_certificate(cert_pem.encode("ascii"))
+        key = serialization.load_pem_private_key(private_key_pem.encode("ascii"), password=None)
+    except (ValueError, TypeError) as exc:
+        raise CertificateError(
+            f"Could not parse intermediary certificate or private key: {type(exc).__name__}"
+        ) from exc
+
+    if not isinstance(key, rsa.RSAPrivateKey):
+        raise CertificateError("Only RSA private keys are supported for intermediary signing.")
+
+    cert_pub = cert.public_key().public_numbers()
+    key_pub = key.public_key().public_numbers()
+    if cert_pub != key_pub:
+        raise CertificateError("Intermediary certificate and private key are not a matched pair.")
+
+    common_name = ""
+    for attr in cert.subject:
+        if attr.oid == NameOID.COMMON_NAME:
+            common_name = attr.value
+            break
+
+    upsert_system_setting(
+        namespace=INTERMEDIARY_SETTING_NAMESPACE,
+        values={
+            "cert_pem": cert_pem,
+            "private_key_pem_encrypted": encrypt_value(private_key_pem),
+            "subject_common_name": common_name[:255],
+            "serial_hex": format(cert.serial_number, "x")[:64],
+            "expiry_date": cert.not_valid_after_utc.date().isoformat(),
+            "lhdn_registration_number": lhdn_registration_number,
+        },
+        description="Symprio Sdn Bhd LHDN intermediary signing certificate",
+        updated_by_id=actor_user_id,
+    )
+
+    logger.info(
+        "intermediary_certificate.installed",
+        extra={
+            "serial_hex": format(cert.serial_number, "x"),
+            "common_name": common_name,
+            "expires_at": cert.not_valid_after_utc.isoformat(),
+        },
+    )
+
+    return {
+        "serial_hex": format(cert.serial_number, "x"),
+        "subject_common_name": common_name,
+        "expires_at": cert.not_valid_after_utc.isoformat(),
+        "lhdn_registration_number": lhdn_registration_number,
+    }
+
+
+def generate_and_seed_dev_intermediary_certificate(
+    *,
+    lhdn_registration_number: str = "DEV-INTERMEDIARY",
+    actor_user_id: uuid.UUID | str | None = None,
+) -> dict:
+    """Mint a self-signed RSA-2048 cert and install it as the platform's
+    intermediary cert.
+
+    Sandbox / development use only. The subject CN is clearly labelled
+    "(DEV)" so anyone inspecting an audit row, a signed XML, or the
+    Settings panel can tell it apart from a real LHDN-issued
+    intermediary cert. Production swap is the same code path with a
+    properly chained certificate uploaded by an admin.
+
+    Idempotent in spirit (re-running mints a new cert and replaces the
+    one in SystemSetting), but each run produces a different serial
+    number — call once during platform setup, then leave it alone.
+    """
+    # Mint the key + cert with the standard ZeroKey shape.
+    private_key = rsa.generate_private_key(
+        public_exponent=65537, key_size=RSA_KEY_SIZE_BITS
+    )
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, "MY"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Symprio Sdn Bhd"),
+        x509.NameAttribute(
+            NameOID.COMMON_NAME, "Symprio LHDN Intermediary (DEV)"
+        ),
+    ])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(days=DEV_CERT_VALIDITY_DAYS))
+        .add_extension(
+            x509.BasicConstraints(ca=False, path_length=None), critical=True
+        )
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=True,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .sign(private_key, hashes.SHA256())
+    )
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
+    key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    return seed_intermediary_certificate(
+        cert_pem=cert_pem,
+        private_key_pem=key_pem,
+        lhdn_registration_number=lhdn_registration_number,
+        actor_user_id=actor_user_id,
+    )
 
 
 def regenerate_self_signed_for_tin_change(*, organization_id) -> bool:
@@ -271,6 +513,7 @@ def _load(org) -> LoadedCertificate:
         private_key=private_key,
         cert_pem=org.certificate_pem.encode("ascii"),
         kind=org.certificate_kind or "",
+        serial_hex=format(cert.serial_number, "x"),
     )
 
 

@@ -16,6 +16,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/button";
 import { FieldRow } from "@/components/review/FieldRow";
 import { SettingsTabs } from "@/components/settings/SettingsTabs";
+import { SigningModeCard } from "@/components/settings/SigningModeCard";
 
 type EditableOrgField =
   | "legal_name"
@@ -245,6 +246,10 @@ export default function OrganizationSettingsPage() {
             dirty={isDirty("extraction_mode")}
             onChange={(value) => onChangeField("extraction_mode", value)}
           />
+        </Section>
+
+        <Section title="Signing mode" icon={<ShieldCheck className="h-4 w-4" />}>
+          <SigningModeCard />
         </Section>
 
         <Section title="Subscription + certificate" icon={<ShieldCheck className="h-4 w-4" />}>

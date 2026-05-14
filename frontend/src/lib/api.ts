@@ -1505,7 +1505,38 @@ export const api = {
       subject_common_name: string;
       serial_hex: string;
       expires_at: string | null;
+      signing_mode: "intermediary" | "self_signed";
+      intermediary_consent_at: string | null;
     }>("/identity/organization/certificate/"),
+  // PORTAL_PLAN Phase 1 — intermediary signing mode + consent.
+  getSigningMode: () =>
+    request<{
+      signing_mode: "intermediary" | "self_signed";
+      intermediary_consent_at: string | null;
+      intermediary_cert: {
+        subject_common_name: string;
+        serial_hex: string;
+        expires_at: string;
+        lhdn_registration_number: string;
+      };
+    }>("/identity/organization/signing-mode/"),
+  updateSigningMode: (
+    signing_mode: "intermediary" | "self_signed",
+    accept_consent: boolean = false,
+  ) =>
+    request<{
+      signing_mode: "intermediary" | "self_signed";
+      intermediary_consent_at: string | null;
+      intermediary_cert: {
+        subject_common_name: string;
+        serial_hex: string;
+        expires_at: string;
+        lhdn_registration_number: string;
+      };
+    }>("/identity/organization/signing-mode/", {
+      method: "PATCH",
+      body: JSON.stringify({ signing_mode, accept_consent }),
+    }),
   uploadCertificate: (cert_pem: string, private_key_pem: string) =>
     request<{
       uploaded: boolean;

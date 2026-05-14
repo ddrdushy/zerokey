@@ -201,6 +201,31 @@ class Organization(TimestampedModel):
     certificate_subject_common_name = models.CharField(max_length=255, blank=True, default="")
     certificate_serial_hex = models.CharField(max_length=64, blank=True, default="")
 
+    # Phase 1 of PORTAL_PLAN.md — Symprio as LHDN intermediary.
+    #   - ``intermediary`` (default for new orgs): Symprio's intermediary
+    #     certificate signs every submission. Customer doesn't need to
+    #     bring their own LHDN cert. Onboarding is "enter BRN + TIN,
+    #     accept the intermediary terms, you're live".
+    #   - ``self_signed``: the org has its own cert (uploaded or dev-
+    #     generated) and we sign with theirs. Pre-Phase-1 behaviour.
+    class SigningMode(models.TextChoices):
+        INTERMEDIARY = "intermediary", "Intermediary (Symprio signs)"
+        SELF_SIGNED = "self_signed", "Self-signed (org owns cert)"
+
+    signing_mode = models.CharField(
+        max_length=16,
+        choices=SigningMode.choices,
+        default=SigningMode.INTERMEDIARY,
+    )
+
+    # When the customer accepted the "Symprio signs on my behalf"
+    # terms. Required to be set before any intermediary submission
+    # goes out — the submission pipeline refuses to sign as
+    # intermediary on an org with null consent. Null on rows that
+    # migrated in from pre-Phase-1; the Settings UI prompts them
+    # on next sign-in.
+    intermediary_consent_at = models.DateTimeField(null=True, blank=True)
+
     logo_url = models.URLField(blank=True)
     language_preference = models.CharField(max_length=10, default="en-MY")
     timezone = models.CharField(max_length=64, default="Asia/Kuala_Lumpur")
