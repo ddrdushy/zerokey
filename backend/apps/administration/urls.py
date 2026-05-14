@@ -36,6 +36,11 @@ urlpatterns = [
         name="admin-update-tenant",
     ),
     path(
+        "tenants/<uuid:organization_id>/delete/",
+        views.admin_delete_tenant,
+        name="admin-delete-tenant",
+    ),
+    path(
         "memberships/<uuid:membership_id>/",
         views.admin_update_membership,
         name="admin-update-membership",

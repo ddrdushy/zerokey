@@ -11,9 +11,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Search, Users } from "lucide-react";
+import { Search, Trash2, Users } from "lucide-react";
 
-import { api, type PlatformTenant } from "@/lib/api";
+import { api, ApiError, type PlatformTenant } from "@/lib/api";
 import { AdminShell } from "@/components/admin/AdminShell";
 
 export default function TenantDirectoryPage() {
@@ -50,6 +50,20 @@ export default function TenantDirectoryPage() {
       cancelled = true;
     };
   }, [debouncedSearch]);
+
+  async function onDeleteTenant(t: PlatformTenant) {
+    const confirmMsg = `Delete tenant "${t.legal_name}" (TIN ${t.tin})?\n\nThis is a soft-delete — the row stays in the database but the tenant disappears from sign-in and admin listings.`;
+    if (!window.confirm(confirmMsg)) return;
+    const reason = window.prompt("Reason for deletion (required, recorded in the audit log):");
+    if (!reason || !reason.trim()) return;
+    setError(null);
+    try {
+      await api.adminDeleteTenant(t.id, reason.trim());
+      setTenants((cur) => (cur ? cur.filter((x) => x.id !== t.id) : cur));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to delete tenant.");
+    }
+  }
 
   // Sort active tenants (recent uploads) above idle ones. Same legal-name
   // alphabetical within the activity group.
@@ -113,14 +127,20 @@ export default function TenantDirectoryPage() {
         ) : sorted.length === 0 ? (
           <EmptyState filtered={!!debouncedSearch} />
         ) : (
-          <TenantTable tenants={sorted} />
+          <TenantTable tenants={sorted} onDelete={onDeleteTenant} />
         )}
       </div>
     </AdminShell>
   );
 }
 
-function TenantTable({ tenants }: { tenants: PlatformTenant[] }) {
+function TenantTable({
+  tenants,
+  onDelete,
+}: {
+  tenants: PlatformTenant[];
+  onDelete: (t: PlatformTenant) => void;
+}) {
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white">
       <table className="w-full text-2xs">
@@ -136,6 +156,7 @@ function TenantTable({ tenants }: { tenants: PlatformTenant[] }) {
               Last activity
             </th>
             <th className="px-3 py-2 text-left font-medium uppercase tracking-wider">Audit</th>
+            <th className="px-3 py-2 text-right font-medium uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -174,6 +195,18 @@ function TenantTable({ tenants }: { tenants: PlatformTenant[] }) {
                 >
                   Open →
                 </Link>
+              </td>
+              <td className="px-3 py-3 text-right">
+                <button
+                  type="button"
+                  onClick={() => onDelete(t)}
+                  title="Delete tenant"
+                  aria-label={`Delete ${t.legal_name}`}
+                  className="inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-[11px] font-medium text-slate-400 transition-colors hover:border-error/30 hover:bg-error/5 hover:text-error"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete
+                </button>
               </td>
             </tr>
           ))}

@@ -199,6 +199,26 @@ def admin_update_tenant(request: Request, organization_id: str) -> Response:
     return Response(result)
 
 
+@api_view(["DELETE"])
+@permission_classes([IsPlatformStaff])
+def admin_delete_tenant(request: Request, organization_id: str) -> Response:
+    """Soft-delete a tenant. Body shape: { "reason": "..." } (required)."""
+    body = request.data or {}
+    reason = str(body.get("reason") or "").strip()
+    try:
+        result = services.admin_delete_tenant(
+            actor_user_id=request.user.id,
+            organization_id=organization_id,
+            reason=reason,
+        )
+    except services.TenantDeleteError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            return Response({"detail": msg}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(result)
+
+
 @api_view(["PATCH"])
 @permission_classes([IsPlatformStaff])
 def admin_update_membership(request: Request, membership_id: str) -> Response:

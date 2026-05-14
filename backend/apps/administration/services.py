@@ -1323,6 +1323,73 @@ def admin_update_tenant(
     return _tenant_admin_dict(org)
 
 
+class TenantDeleteError(Exception):
+    """Raised when an admin tenant soft-delete cannot proceed."""
+
+
+def admin_delete_tenant(
+    *,
+    actor_user_id: UUID | str,
+    organization_id: UUID | str,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Soft-delete a tenant by setting ``deleted_at``.
+
+    The row stays in the database — Slice 118's retention story keeps the
+    audit chain intact and allows admin recovery via an UPDATE on the
+    column. Tenant-scoped queries already filter ``deleted_at__isnull=True``,
+    so the org disappears from sign-in flows and admin listings the moment
+    this returns.
+
+    Audited as ``admin.tenant_deleted`` with the reason in the payload.
+    Idempotent: deleting an already-deleted tenant raises ``TenantDeleteError``.
+    """
+    from django.utils import timezone
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+    from apps.identity.models import Organization
+    from apps.identity.tenancy import super_admin_context
+
+    if not reason or not reason.strip():
+        raise TenantDeleteError("A reason is required for tenant deletion.")
+
+    with super_admin_context(reason="admin.tenant_delete"):
+        with transaction.atomic():
+            try:
+                org = Organization.objects.select_for_update().get(id=organization_id)
+            except Organization.DoesNotExist as exc:
+                raise TenantDeleteError(f"Tenant {organization_id} not found.") from exc
+
+            if org.deleted_at is not None:
+                raise TenantDeleteError(
+                    f"Tenant {organization_id} is already deleted."
+                )
+
+            org.deleted_at = timezone.now()
+            org.save(update_fields=["deleted_at", "updated_at"])
+
+            record_event(
+                action_type="admin.tenant_deleted",
+                actor_type=AuditEvent.ActorType.USER,
+                actor_id=str(actor_user_id),
+                organization_id=str(org.id),
+                affected_entity_type="Organization",
+                affected_entity_id=str(org.id),
+                payload={
+                    "legal_name": org.legal_name,
+                    "tin": org.tin,
+                    "reason": reason.strip()[:255],
+                },
+            )
+
+    return {
+        "id": str(org.id),
+        "deleted_at": org.deleted_at.isoformat(),
+        "legal_name": org.legal_name,
+    }
+
+
 def _tenant_admin_dict(org: Any) -> dict[str, Any]:
     """Single-tenant admin shape after an update."""
     return {

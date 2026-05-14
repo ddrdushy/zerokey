@@ -1289,6 +1289,14 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  adminDeleteTenant: (organizationId: string, reason: string) =>
+    request<{ id: string; deleted_at: string; legal_name: string }>(
+      `/admin/tenants/${organizationId}/delete/`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({ reason }),
+      },
+    ),
   adminStartImpersonation: (organizationId: string, reason: string) =>
     request<{
       session_id: string;
