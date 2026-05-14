@@ -226,6 +226,18 @@ class Organization(TimestampedModel):
     # on next sign-in.
     intermediary_consent_at = models.DateTimeField(null=True, blank=True)
 
+    # Phase 3 of PORTAL_PLAN.md — auto-submit toggle. When True and
+    # all the per-invoice gates pass (validation, extraction
+    # confidence above threshold, no per-customer review override),
+    # ZeroKey signs and submits new invoices to LHDN without a click.
+    # Default False — opt-in, the safer posture for a first-time
+    # customer who hasn't watched the pipeline run yet.
+    auto_submit_default = models.BooleanField(default=False)
+    # Float in [0, 1]. Anything below this gates back to Not Submitted
+    # regardless of the org default. 0.92 is the launch default;
+    # tunable per org from Settings.
+    auto_submit_confidence_threshold = models.FloatField(default=0.92)
+
     logo_url = models.URLField(blank=True)
     language_preference = models.CharField(max_length=10, default="en-MY")
     timezone = models.CharField(max_length=64, default="Asia/Kuala_Lumpur")

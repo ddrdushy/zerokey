@@ -79,6 +79,21 @@ class CustomerMaster(TenantScopedModel):
     )
     tin_last_verified_at = models.DateTimeField(null=True, blank=True)
 
+    # Phase 3 of PORTAL_PLAN — per-buyer auto-submit override.
+    #   "none"   (default): follow org.auto_submit_default
+    #   "always": force auto-submit regardless of org default
+    #   "review": always require manual review (NOT_SUBMITTED state)
+    class AutoSubmitOverride(models.TextChoices):
+        NONE = "none", "Follow org default"
+        ALWAYS = "always", "Always auto-submit"
+        REVIEW = "review", "Always require review"
+
+    auto_submit_override = models.CharField(
+        max_length=16,
+        choices=AutoSubmitOverride.choices,
+        default=AutoSubmitOverride.NONE,
+    )
+
     registration_number = models.CharField(max_length=64, blank=True)
     msic_code = models.CharField(max_length=8, blank=True)
     # Slice 95 — PII at rest (Fernet via apps.administration.crypto).

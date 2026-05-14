@@ -99,6 +99,9 @@ class InvoiceListSummarySerializer(serializers.ModelSerializer):
             "buyer_tin",
             "status",
             "created_at",
+            # PORTAL_PLAN Phase 3 — surfaced on the list so a Not
+            # Submitted row carries its reason inline.
+            "auto_submit_blocked_reason",
         ]
         read_only_fields = fields
 
@@ -171,6 +174,9 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "cancellation_timestamp",
             # Slice 96 — deferred-submit timestamp; null when not scheduled.
             "scheduled_submit_at",
+            # PORTAL_PLAN Phase 3 — when set, the auto-submit gate
+            # rejected this candidate; surfaced as a pill on the list.
+            "auto_submit_blocked_reason",
             # Amendment fields (Slice 60/61)
             "original_invoice_uuid",
             "original_invoice_internal_id",

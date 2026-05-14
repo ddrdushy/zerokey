@@ -1410,6 +1410,126 @@ def organization_signing_mode(request: Request) -> Response:
     )
 
 
+# --- Phase 3 of PORTAL_PLAN — auto-submit toggle -----------------------
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def organization_auto_submit(request: Request) -> Response:
+    """Read + update the org's auto-submit settings.
+
+    GET returns:
+        auto_submit_default: bool
+        auto_submit_confidence_threshold: float (0-1)
+
+    PATCH body shape (both fields optional):
+        { "auto_submit_default": true,
+          "auto_submit_confidence_threshold": 0.95 }
+    """
+    organization_id = request.session.get("organization_id")
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not services.can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    from .models import Organization
+    from .tenancy import super_admin_context
+
+    if request.method == "GET":
+        with super_admin_context(reason="identity.auto_submit.read"):
+            org = Organization.objects.filter(id=organization_id).first()
+        if org is None:
+            return Response(
+                {"detail": "Organization not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(
+            {
+                "auto_submit_default": bool(org.auto_submit_default),
+                "auto_submit_confidence_threshold": float(
+                    org.auto_submit_confidence_threshold
+                ),
+            }
+        )
+
+    if not _is_owner_or_admin(request.user, organization_id):
+        return Response(
+            {"detail": "Only owners and admins can change auto-submit settings."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    body = request.data or {}
+    update_fields: list[str] = []
+
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import record_event
+
+    with super_admin_context(reason="identity.auto_submit.update"):
+        org = Organization.objects.filter(id=organization_id).first()
+        if org is None:
+            return Response(
+                {"detail": "Organization not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        previous = {
+            "auto_submit_default": org.auto_submit_default,
+            "auto_submit_confidence_threshold": float(org.auto_submit_confidence_threshold),
+        }
+
+        if "auto_submit_default" in body:
+            org.auto_submit_default = bool(body["auto_submit_default"])
+            update_fields.append("auto_submit_default")
+
+        if "auto_submit_confidence_threshold" in body:
+            try:
+                threshold = float(body["auto_submit_confidence_threshold"])
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "auto_submit_confidence_threshold must be a number."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not (0.0 <= threshold <= 1.0):
+                return Response(
+                    {"detail": "auto_submit_confidence_threshold must be between 0 and 1."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            org.auto_submit_confidence_threshold = threshold
+            update_fields.append("auto_submit_confidence_threshold")
+
+        if update_fields:
+            org.save(update_fields=[*update_fields, "updated_at"])
+            record_event(
+                action_type="identity.auto_submit_changed",
+                actor_type=AuditEvent.ActorType.USER,
+                actor_id=str(request.user.id),
+                organization_id=str(org.id),
+                affected_entity_type="Organization",
+                affected_entity_id=str(org.id),
+                payload={
+                    "previous": previous,
+                    "new": {
+                        "auto_submit_default": org.auto_submit_default,
+                        "auto_submit_confidence_threshold": float(
+                            org.auto_submit_confidence_threshold
+                        ),
+                    },
+                },
+            )
+
+    return Response(
+        {
+            "auto_submit_default": bool(org.auto_submit_default),
+            "auto_submit_confidence_threshold": float(org.auto_submit_confidence_threshold),
+        }
+    )
+
+
 # --- Slice 89 — TOTP 2FA enrollment / disable ---------------------------
 
 

@@ -292,6 +292,11 @@ function InvoiceTable({ invoices }: { invoices: InvoiceListSummary[] }) {
               </td>
               <td className="px-3 py-3">
                 <StatusPill status={invoice.status} />
+                {invoice.status === "not_submitted" && invoice.auto_submit_blocked_reason && (
+                  <div className="mt-1 max-w-xs text-[10px] leading-tight text-slate-500">
+                    {invoice.auto_submit_blocked_reason}
+                  </div>
+                )}
               </td>
             </tr>
           ))}
@@ -302,14 +307,19 @@ function InvoiceTable({ invoices }: { invoices: InvoiceListSummary[] }) {
 }
 
 function StatusPill({ status }: { status: string }) {
+  // PORTAL_PLAN Phase 3 — Not Submitted is its own tone: warning-leaning
+  // (the auto-submit gate considered this one and held it back) but not
+  // a hard error.
   const tone =
     status === "validated"
       ? "bg-success/10 text-success"
       : status === "ready_for_review"
         ? "bg-success/10 text-success"
-        : status === "error" || status === "rejected" || status === "cancelled"
-          ? "bg-error/10 text-error"
-          : "bg-slate-100 text-slate-600";
+        : status === "not_submitted"
+          ? "bg-warning/10 text-warning"
+          : status === "error" || status === "rejected" || status === "cancelled"
+            ? "bg-error/10 text-error"
+            : "bg-slate-100 text-slate-600";
   return (
     <span
       className={["inline-block rounded-full px-2 py-0.5 text-[10px] font-medium", tone].join(" ")}

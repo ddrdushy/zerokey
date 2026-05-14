@@ -63,6 +63,11 @@ class Invoice(TenantScopedModel):
         VALIDATING = "validating", "Validating"
         READY_FOR_REVIEW = "ready_for_review", "Ready for review"
         AWAITING_APPROVAL = "awaiting_approval", "Awaiting approval"
+        # Phase 3 of PORTAL_PLAN — auto-submit considered this invoice
+        # and deliberately held back. The customer hits Submit when
+        # ready. ``auto_submit_blocked_reason`` carries the why on
+        # the same row.
+        NOT_SUBMITTED = "not_submitted", "Not submitted (manual)"
         SIGNING = "signing", "Signing"
         SUBMITTING = "submitting", "Submitting"
         VALIDATED = "validated", "Validated by LHDN"
@@ -130,6 +135,13 @@ class Invoice(TenantScopedModel):
     # picker + same HITS validation rules apply.
     buyer_id_type = models.CharField(max_length=16, blank=True, default="")
     buyer_id_value = EncryptedCharField(max_length=256, blank=True, default="")
+
+    # Phase 3 of PORTAL_PLAN — set when handle_pulled_invoice rejects
+    # a candidate auto-submission. Short, customer-visible: "Auto-
+    # submit disabled", "Extraction confidence below threshold",
+    # "Buyer requires review", "Validation: supplier_tin.format".
+    # Cleared on the next successful submission attempt.
+    auto_submit_blocked_reason = models.CharField(max_length=128, blank=True, default="")
 
     # --- Totals --------------------------------------------------------------
     subtotal = models.DecimalField(max_digits=19, decimal_places=2, null=True, blank=True)

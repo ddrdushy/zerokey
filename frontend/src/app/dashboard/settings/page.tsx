@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Globe, Phone, ShieldCheck, Sparkles } from "lucide-react";
+import { Bot, Building2, Globe, Phone, ShieldCheck, Sparkles } from "lucide-react";
 
 import { api, ApiError, type OrganizationDetail } from "@/lib/api";
 import { AppShell } from "@/components/shell/AppShell";
@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { FieldRow } from "@/components/review/FieldRow";
 import { SettingsTabs } from "@/components/settings/SettingsTabs";
 import { SigningModeCard } from "@/components/settings/SigningModeCard";
+import { AutoSubmitCard } from "@/components/settings/AutoSubmitCard";
 
 type EditableOrgField =
   | "legal_name"
@@ -250,6 +251,10 @@ export default function OrganizationSettingsPage() {
 
         <Section title="Signing mode" icon={<ShieldCheck className="h-4 w-4" />}>
           <SigningModeCard />
+        </Section>
+
+        <Section title="Auto-submit to LHDN" icon={<Bot className="h-4 w-4" />}>
+          <AutoSubmitCard />
         </Section>
 
         <Section title="Subscription + certificate" icon={<ShieldCheck className="h-4 w-4" />}>

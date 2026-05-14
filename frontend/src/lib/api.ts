@@ -325,6 +325,10 @@ export type Invoice = {
   // deferred submission. The dispatch beat task picks it up at this
   // time and fires the submit pipeline.
   scheduled_submit_at: string | null;
+  // PORTAL_PLAN Phase 3 — set when handle_pulled_invoice rejected
+  // a candidate auto-submission. Surfaces as a Not Submitted pill +
+  // inline reason on the invoices list.
+  auto_submit_blocked_reason: string;
   error_message: string;
   line_items: LineItem[];
   validation_issues: ValidationIssue[];
@@ -798,6 +802,9 @@ export type InvoiceListSummary = {
   buyer_tin: string;
   status: string;
   created_at: string;
+  // PORTAL_PLAN Phase 3 — non-empty when the auto-submit gate rejected
+  // a candidate auto-submission. Surfaced inline next to the status.
+  auto_submit_blocked_reason: string;
 };
 
 export type InvoiceListResponse = {
@@ -1578,6 +1585,23 @@ export const api = {
     }>("/identity/organization/signing-mode/", {
       method: "PATCH",
       body: JSON.stringify({ signing_mode, accept_consent }),
+    }),
+  // PORTAL_PLAN Phase 3 — auto-submit toggle + confidence threshold.
+  getAutoSubmit: () =>
+    request<{
+      auto_submit_default: boolean;
+      auto_submit_confidence_threshold: number;
+    }>("/identity/organization/auto-submit/"),
+  updateAutoSubmit: (body: {
+    auto_submit_default?: boolean;
+    auto_submit_confidence_threshold?: number;
+  }) =>
+    request<{
+      auto_submit_default: boolean;
+      auto_submit_confidence_threshold: number;
+    }>("/identity/organization/auto-submit/", {
+      method: "PATCH",
+      body: JSON.stringify(body),
     }),
   uploadCertificate: (cert_pem: string, private_key_pem: string) =>
     request<{

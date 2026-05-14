@@ -214,7 +214,7 @@ def _ingest_one_document(
             extraction_confidence=1.0,
         )
 
-        Invoice.objects.create(
+        invoice = Invoice.objects.create(
             organization_id=organization_id,
             ingestion_job_id=job.id,
             invoice_type=invoice_type,
@@ -253,6 +253,24 @@ def _ingest_one_document(
             "invoice_number": document.invoice_number,
         },
     )
+
+    # Phase 3 of PORTAL_PLAN — hand off to the auto-submit gate.
+    # The gate either dispatches the invoice to the signing pipeline
+    # or transitions it to NOT_SUBMITTED with a reason. Wrapped in
+    # try/except so a gate failure (validation throws, DB error,
+    # whatever) doesn't roll back the ingestion that just succeeded.
+    try:
+        from apps.submission.auto_submit import handle_pulled_invoice
+
+        handle_pulled_invoice(invoice.id)
+    except Exception as exc:  # noqa: BLE001 — never fail the pull on the gate
+        logger.error(
+            "connectors.auto_submit_gate_failed",
+            extra={
+                "invoice_id": str(invoice.id),
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
 
 
 def _record_pull_outcome(

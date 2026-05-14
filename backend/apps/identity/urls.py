@@ -118,6 +118,12 @@ urlpatterns = [
         views.organization_signing_mode,
         name="organization-signing-mode",
     ),
+    # PORTAL_PLAN Phase 3 — auto-submit toggle + confidence threshold
+    path(
+        "organization/auto-submit/",
+        views.organization_auto_submit,
+        name="organization-auto-submit",
+    ),
     # Slice 99 — feature-flag map for the active org (resolved server-side)
     path(
         "feature-flags/",
