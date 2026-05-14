@@ -1031,6 +1031,48 @@ async function uploadAutoCountSync(args: {
   return body as SyncProposalRow;
 }
 
+// PORTAL_PLAN Phase 2 — pull issued documents (Invoice / CN / DN) from a
+// CSV export. Same multipart pattern as the master-data sync endpoints
+// above; the backend dispatches to the right adapter via the connector
+// type on the IntegrationConfig row.
+export type DocumentPullResult = {
+  document_type: "invoice" | "credit_note" | "debit_note";
+  ingested_count: number;
+  skipped_count: number;
+  failed_count: number;
+  new_cursor: string;
+  error: string;
+};
+
+async function pullConnectorDocuments(args: {
+  configId: string;
+  file: File;
+  documentType: "invoice" | "credit_note" | "debit_note";
+}): Promise<DocumentPullResult> {
+  const headers = new Headers();
+  const csrf = readCookie("csrftoken");
+  if (csrf) headers.set("X-CSRFToken", csrf);
+
+  const form = new FormData();
+  form.append("file", args.file);
+  form.append("document_type", args.documentType);
+
+  const response = await fetch(`${API_BASE}/connectors/configs/${args.configId}/pull/`, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: form,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      (body && typeof body === "object" && "detail" in body && String(body.detail)) ||
+      `HTTP ${response.status}`;
+    throw new ApiError(message, response.status, body);
+  }
+  return body as DocumentPullResult;
+}
+
 export const api = {
   ensureCsrf: () => request<{ detail: string }>("/identity/csrf/"),
   // Slice 97 — OIDC SSO.
@@ -1847,6 +1889,7 @@ export const api = {
     }),
   uploadCsvSync,
   uploadAutoCountSync,
+  pullConnectorDocuments,
   // Slice 86 — UI preferences (preferred_language).
   updatePreferences: (updates: { preferred_language?: string }) =>
     request<{ ok: boolean; changed_fields: string[]; preferred_language: string }>(
