@@ -117,6 +117,120 @@ def _invoice_update(request: Request, organization_id: str, invoice_id: str) -> 
     return Response(InvoiceSerializer(result.invoice).data)
 
 
+# Phase 5 of PORTAL_PLAN — preview eligible B2C invoices for one month.
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@feature_required("consolidated_b2c")
+def consolidated_b2c_preview_view(request: Request) -> Response:
+    """Count + total eligible B2C invoices for (year, month).
+
+    Query params: ``?year=2026&month=4`` (both required).
+
+    Returns the shape the portal monthly view renders to decide
+    whether to show a "Build consolidated B2C" affordance for that
+    month. Read-only; never mutates anything.
+    """
+    from apps.submission.consolidated_b2c import (
+        ConsolidationError,
+        preview_consolidated_b2c,
+    )
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        year = int(request.query_params.get("year") or "")
+        month = int(request.query_params.get("month") or "")
+    except (TypeError, ValueError):
+        return Response(
+            {"detail": "year and month are required integer query params."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        preview = preview_consolidated_b2c(
+            organization_id=organization_id,
+            year=year,
+            month=month,
+        )
+    except ConsolidationError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(
+        {
+            "year": preview.year,
+            "month": preview.month,
+            "month_label": preview.month_label,
+            "eligible_count": preview.eligible_count,
+            "eligible_total": str(preview.eligible_total),
+            "has_existing_parent": preview.has_existing_parent,
+            "existing_parent_invoice_number": preview.existing_parent_invoice_number,
+        }
+    )
+
+
+# Phase 5 of PORTAL_PLAN — build a consolidated B2C parent invoice.
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@feature_required("consolidated_b2c")
+def consolidated_b2c_build_view(request: Request) -> Response:
+    """Roll up the org's eligible B2C invoices for one calendar month
+    into a single parent invoice.
+
+    Body shape: { "year": 2026, "month": 4 }
+
+    Returns the parent invoice id + constituent count. The parent is
+    left at READY_FOR_REVIEW so the existing submission pipeline
+    (manual or auto-submit) takes it from there. Gated by the
+    ``consolidated_b2c`` feature flag.
+    """
+    from apps.submission.consolidated_b2c import (
+        ConsolidationError,
+        build_consolidated_b2c,
+    )
+
+    organization_id = _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "No active organization."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    body = request.data or {}
+    try:
+        year = int(body.get("year"))
+        month = int(body.get("month"))
+    except (TypeError, ValueError):
+        return Response(
+            {"detail": "year and month are required integers."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        result = build_consolidated_b2c(
+            organization_id=organization_id,
+            year=year,
+            month=month,
+            actor_user_id=request.user.id,
+        )
+    except ConsolidationError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(
+        {
+            "parent_invoice_id": result.parent_invoice_id,
+            "constituent_count": result.constituent_count,
+            "grand_total": str(result.grand_total),
+            "month_label": result.month_label,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
 # Phase 4 of PORTAL_PLAN — accountant portal monthly-bucket rollup.
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])

@@ -24,6 +24,18 @@ urlpatterns = [
     path("compliance/", views.compliance_posture_view, name="compliance-posture"),
     # PORTAL_PLAN Phase 4 — monthly consolidation rollup for the portal.
     path("monthly-buckets/", views.monthly_buckets_view, name="monthly-buckets"),
+    # PORTAL_PLAN Phase 5 — build a consolidated B2C parent invoice.
+    path(
+        "consolidated-b2c/",
+        views.consolidated_b2c_build_view,
+        name="consolidated-b2c-build",
+    ),
+    # PORTAL_PLAN Phase 5 — preview eligible B2C invoices for one month.
+    path(
+        "consolidated-b2c/preview/",
+        views.consolidated_b2c_preview_view,
+        name="consolidated-b2c-preview",
+    ),
     # Slice 59B — LHDN lifecycle gestures
     path(
         "<uuid:invoice_id>/submit-to-lhdn/",

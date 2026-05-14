@@ -1605,6 +1605,31 @@ export const api = {
         last_activity_at: string | null;
       }>;
     }>("/identity/portal/summary/"),
+  // PORTAL_PLAN Phase 5 — roll up a month of B2C invoices into a
+  // consolidated parent. Returns the parent invoice id; submission
+  // flows through the existing pipeline once the customer reviews
+  // the parent.
+  buildConsolidatedB2C: (year: number, month: number) =>
+    request<{
+      parent_invoice_id: string;
+      constituent_count: number;
+      grand_total: string;
+      month_label: string;
+    }>("/invoices/consolidated-b2c/", {
+      method: "POST",
+      body: JSON.stringify({ year, month }),
+    }),
+  // PORTAL_PLAN Phase 5 — preview eligible B2C invoices for (year, month).
+  previewConsolidatedB2C: (year: number, month: number) =>
+    request<{
+      year: number;
+      month: number;
+      month_label: string;
+      eligible_count: number;
+      eligible_total: string;
+      has_existing_parent: boolean;
+      existing_parent_invoice_number: string;
+    }>(`/invoices/consolidated-b2c/preview/?year=${year}&month=${month}`),
   // PORTAL_PLAN Phase 4 — monthly consolidation rollup for one org.
   getMonthlyBuckets: (params: { organizationId?: string; months?: number } = {}) => {
     const search = new URLSearchParams();
