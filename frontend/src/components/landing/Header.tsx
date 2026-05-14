@@ -4,29 +4,47 @@
 // nav, language switcher, dual CTAs. Mobile collapses to a hamburger but
 // keeps the trial CTA visible (per spec). Nav links get a subtle underline
 // reveal on hover via the `zk` motion curve.
+//
+// Language switcher: dropdown with the four launch locales. Switching is
+// instant (no page reload) — the client-side i18n layer dispatches a
+// `zk-locale-change` event that every `useT()` subscriber re-renders on.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Menu, X } from "lucide-react";
+import { Check, ChevronDown, Globe, Menu, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-
-const NAV = [
-  { href: "/product", label: "Product" },
-  { href: "/pricing", label: "Pricing" },
-  { href: "/customers", label: "Customers" },
-  { href: "/resources", label: "Resources" },
-];
+import { LOCALE_LABELS, SUPPORTED_LOCALES, setLocale, useT, useLocale, type Locale } from "@/lib/i18n";
 
 const HEADER_EASE = [0.16, 1, 0.3, 1] as const;
 
-export function Header() {
-  const reduced = useReducedMotion();
-  const [open, setOpen] = useState(false);
+// Two-letter "chip" the language switcher shows when closed. Keeps the
+// header tight and recognisable across scripts.
+const LOCALE_CHIP: Record<Locale, string> = {
+  "en-MY": "EN",
+  "bm-MY": "BM",
+  "zh-MY": "中",
+  "ta-MY": "த",
+};
 
-  // Close the mobile sheet whenever we cross the md breakpoint so the
-  // sheet isn't stuck open with no visible trigger.
+export function Header() {
+  const t = useT();
+  const locale = useLocale();
+  const reduced = useReducedMotion();
+
+  const [open, setOpen] = useState(false);
+  const [langOpen, setLangOpen] = useState(false);
+  const langRef = useRef<HTMLDivElement>(null);
+
+  const NAV = [
+    { href: "/product", label: t("landing.header.nav.product") },
+    { href: "/pricing", label: t("landing.header.nav.pricing") },
+    { href: "/customers", label: t("landing.header.nav.customers") },
+    { href: "/resources", label: t("landing.header.nav.resources") },
+  ];
+
+  // Close mobile sheet at md+
   useEffect(() => {
     if (!open) return;
     const mq = window.matchMedia("(min-width: 768px)");
@@ -35,7 +53,7 @@ export function Header() {
     return () => mq.removeEventListener("change", close);
   }, [open]);
 
-  // Body scroll lock while sheet is open.
+  // Body scroll lock while sheet is open
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -44,6 +62,28 @@ export function Header() {
       document.body.style.overflow = prev;
     };
   }, [open]);
+
+  // Close language popover on outside click / escape
+  useEffect(() => {
+    if (!langOpen) return;
+    function onDown(e: MouseEvent) {
+      if (langRef.current && !langRef.current.contains(e.target as Node)) setLangOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setLangOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [langOpen]);
+
+  function pickLocale(l: Locale) {
+    setLocale(l);
+    setLangOpen(false);
+  }
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-100 bg-paper/80 backdrop-blur supports-[backdrop-filter]:bg-paper/70">
@@ -72,26 +112,65 @@ export function Header() {
         </nav>
 
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            className="hidden text-xs font-medium text-slate-600 transition-colors duration-ack hover:text-ink md:inline"
-            aria-label="Switch language"
-          >
-            EN
-          </button>
+          {/* Language switcher */}
+          <div ref={langRef} className="relative hidden md:block">
+            <button
+              type="button"
+              onClick={() => setLangOpen((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-ink transition-colors duration-ack hover:bg-slate-100"
+              aria-haspopup="listbox"
+              aria-expanded={langOpen}
+              aria-label={t("landing.header.lang_label")}
+            >
+              <Globe size={14} className="text-slate-400" />
+              <span>{LOCALE_CHIP[locale]}</span>
+              <ChevronDown
+                size={12}
+                className={`text-slate-400 transition-transform duration-ack ${langOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            <AnimatePresence>
+              {langOpen ? (
+                <motion.ul
+                  role="listbox"
+                  initial={reduced ? false : { opacity: 0, y: -4 }}
+                  animate={reduced ? undefined : { opacity: 1, y: 0 }}
+                  exit={reduced ? undefined : { opacity: 0, y: -4 }}
+                  transition={{ duration: 0.18, ease: HEADER_EASE }}
+                  className="absolute right-0 mt-2 w-48 overflow-hidden rounded-md border border-slate-100 bg-white shadow-lg"
+                >
+                  {SUPPORTED_LOCALES.map((l) => (
+                    <li key={l}>
+                      <button
+                        type="button"
+                        onClick={() => pickLocale(l)}
+                        role="option"
+                        aria-selected={l === locale}
+                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-ink transition-colors duration-ack hover:bg-slate-50"
+                      >
+                        <span>{LOCALE_LABELS[l]}</span>
+                        {l === locale ? <Check size={14} className="text-ink" /> : null}
+                      </button>
+                    </li>
+                  ))}
+                </motion.ul>
+              ) : null}
+            </AnimatePresence>
+          </div>
+
           <Link
             href="/sign-in"
             className="hidden text-xs font-medium text-slate-600 transition-colors duration-ack hover:text-ink md:inline"
           >
-            Sign in
+            {t("landing.header.signin")}
           </Link>
           <Link href="/sign-up">
             <Button size="sm" variant="primary">
-              Start free trial
+              {t("landing.header.cta")}
             </Button>
           </Link>
 
-          {/* Hamburger — visible on mobile only */}
+          {/* Hamburger — mobile only */}
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
@@ -125,17 +204,40 @@ export function Header() {
                   {item.label}
                 </Link>
               ))}
-              <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-3">
+
+              <div className="mt-2 border-t border-slate-100 pt-3">
+                <div className="px-3 text-2xs font-semibold uppercase tracking-wider text-slate-400">
+                  {t("landing.header.lang_label")}
+                </div>
+                <ul className="mt-2 grid grid-cols-2 gap-1">
+                  {SUPPORTED_LOCALES.map((l) => (
+                    <li key={l}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          pickLocale(l);
+                          setOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors duration-ack ${
+                          l === locale ? "bg-slate-100 text-ink" : "text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        <span>{LOCALE_LABELS[l]}</span>
+                        {l === locale ? <Check size={14} /> : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="mt-3 border-t border-slate-100 pt-3">
                 <Link
                   href="/sign-in"
                   onClick={() => setOpen(false)}
-                  className="text-sm font-medium text-slate-600 hover:text-ink"
+                  className="block rounded-md px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-ink"
                 >
-                  Sign in
+                  {t("landing.header.signin")}
                 </Link>
-                <button type="button" className="text-2xs font-medium text-slate-400 hover:text-ink">
-                  EN · BM · 中文 · தமிழ்
-                </button>
               </div>
             </nav>
           </motion.div>

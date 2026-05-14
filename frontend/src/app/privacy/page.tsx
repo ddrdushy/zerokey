@@ -80,7 +80,7 @@ export default function PrivacyPage() {
           <li>Request deletion (subject to legal retention obligations).</li>
         </ul>
         <p>
-          Email <a href="mailto:privacy@symprio.com">privacy@symprio.com</a> to exercise any of
+          Email <a href="mailto:contact@symprio.com">contact@symprio.com</a> to exercise any of
           the above. We respond within ten business days.
         </p>
 

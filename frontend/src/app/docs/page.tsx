@@ -101,7 +101,7 @@ export default function DocsPage() {
                 Can&apos;t find what you need?
               </h3>
               <p className="mt-3 text-base text-slate-600">
-                Email <a className="underline underline-offset-4 hover:text-ink" href="mailto:support@symprio.com">support@symprio.com</a> with the question. We&apos;d rather write a new article
+                Email <a className="underline underline-offset-4 hover:text-ink" href="mailto:contact@symprio.com">contact@symprio.com</a> with the question. We&apos;d rather write a new article
                 than make you wait.
               </p>
             </div>

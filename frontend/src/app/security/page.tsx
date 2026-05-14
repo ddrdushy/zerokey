@@ -50,7 +50,7 @@ const COMMITMENTS = [
   },
   {
     title: "Vulnerability disclosure",
-    body: "security@symprio.com is monitored. Responsible disclosure gets a thank-you and a tracked fix.",
+    body: "contact@symprio.com is monitored. Responsible disclosure gets a thank-you and a tracked fix.",
   },
   {
     title: "Data export and deletion",

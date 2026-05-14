@@ -13,15 +13,15 @@ const CHANNELS = [
     icon: MessageCircle,
     label: "Sales",
     detail: "Pricing, demo, custom plans, procurement questions.",
-    cta: { label: "sales@symprio.com", href: "mailto:sales@symprio.com?subject=ZeroKey%20enquiry" },
+    cta: { label: "contact@symprio.com", href: "mailto:contact@symprio.com?subject=ZeroKey%20enquiry" },
   },
   {
     icon: HelpCircle,
     label: "Support",
     detail: "Existing-customer issues. Faster from inside the product, but email works too.",
     cta: {
-      label: "support@symprio.com",
-      href: "mailto:support@symprio.com?subject=ZeroKey%20support",
+      label: "contact@symprio.com",
+      href: "mailto:contact@symprio.com?subject=ZeroKey%20support",
     },
   },
   {
@@ -35,8 +35,8 @@ const CHANNELS = [
     label: "General / press",
     detail: "Anything that doesn&apos;t fit the above — partnerships, media, just-saying-hi.",
     cta: {
-      label: "hello@symprio.com",
-      href: "mailto:hello@symprio.com?subject=ZeroKey",
+      label: "contact@symprio.com",
+      href: "mailto:contact@symprio.com?subject=ZeroKey",
     },
   },
 ];

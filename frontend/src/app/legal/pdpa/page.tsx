@@ -72,7 +72,7 @@ export default function PdpaPage() {
 
         <h2>Contact</h2>
         <p>
-          Email <a href="mailto:privacy@symprio.com">privacy@symprio.com</a> for any PDPA matter.
+          Email <a href="mailto:contact@symprio.com">contact@symprio.com</a> for any PDPA matter.
           We respond within ten business days.
         </p>
 

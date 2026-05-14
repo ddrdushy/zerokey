@@ -46,16 +46,18 @@ const STORAGE_KEY = "zk_locale";
 
 import en from "@/locales/en";
 import bm from "@/locales/bm";
+import zh from "@/locales/zh";
+import ta from "@/locales/ta";
 
-// Translation tables. ZH + TA share the EN table for Slice 86 —
-// they're listed as supported because the spec says they will be,
-// but the strings themselves haven't been translated yet. Keys
-// not present fall back to EN.
+// Translation tables. EN is the master; the others fall back to EN for
+// any key they don't define. Marketing-surface translations are filled
+// in across all four locales; section bodies, marketing detail pages,
+// and legal pages still fall back to EN pending a translator pass.
 const TABLES: Record<Locale, Record<string, string>> = {
   "en-MY": en,
   "bm-MY": bm,
-  "zh-MY": en,
-  "ta-MY": en,
+  "zh-MY": zh,
+  "ta-MY": ta,
 };
 
 function isLocale(value: string): value is Locale {

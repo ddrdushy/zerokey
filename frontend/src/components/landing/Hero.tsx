@@ -14,12 +14,7 @@ import type { Variants } from "framer-motion";
 import { Calendar, CheckCircle2, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-
-const TRUST_LABELS = [
-  "A product of Symprio Sdn Bhd",
-  "MDEC accredited",
-  "LHDN registered software intermediary",
-];
+import { useT } from "@/lib/i18n";
 
 const HERO_EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -43,8 +38,15 @@ function buildVariants(reduced: boolean): { container: Variants; item: Variants 
 }
 
 export function Hero() {
+  const t = useT();
   const reduced = useReducedMotion();
   const { container, item } = buildVariants(!!reduced);
+
+  const TRUST_LABELS = [
+    t("landing.hero.trust.symprio"),
+    t("landing.hero.trust.mdec"),
+    t("landing.hero.trust.lhdn"),
+  ];
 
   return (
     <section className="relative overflow-hidden border-b border-slate-100">
@@ -83,31 +85,31 @@ export function Hero() {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal opacity-75" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-signal" />
             </span>
-            Live for LHDN Phase 4
+            {t("landing.hero.live_pill")}
           </motion.span>
 
           <motion.h1
             variants={item}
             className="font-display text-4xl font-bold leading-[1.05] tracking-tight md:text-5xl lg:text-6xl"
           >
-            LHDN e-invoicing without the headaches.
+            {t("landing.hero.headline")}
           </motion.h1>
 
           <motion.p variants={item} className="font-display text-lg text-slate-600">
-            Drop the PDF. <em className="not-italic text-ink">Drop the Keys.</em>
+            {t("landing.hero.tagline_part1")}{" "}
+            <em className="not-italic text-ink">{t("landing.hero.tagline_part2")}</em>
           </motion.p>
 
           <motion.p variants={item} className="max-w-xl text-lg text-slate-600">
-            Malaysian SMEs face penalties up to RM 20,000 per non-compliant invoice from January
-            2027. ZeroKey handles every invoice from upload to LHDN — accurate, audited, and fast.
+            {t("landing.hero.subhead")}
           </motion.p>
 
           <motion.div variants={item} className="flex flex-wrap items-center gap-3">
             <Button variant="primary" size="lg">
-              Start free trial
+              {t("landing.hero.cta_primary")}
             </Button>
             <Button variant="outline" size="lg">
-              Book a demo
+              {t("landing.hero.cta_secondary")}
             </Button>
           </motion.div>
 

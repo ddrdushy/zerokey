@@ -1,7 +1,11 @@
+"use client";
+
 // Section 3 — the problem. Specific, factual, brief.
+// Headline translated; bodies stay English pending a translator pass.
 
 import { Reveal } from "./Reveal";
 import { staggerDelay } from "./stagger";
+import { useT } from "@/lib/i18n";
 
 const PARAGRAPHS = [
   "LHDN begins enforcing penalties on Phase 4 taxpayers (RM 1M–5M annual turnover) for invoices that fail MyInvois requirements. Penalties run from RM 200 to RM 20,000 per invoice.",
@@ -10,12 +14,13 @@ const PARAGRAPHS = [
 ];
 
 export function Problem() {
+  const t = useT();
   return (
     <section className="border-b border-slate-100 bg-slate-50">
       <div className="mx-auto max-w-3xl px-4 py-16 md:px-8 md:py-24">
         <Reveal>
           <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-            From January 2027, every non-compliant invoice has a price tag.
+            {t("landing.problem.headline")}
           </h2>
         </Reveal>
         <div className="mt-8 space-y-6 text-lg text-slate-600">

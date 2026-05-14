@@ -1,3 +1,5 @@
+"use client";
+
 // Section 10 — Personas. Four cards covering the four audiences from
 // USER_PERSONAS.md. SME owner leads (largest segment + most time-sensitive),
 // then finance/ops, then tech, then BFSI/enterprise on the right.
@@ -5,6 +7,7 @@
 import { Reveal } from "./Reveal";
 import { staggerDelay } from "./stagger";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/lib/i18n";
 
 type Persona = {
   badge: string;
@@ -66,17 +69,17 @@ const PERSONAS: Persona[] = [
 ];
 
 export function Personas() {
+  const t = useT();
   return (
     <section className="border-b border-slate-100 bg-slate-50">
       <div className="mx-auto max-w-7xl px-4 py-16 md:px-8 md:py-24">
         <Reveal>
           <div className="max-w-2xl">
             <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-              Different shoes, <em>same regulator.</em>
+              {t("landing.personas.headline_a")}
+              <em>{t("landing.personas.headline_em")}</em>
             </h2>
-            <p className="mt-4 text-lg text-slate-600">
-              Whichever side of the invoice you sit on, this is the shape of working with us.
-            </p>
+            <p className="mt-4 text-lg text-slate-600">{t("landing.personas.sub")}</p>
           </div>
         </Reveal>
 

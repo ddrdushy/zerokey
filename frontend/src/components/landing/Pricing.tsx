@@ -1,3 +1,5 @@
+"use client";
+
 // Section 8 — pricing. Comparative grid scannable in 10 seconds. Numbers here
 // are placeholders; canonical values live in BUSINESS_MODEL.md and are wired
 // from the backend Plan catalog once Phase 5 lands. Cards stagger-fade-in;
@@ -6,6 +8,7 @@
 import { Button } from "@/components/ui/button";
 import { Reveal } from "./Reveal";
 import { staggerDelay } from "./stagger";
+import { useT } from "@/lib/i18n";
 
 type Tier = {
   name: string;
@@ -42,18 +45,16 @@ const TIERS: Tier[] = [
 ];
 
 export function Pricing() {
+  const t = useT();
   return (
     <section id="pricing" className="border-b border-slate-100">
       <div className="mx-auto max-w-7xl px-4 py-16 md:px-8 md:py-24">
         <Reveal>
           <div className="max-w-2xl">
             <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-              Pricing that fits the invoices you actually send.
+              {t("landing.pricing.headline")}
             </h2>
-            <p className="mt-4 text-lg text-slate-600">
-              All plans include LHDN MyInvois submission. Free trial requires no credit card.
-              Switch plans any time.
-            </p>
+            <p className="mt-4 text-lg text-slate-600">{t("landing.pricing.sub")}</p>
           </div>
         </Reveal>
         <div className="mt-12 grid gap-4 md:grid-cols-3 lg:grid-cols-6">
@@ -100,9 +101,7 @@ export function Pricing() {
           ))}
         </div>
         <Reveal delay={0.16}>
-          <p className="mt-8 text-xs text-slate-400">
-            All prices in MYR. 30-day money-back guarantee. Annual billing saves 15%.
-          </p>
+          <p className="mt-8 text-xs text-slate-400">{t("landing.pricing.note")}</p>
         </Reveal>
       </div>
     </section>

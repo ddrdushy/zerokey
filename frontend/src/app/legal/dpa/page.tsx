@@ -24,7 +24,7 @@ export default function DpaPage() {
           <Reveal>
             <div className="grid gap-4 md:grid-cols-2">
               <a
-                href="mailto:legal@symprio.com?subject=DPA%20request"
+                href="mailto:contact@symprio.com?subject=DPA%20request"
                 className="flex items-center justify-between rounded-xl border border-slate-100 bg-white p-6 transition-all duration-panel ease-zk hover:-translate-y-1 hover:shadow-lg"
               >
                 <div className="flex items-center gap-3">
@@ -39,7 +39,7 @@ export default function DpaPage() {
                 <FileText size={18} className="text-slate-400" />
               </a>
               <a
-                href="mailto:legal@symprio.com?subject=DPA%20with%20edits"
+                href="mailto:contact@symprio.com?subject=DPA%20with%20edits"
                 className="flex items-center justify-between rounded-xl border border-slate-100 bg-white p-6 transition-all duration-panel ease-zk hover:-translate-y-1 hover:shadow-lg"
               >
                 <div className="flex items-center gap-3">
@@ -111,7 +111,7 @@ export default function DpaPage() {
 
         <h2>Process</h2>
         <p>
-          Email <a href="mailto:legal@symprio.com">legal@symprio.com</a> with your company name
+          Email <a href="mailto:contact@symprio.com">contact@symprio.com</a> with your company name
           and your preferred signing flow (DocuSign / Adobe Sign / printed copy). We send a
           signable PDF within one business day.
         </p>

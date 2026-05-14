@@ -103,8 +103,8 @@ export default function StatusPage() {
               <p className="text-sm text-slate-600">
                 Past incidents and uptime history appear here once a few weeks of data has
                 accumulated. For urgent issues affecting your account, email{" "}
-                <a className="underline underline-offset-4 hover:text-ink" href="mailto:support@symprio.com">
-                  support@symprio.com
+                <a className="underline underline-offset-4 hover:text-ink" href="mailto:contact@symprio.com">
+                  contact@symprio.com
                 </a>
                 .
               </p>

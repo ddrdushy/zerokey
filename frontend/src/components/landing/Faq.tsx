@@ -1,9 +1,12 @@
+"use client";
+
 // Section 11 — FAQ. Native <details>/<summary> for the accordion (no JS
 // needed, keyboard-accessible, screen-reader-friendly out of the box).
 // Whole section fades in on scroll; each row fades with a tiny stagger.
 
 import { Reveal } from "./Reveal";
 import { staggerDelay } from "./stagger";
+import { useT } from "@/lib/i18n";
 
 const FAQS: { q: string; a: string }[] = [
   {
@@ -37,12 +40,13 @@ const FAQS: { q: string; a: string }[] = [
 ];
 
 export function Faq() {
+  const t = useT();
   return (
     <section id="faq" className="border-b border-slate-100">
       <div className="mx-auto max-w-3xl px-4 py-16 md:px-8 md:py-24">
         <Reveal>
           <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-            Frequently asked questions
+            {t("landing.faq.headline")}
           </h2>
         </Reveal>
         <div className="mt-8 divide-y divide-slate-100 border-y border-slate-100">

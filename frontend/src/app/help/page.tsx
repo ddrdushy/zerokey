@@ -69,7 +69,7 @@ export default function HelpPage() {
             Answers to the questions <em>customers actually ask</em>.
           </>
         }
-        description="Browse by topic, or write to support@symprio.com. We'd rather respond directly than make you guess."
+        description="Browse by topic, or write to contact@symprio.com. We'd rather respond directly than make you guess."
       />
 
       <section className="border-b border-slate-100 bg-paper">

@@ -42,7 +42,7 @@ export default function AcceptableUsePage() {
         <h2>Report abuse</h2>
         <p>
           If you spot something that looks like a violation, email{" "}
-          <a href="mailto:security@symprio.com">security@symprio.com</a>. We take reports
+          <a href="mailto:contact@symprio.com">contact@symprio.com</a>. We take reports
           seriously and acknowledge within one business day.
         </p>
       </Prose>

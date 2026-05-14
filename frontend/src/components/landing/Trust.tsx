@@ -1,8 +1,11 @@
+"use client";
+
 // Section 7 — trust and security. Four pillars; calm, specific, no marketing
 // brochure tone. Cards lift on hover (subtle), fade in on scroll.
 
 import { Reveal } from "./Reveal";
 import { staggerDelay } from "./stagger";
+import { useT } from "@/lib/i18n";
 
 const PILLARS = [
   {
@@ -24,13 +27,15 @@ const PILLARS = [
 ];
 
 export function Trust() {
+  const t = useT();
   return (
     <section className="border-b border-slate-100 bg-ink text-paper">
       <div className="mx-auto max-w-7xl px-4 py-16 md:px-8 md:py-24">
         <Reveal>
           <div className="max-w-2xl">
             <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-              Built to BFSI standards. <em className="text-signal">Sold for SMEs.</em>
+              {t("landing.trust.headline_a")}
+              <em className="text-signal">{t("landing.trust.headline_em")}</em>
             </h2>
           </div>
         </Reveal>

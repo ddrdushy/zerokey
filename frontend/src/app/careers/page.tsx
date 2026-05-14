@@ -108,10 +108,10 @@ export default function CareersPage() {
                     on goes a long way.
                   </p>
                   <a
-                    href="mailto:hello@symprio.com?subject=Joining%20Symprio"
+                    href="mailto:contact@symprio.com?subject=Joining%20Symprio"
                     className="mt-4 inline-flex items-center justify-center rounded-md bg-signal px-5 py-2.5 text-sm font-semibold text-ink transition-opacity duration-ack ease-zk hover:opacity-90"
                   >
-                    hello@symprio.com
+                    contact@symprio.com
                   </a>
                 </div>
               </div>

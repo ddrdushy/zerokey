@@ -1,9 +1,12 @@
+"use client";
+
 // Section 6 — Built for Malaysian businesses. Short, structural. Languages,
 // regional regulatory facts, accounting integrations. Tamil treated with the
 // same care as the others per BRAND_KIT.md.
 
 import { Reveal } from "./Reveal";
 import { staggerDelay } from "./stagger";
+import { useT } from "@/lib/i18n";
 
 const LANGUAGES = [
   { code: "EN", name: "English" },
@@ -38,6 +41,7 @@ const ACCOUNTING = [
 ];
 
 export function BuiltForMalaysia() {
+  const t = useT();
   return (
     <section className="border-b border-slate-100 bg-slate-50">
       <div className="mx-auto max-w-7xl px-4 py-16 md:px-8 md:py-24">
@@ -45,15 +49,13 @@ export function BuiltForMalaysia() {
           <Reveal direction="left">
             <div>
               <span className="text-2xs font-semibold uppercase tracking-wider text-slate-400">
-                Built for Malaysian businesses
+                {t("landing.builtformy.eyebrow")}
               </span>
               <h2 className="mt-3 font-display text-3xl font-bold tracking-tight md:text-4xl">
-                Not an international product translated. <em>Malaysian.</em>
+                {t("landing.builtformy.headline_a")}
+                <em>{t("landing.builtformy.headline_em")}</em>
               </h2>
-              <p className="mt-6 text-lg text-slate-600">
-                MyInvois has Malaysia-shaped requirements. The MSIC codes, the cancellation window,
-                the regional languages, the local accounting systems. We started from those.
-              </p>
+              <p className="mt-6 text-lg text-slate-600">{t("landing.builtformy.sub")}</p>
 
               <div className="mt-8 flex flex-wrap gap-2">
                 {LANGUAGES.map((lang) => (

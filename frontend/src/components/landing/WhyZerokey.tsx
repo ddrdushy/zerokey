@@ -1,9 +1,12 @@
+"use client";
+
 // Section 5 — Why ZeroKey. Comparative framing without naming competitors.
 // Three alternatives + our position; closes with 4 outcome-shaped
 // differentiators (per LANDING_PAGE.md §"Why ZeroKey").
 
 import { Reveal } from "./Reveal";
 import { staggerDelay } from "./stagger";
+import { useT } from "@/lib/i18n";
 
 const ALTERNATIVES = [
   {
@@ -43,13 +46,15 @@ const DIFFERENTIATORS = [
 ];
 
 export function WhyZerokey() {
+  const t = useT();
   return (
     <section className="border-b border-slate-100 bg-paper">
       <div className="mx-auto max-w-7xl px-4 py-16 md:px-8 md:py-24">
         <Reveal>
           <div className="max-w-2xl">
             <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-              Three alternatives, three trade-offs. <em>Here is where we fit.</em>
+              {t("landing.whyzerokey.headline_a")}
+              <em>{t("landing.whyzerokey.headline_em")}</em>
             </h2>
           </div>
         </Reveal>

@@ -2,8 +2,11 @@
 // ~20 seconds. Each step fades up with a small stagger so the eye moves
 // across in sequence.
 
+"use client";
+
 import { Reveal } from "./Reveal";
 import { staggerDelay } from "./stagger";
+import { useT } from "@/lib/i18n";
 
 const STEPS = [
   {
@@ -29,13 +32,15 @@ const STEPS = [
 ];
 
 export function HowItWorks() {
+  const t = useT();
   return (
     <section className="border-b border-slate-100">
       <div className="mx-auto max-w-7xl px-4 py-16 md:px-8 md:py-24">
         <Reveal>
           <div className="max-w-2xl">
             <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-              From a PDF to a validated LHDN submission, <em>without typing</em>.
+              {t("landing.howitworks.headline_a")}
+              <em>{t("landing.howitworks.headline_em")}</em>.
             </h2>
           </div>
         </Reveal>

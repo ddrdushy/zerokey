@@ -90,8 +90,8 @@ export default function BlogPage() {
             <p className="mt-12 border-t border-slate-100 pt-6 text-xs text-slate-400">
               Want these in your inbox? Add yourself in your dashboard → notifications, or write
               to{" "}
-              <a className="underline underline-offset-4 hover:text-ink" href="mailto:hello@symprio.com">
-                hello@symprio.com
+              <a className="underline underline-offset-4 hover:text-ink" href="mailto:contact@symprio.com">
+                contact@symprio.com
               </a>
               .
             </p>
