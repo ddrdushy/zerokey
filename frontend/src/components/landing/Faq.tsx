@@ -20,7 +20,7 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: "Is my data stored in Malaysia?",
-    a: "Yes. Primary hosting is in AWS ap-southeast-5 (Malaysia). Disaster recovery replicas are in ap-southeast-1 (Singapore). No customer data leaves the region without explicit consent.",
+    a: "Yes. Your data lives in a Malaysian datacentre. We replicate to Singapore for disaster recovery only — failover, not regular operation. Nothing leaves the region without your consent.",
   },
   {
     q: "How does pricing work if I have an unusually high invoice month?",

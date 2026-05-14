@@ -38,22 +38,22 @@ const CAPABILITIES = [
   {
     icon: SearchCheck,
     title: "Extract with confidence",
-    body: "All 55 LHDN fields with per-field confidence scores. Low-confidence rows route to review automatically.",
+    body: "We pull out every LHDN field and tell you how confident we are about each one. Anything uncertain lands in the review queue automatically.",
   },
   {
     icon: FileText,
     title: "Validate before LHDN",
-    body: "Catch errors before MyInvois does — MSIC codes, tax types, totals, supplier TIN format, currency lines.",
+    body: "We catch the errors before MyInvois does — industry codes, tax types, totals, TIN format, currency lines. Fewer rejections, less back-and-forth.",
   },
   {
     icon: Signature,
     title: "Sign without exposure",
-    body: "Your certificate lives in KMS-encrypted blobs. Signing happens in isolated workers, the plain key is never logged.",
+    body: "Your LHDN certificate stays sealed in hardware-grade storage. We sign on your behalf — we never carry the key around.",
   },
   {
     icon: Workflow,
     title: "Submit and track",
-    body: "We post to LHDN, poll for status, and write the UUID + QR back to your record automatically.",
+    body: "We send the invoice to LHDN, watch for the result, and write the UUID and QR code back to your record. You see the status live.",
   },
   {
     icon: Boxes,
@@ -65,18 +65,18 @@ const CAPABILITIES = [
 const ARCHITECTURE = [
   {
     icon: ShieldCheck,
-    title: "Pluggable engine registry",
-    body: "Azure Document Intelligence primary; AWS Textract, Google Document AI, RapidOCR fallbacks. We swap engines without changing the API.",
+    title: "Reliable extraction, always",
+    body: "If one extraction service has a bad day, ZeroKey quietly falls back to another. You never notice — your invoices keep moving.",
   },
   {
     icon: KeyRound,
-    title: "Cryptographic audit trail",
-    body: "Every domain event hashes the previous one. A daily beat verifies the chain — tampering shows up in the next run.",
+    title: "Tamper-evident audit trail",
+    body: "Every action is chained to the last. If something gets edited or removed, the chain breaks loudly. Auditors love it.",
   },
   {
     icon: Globe2,
-    title: "Malaysia residency",
-    body: "Primary in AWS ap-southeast-5. DR in ap-southeast-1 (Singapore). Tenanted at the database layer via Postgres RLS.",
+    title: "Malaysian by default",
+    body: "Your data lives in a Malaysian datacentre. Disaster recovery in Singapore. Multi-tenant isolation enforced at the storage level — your data and your competitor's never meet.",
   },
 ];
 
