@@ -34,6 +34,12 @@ urlpatterns = [
         views.sync_autocount,
         name="sync-sage-ubs",
     ),
+    # PORTAL_PLAN Phase 2 — pull issued documents (Invoice/CN/DN).
+    path(
+        "configs/<uuid:config_id>/pull/",
+        views.pull_documents,
+        name="pull-documents",
+    ),
     path(
         "proposals/<uuid:proposal_id>/",
         views.proposal_detail,

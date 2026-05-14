@@ -558,3 +558,72 @@ def lock_remove(request: Request) -> Response:
         actor_user_id=request.user.id,
     )
     return Response({"removed": removed})
+
+
+# --- PORTAL_PLAN Phase 2 — document pull ----------------------------------
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser])
+def pull_documents(request: Request, config_id: str) -> Response:
+    """Pull issued documents (Invoice / CN / DN) from a connector.
+
+    Body (multipart):
+      file:          the connector's documents CSV export
+      document_type: "invoice" | "credit_note" | "debit_note"
+                     (default "invoice")
+
+    For CSV-driven connectors (SQL Account / AutoCount / Sage UBS)
+    the customer uploads the export, the adapter parses, and each
+    new row materialises into an IngestionJob + Invoice. The cursor
+    advances so a re-upload won't double-ingest. Direct-connect
+    adapters when they ship use the same endpoint with `file`
+    omitted — they pull from their stored credentials.
+    """
+    from .pull_services import PullError, pull_documents_for_connector
+
+    org_or_response = _gate_active_org(request)
+    if isinstance(org_or_response, Response):
+        return org_or_response
+    org_id = org_or_response
+    if not _is_owner_or_admin(request.user, org_id):
+        return Response(
+            {"detail": "Only owners and admins can pull from a connector."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    config = IntegrationConfig.objects.filter(
+        organization_id=org_id, id=config_id, deleted_at__isnull=True
+    ).first()
+    if config is None:
+        return Response(
+            {"detail": "Connector not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    document_type = (request.data.get("document_type") or "invoice").strip()
+    upload = request.FILES.get("file")
+    csv_bytes = upload.read() if upload is not None else None
+
+    try:
+        result = pull_documents_for_connector(
+            integration_config_id=config.id,
+            document_type=document_type,
+            csv_bytes=csv_bytes,
+        )
+    except PullError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except ConnectorError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(
+        {
+            "document_type": result.document_type,
+            "ingested_count": result.ingested_count,
+            "skipped_count": result.skipped_count,
+            "failed_count": result.failed_count,
+            "new_cursor": result.new_cursor,
+            "error": result.error,
+        }
+    )

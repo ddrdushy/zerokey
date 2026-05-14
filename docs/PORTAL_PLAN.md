@@ -162,7 +162,7 @@ why it didn't go.
 Five engineering phases plus a dashboard refresh. Each phase is sized to
 ship independently; later phases assume earlier ones are merged.
 
-### Phase 1 — Intermediary signing mode (≈ 1 week eng)
+### Phase 1 — Intermediary signing mode (≈ 1 week eng) — **SHIPPED 2026-05-14 (c6289c4)**
 
 Foundation. Adds a per-organization signing mode and routes every
 existing submission through the new mode-aware signing service.
@@ -207,40 +207,116 @@ existing submission through the new mode-aware signing service.
 - Every intermediary submission shows up in the audit log with the
   expected event type.
 
-### Phase 2 — Connector invoice pull (≈ 2 weeks eng)
+### Phase 2 — Connector invoice import (revised after survey)
 
-Extends SQL Account first, then AutoCount, then Sage UBS, to pull
-issued invoices, credit notes, and debit notes from the ERP into
-ZeroKey on a poll schedule.
+The original Phase 2 plan assumed a live ODBC / API connection that
+ZeroKey could poll. A survey of the existing connector framework on
+2026-05-14 turned up a different reality: the SQL Account, AutoCount
+and Sage UBS adapters are all **CSV-upload-based** — they wrap a
+generic ``CSVConnector`` and expect the customer to export from their
+ERP and upload the CSV. There is no live connection today and none
+of the three ERPs lend themselves to a cloud-side poll (Firebird /
+DBISAM / MSSQL files behind customer-network NAT).
 
-**Backend**
+That changes the shape of Phase 2 into a v1 → v2 split:
 
-- `apps.connectors.services` gains `pull_documents(connector_id)` per
-  connector class. Pulls everything issued since the last successful
-  pull cursor.
-- New `ConnectorPullCursor` model: per-connector, per-document-type
-  high-water mark (the most recent ERP document id we've seen).
-- `apps.ingestion` accepts connector pulls as a new source type
-  alongside upload / email / API / WhatsApp. Each pulled document
-  creates an `IngestionJob` like any other.
-- Scheduled Celery beat task: poll every active connector at 15-minute
-  cadence. Configurable per-connector via SystemSetting.
-- Per-connector mappers (SQL Account format → ZeroKey internal
-  representation) live in `apps.connectors.<vendor>.mappers`. Tests live
-  next to them.
+**Phase 2 v1 — CSV-driven invoice import** (Path B). Extend the
+existing customer-master / item-catalog CSV path to cover sales
+invoices, credit notes, and debit notes. The customer drops a weekly
+sales-invoice CSV export from their ERP; we batch-create one
+``IngestionJob`` per row and run them through the rest of the
+pipeline (validation → auto-submit → LHDN). Same data shape as the
+live-poll endpoint will eventually use; only the trigger differs.
 
-**Frontend**
+**Phase 2 v2 — Live poll** (Path A, follow-up after v1 lands and we
+have real customers asking for it). Requires either an on-prem
+sync agent or a reverse-tunnel into the customer's network to reach
+their ERP database. Material engineering effort (4-6 weeks),
+material deployment change (we now run code on the customer's
+network), and best held until we have validated CSV-import demand.
 
-- Connector settings page surfaces the pull cadence, last successful
-  pull, last error.
-- Manual "Pull now" button for support / debugging.
+The remainder of this section describes Phase 2 v1 — what's actually
+being built now. Phase 2 v2 inherits the data model and the
+downstream pipeline; only the upstream trigger changes.
+
+#### Phase 2a — CSV parser foundation (≈ 1-2 days)
+
+- ``apps.connectors.document_records.ConnectorDocumentRecord``
+  dataclass: structured representation of one ERP-issued document.
+  Shape covers invoice / credit note / debit note via a
+  ``document_type`` field; fields cover external_ref, issue_date,
+  supplier + buyer parties, line items, totals, currency.
+- ``apps.connectors.adapters.base.BaseConnector.fetch_documents()``
+  abstract method (default: yield empty). Concrete adapters that
+  support invoice import override it.
+- ``apps.connectors.csv_invoices.parse_sql_account_sales_invoice``
+  — pure function: ``bytes -> Iterable[ConnectorDocumentRecord]``.
+  Column mapping lives next to it. Unit-tested in isolation.
+- ``ConnectorPullCursor`` model in ``apps.connectors.models`` — one
+  row per (org, connector_type, document_type, external_ref) so a
+  re-uploaded CSV doesn't create duplicate IngestionJobs. Tenant-
+  scoped; RLS keeps cursors invisible across orgs.
+- New endpoint ``POST /api/v1/connectors/<id>/preview-invoices/``:
+  accepts a CSV body, returns ``{rows_parsed, would_create,
+  duplicates, errors}`` for the customer to confirm before
+  committing. No database writes from this endpoint.
+
+#### Phase 2b — Structured Invoice creation (≈ 2 days)
+
+- New service ``apps.connectors.services.import_documents(
+  organization_id, records, connector_type, source_filename)``
+  — for each ``ConnectorDocumentRecord``:
+    1. Check the cursor; skip if (external_ref, document_type)
+       already imported for this org + connector.
+    2. Create an ``IngestionJob`` with
+       ``source_channel=DATABASE_CONNECTOR``,
+       ``source_identifier=<connector_type>:<external_ref>``,
+       and the CSV row stored as the source blob.
+    3. Create the ``Invoice`` directly from the structured record —
+       bypassing OCR / extraction since the data is already
+       structured. ``extraction_confidence`` is set to ``1.0``;
+       the IngestionJob transitions ``RECEIVED → VALIDATING``
+       (skipping CLASSIFYING / EXTRACTING / ENRICHING).
+    4. Record the cursor row.
+- Convert the preview endpoint into a real ``POST
+  /api/v1/connectors/<id>/import-invoices/`` that does the writes.
+- Audit event ``ingestion.connector_import`` per CSV batch +
+  ``ingestion.connector_import.row`` per row.
+
+#### Phase 2c — Remaining connectors (≈ 2 days)
+
+- AutoCount sales-invoice CSV mapping + adapter override.
+- Sage UBS sales-invoice CSV mapping + adapter override.
+- One column-mapping function per vendor; shared
+  ``parse_csv_with_mapping`` helper.
+
+#### Phase 2d — UI (≈ 2 days)
+
+- Per-connector ``/dashboard/connectors/<id>/`` gains an "Upload
+  invoices CSV" section alongside the existing customer + items
+  upload affordances.
+- Two-step flow: drop CSV → preview shows rows / duplicates /
+  errors → confirm to commit.
+- Last-import timestamp + summary surfaced on the connector card.
 
 **Done when**
 
-- Creating an invoice in SQL Account causes it to appear in the
-  ZeroKey inbox within 15 minutes.
-- CN and DN follow the same path.
-- The cursor survives a worker restart — we don't double-pull.
+- A customer with the SQL Account connector configured can upload
+  their weekly sales-invoice CSV, see a preview, confirm, and have
+  every row land as a populated Invoice ready for the auto-submit
+  pipeline.
+- A re-upload of the same CSV creates zero duplicates.
+- Identical flow works for AutoCount and Sage UBS using their own
+  CSV export shapes.
+- The IngestionJob audit trail clearly identifies "this Invoice
+  came from connector X, row Y, original CSV at <s3-key>".
+
+**Deferred to Phase 2 v2** (live poll, weeks not now)
+
+- Celery beat task polling on a 15-minute cadence.
+- ConnectorPullCursor as a high-water mark on (issued_at, id)
+  rather than a per-document-ref dedup table.
+- On-prem sync agent / reverse-tunnel deployment model.
 
 ### Phase 3 — Auto-submit toggle and queue (≈ 1 week eng)
 

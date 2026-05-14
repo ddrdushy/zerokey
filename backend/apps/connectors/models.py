@@ -371,3 +371,57 @@ class MasterFieldConflict(TenantScopedModel):
     @property
     def is_open(self) -> bool:
         return self.resolved_at is None
+
+
+# --- PORTAL_PLAN Phase 2 — document pull cursors ----------------------------
+
+
+class ConnectorPullCursor(TenantScopedModel):
+    """Per-connector, per-document-type high-water mark.
+
+    The pull service reads ``last_external_ref``, asks the adapter for
+    documents issued after it, ingests each one, then advances the
+    cursor to the highest external ref seen in the batch. Survives
+    worker restarts so we never double-ingest the same invoice.
+
+    Separate cursors per document type so backfilling credit notes
+    doesn't reset the invoice cursor. Tenant-scoped so RLS keeps an
+    org's cursors invisible to other tenants.
+    """
+
+    class DocumentType(models.TextChoices):
+        INVOICE = "invoice", "Invoice"
+        CREDIT_NOTE = "credit_note", "Credit note"
+        DEBIT_NOTE = "debit_note", "Debit note"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    integration_config = models.ForeignKey(
+        IntegrationConfig,
+        on_delete=models.CASCADE,
+        related_name="pull_cursors",
+    )
+    document_type = models.CharField(max_length=16, choices=DocumentType.choices)
+
+    # Highest external-system reference we've successfully ingested
+    # for this connector + document type. Adapters treat it as opaque
+    # — could be a date string, an export-row id, an invoice number.
+    # The adapter is responsible for ordering documents and answering
+    # "give me everything after X."
+    last_external_ref = models.CharField(max_length=255, blank=True, default="")
+
+    last_pulled_at = models.DateTimeField(null=True, blank=True)
+    last_pull_status = models.CharField(max_length=32, blank=True, default="")
+    last_pull_count = models.IntegerField(default=0)
+    last_pull_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["integration_config", "document_type"],
+                name="unique_cursor_per_connector_and_doc_type",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"PullCursor({self.integration_config_id}:{self.document_type})"
