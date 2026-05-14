@@ -68,6 +68,11 @@ class Invoice(TenantScopedModel):
         # ready. ``auto_submit_blocked_reason`` carries the why on
         # the same row.
         NOT_SUBMITTED = "not_submitted", "Not submitted (manual)"
+        # Phase 5 of PORTAL_PLAN — this B2C invoice has been folded
+        # into a consolidated parent invoice. The parent goes to LHDN;
+        # this row stays as the audit-side detail. ``consolidated_in_invoice_id``
+        # points at the parent.
+        CONSOLIDATED = "consolidated", "Rolled into consolidated submission"
         SIGNING = "signing", "Signing"
         SUBMITTING = "submitting", "Submitting"
         VALIDATED = "validated", "Validated by LHDN"
@@ -142,6 +147,13 @@ class Invoice(TenantScopedModel):
     # "Buyer requires review", "Validation: supplier_tin.format".
     # Cleared on the next successful submission attempt.
     auto_submit_blocked_reason = models.CharField(max_length=128, blank=True, default="")
+
+    # Phase 5 of PORTAL_PLAN — B2C consolidation. When set, this row
+    # is a constituent that was rolled into the parent invoice with
+    # the given id. The constituent's status is then CONSOLIDATED;
+    # only the parent submits to LHDN. Null on every row that isn't
+    # part of a consolidation (the common case).
+    consolidated_in_invoice_id = models.UUIDField(null=True, blank=True, db_index=True)
 
     # --- Totals --------------------------------------------------------------
     subtotal = models.DecimalField(max_digits=19, decimal_places=2, null=True, blank=True)
