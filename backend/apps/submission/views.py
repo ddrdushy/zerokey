@@ -117,6 +117,50 @@ def _invoice_update(request: Request, organization_id: str, invoice_id: str) -> 
     return Response(InvoiceSerializer(result.invoice).data)
 
 
+# Phase 4 of PORTAL_PLAN — accountant portal monthly-bucket rollup.
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def monthly_buckets_view(request: Request) -> Response:
+    """Per-month rollup for the accountant portal.
+
+    Query params:
+      organization_id (optional): when present, return buckets for
+        that org. The user must be a member. When absent, the session-
+        active org is used.
+      months (optional, default 12): how many recent months to return.
+
+    Returns: {"results": [...]} — most recent month first.
+    """
+    from apps.identity.services import can_user_act_for_organization
+
+    organization_id = request.query_params.get("organization_id") or _active_org(request)
+    if not organization_id:
+        return Response(
+            {"detail": "organization_id is required (query param or session)."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not can_user_act_for_organization(request.user, organization_id):
+        return Response(
+            {"detail": "You are not a member of that organization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        months = int(request.query_params.get("months") or "12")
+    except (TypeError, ValueError):
+        months = 12
+    months = max(1, min(months, 24))
+
+    from apps.identity.tenancy import tenant_context
+
+    with tenant_context(organization_id):
+        rows = services.monthly_buckets(
+            organization_id=organization_id,
+            months=months,
+        )
+    return Response({"organization_id": str(organization_id), "results": rows})
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def compliance_posture_view(request: Request) -> Response:

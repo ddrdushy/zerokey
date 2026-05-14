@@ -136,6 +136,98 @@ def register_owner(
     return RegistrationResult(user=user, organization=organization, membership=membership)
 
 
+def user_org_portal_summary(user: User) -> list[dict]:
+    """Phase 4 of PORTAL_PLAN — accountant portal landing payload.
+
+    Returns one row per active org the user is a member of, with the
+    pills the multi-org landing surfaces: ERP connection status,
+    MyInvois registration (TIN + BRN), signing mode, and last activity.
+
+    Cross-tenant by design (same reason as ``memberships_for`` —
+    answers "which orgs can this user open?"). Cheap: one query per
+    section, all behind a single super-admin elevation. RLS would
+    otherwise hide every row before we got to filter.
+    """
+    from datetime import timedelta
+
+    from django.db.models import Max
+    from django.utils import timezone
+
+    from apps.connectors.models import IntegrationConfig
+    from apps.ingestion.models import IngestionJob
+
+    with super_admin_context(reason="identity.user_org_portal_summary"):
+        memberships = list(
+            OrganizationMembership.objects.filter(
+                user=user,
+                is_active=True,
+                organization__deleted_at__isnull=True,
+            )
+            .select_related("organization", "role")
+            .order_by("organization__legal_name")
+        )
+
+        if not memberships:
+            return []
+
+        org_ids = [m.organization_id for m in memberships]
+
+        # ERP connectors per org — at most one row needed.
+        connector_by_org: dict = {}
+        for cfg in IntegrationConfig.objects.filter(
+            organization_id__in=org_ids,
+            deleted_at__isnull=True,
+        ):
+            current = connector_by_org.get(cfg.organization_id)
+            if current is None:
+                connector_by_org[cfg.organization_id] = cfg
+
+        # Last activity = most recent IngestionJob in the last 30 days.
+        thirty_days_ago = timezone.now() - timedelta(days=30)
+        last_activity = (
+            IngestionJob.objects.filter(
+                organization_id__in=org_ids,
+                created_at__gte=thirty_days_ago,
+            )
+            .values("organization_id")
+            .annotate(last=Max("created_at"))
+        )
+        last_activity_by_org = {row["organization_id"]: row["last"] for row in last_activity}
+
+    out = []
+    for m in memberships:
+        org = m.organization
+        cfg = connector_by_org.get(org.id)
+        out.append(
+            {
+                "organization_id": str(org.id),
+                "legal_name": org.legal_name,
+                "tin": org.tin,
+                "registration_number": org.registration_number,
+                "signing_mode": org.signing_mode,
+                "intermediary_consent_at": (
+                    org.intermediary_consent_at.isoformat()
+                    if org.intermediary_consent_at
+                    else None
+                ),
+                "auto_submit_default": bool(org.auto_submit_default),
+                "subscription_state": org.subscription_state,
+                "trial_state": org.trial_state,
+                "role": m.role.name if m.role else "",
+                "connector_type": cfg.connector_type if cfg else "",
+                "connector_last_sync_at": (
+                    cfg.last_sync_at.isoformat() if cfg and cfg.last_sync_at else None
+                ),
+                "last_activity_at": (
+                    last_activity_by_org.get(org.id).isoformat()
+                    if last_activity_by_org.get(org.id)
+                    else None
+                ),
+            }
+        )
+    return out
+
+
 def memberships_for(user: User) -> list[OrganizationMembership]:
     """Active memberships for ``user``, eager-loaded with organization + role.
 

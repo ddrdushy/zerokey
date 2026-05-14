@@ -1410,6 +1410,23 @@ def organization_signing_mode(request: Request) -> Response:
     )
 
 
+# --- Phase 4 of PORTAL_PLAN — accountant portal landing ---------------
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def portal_summary(_request: Request) -> Response:
+    """Multi-org landing payload for the accountant portal.
+
+    Returns one row per active org the signed-in user is a member of,
+    each with the pills the /portal page surfaces (ERP connector,
+    signing mode, last activity, etc.). The user's session-active org
+    is NOT special here — the portal lets the user pick any of them.
+    """
+    rows = services.user_org_portal_summary(_request.user)
+    return Response({"results": rows})
+
+
 # --- Phase 3 of PORTAL_PLAN — auto-submit toggle -----------------------
 
 

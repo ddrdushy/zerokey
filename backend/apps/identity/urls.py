@@ -124,6 +124,8 @@ urlpatterns = [
         views.organization_auto_submit,
         name="organization-auto-submit",
     ),
+    # PORTAL_PLAN Phase 4 — accountant portal landing summary
+    path("portal/summary/", views.portal_summary, name="portal-summary"),
     # Slice 99 — feature-flag map for the active org (resolved server-side)
     path(
         "feature-flags/",

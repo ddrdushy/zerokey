@@ -22,6 +22,8 @@ urlpatterns = [
     ),
     # Slice 96 — compliance-posture metrics for the dashboard.
     path("compliance/", views.compliance_posture_view, name="compliance-posture"),
+    # PORTAL_PLAN Phase 4 — monthly consolidation rollup for the portal.
+    path("monthly-buckets/", views.monthly_buckets_view, name="monthly-buckets"),
     # Slice 59B — LHDN lifecycle gestures
     path(
         "<uuid:invoice_id>/submit-to-lhdn/",

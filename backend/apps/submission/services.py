@@ -1487,3 +1487,115 @@ def get_invoice(*, organization_id: UUID, invoice_id: UUID) -> Invoice | None:
         .prefetch_related("line_items")
         .first()
     )
+
+
+# Phase 4 of PORTAL_PLAN — monthly consolidation rollup. Accountant-
+# facing UX surface; computes the per-month status pill the portal
+# renders. _SETTLED + _NEEDS_ACTION constants drive the status
+# resolution.
+
+_SETTLED_STATUSES = frozenset(
+    {
+        Invoice.Status.VALIDATED,
+        Invoice.Status.CANCELLED,
+    }
+)
+
+_NEEDS_ACTION_STATUSES = frozenset(
+    {
+        Invoice.Status.NOT_SUBMITTED,
+        Invoice.Status.READY_FOR_REVIEW,
+        Invoice.Status.AWAITING_APPROVAL,
+        Invoice.Status.REJECTED,
+        Invoice.Status.ERROR,
+    }
+)
+
+
+def monthly_buckets(
+    *,
+    organization_id,
+    months: int = 12,
+) -> list[dict]:
+    """Per-month rollups for the accountant portal.
+
+    Returns ``months`` entries (default 12 — last full year + this
+    month), most recent first. Each entry covers every issued document
+    type in that calendar month with counts + grand totals + a status
+    pill resolved as:
+      - "no_activity"  — zero docs
+      - "complete"     — every doc in _SETTLED_STATUSES
+      - "needs_action" — at least one doc in _NEEDS_ACTION_STATUSES
+      - "in_progress"  — anything else (in flight)
+    """
+    from datetime import date
+
+    from django.db.models import Count, Sum
+    from django.utils import timezone
+
+    today = timezone.now().date()
+    cursor_year = today.year
+    cursor_month = today.month
+    keys: list[tuple[int, int]] = []
+    for _ in range(months):
+        keys.append((cursor_year, cursor_month))
+        cursor_month -= 1
+        if cursor_month == 0:
+            cursor_month = 12
+            cursor_year -= 1
+
+    out: list[dict] = []
+    for year, month in keys:
+        month_start = date(year, month, 1)
+        month_end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+
+        rows = (
+            Invoice.objects.filter(
+                organization_id=organization_id,
+                issue_date__gte=month_start,
+                issue_date__lt=month_end,
+            )
+            .values("status", "invoice_type")
+            .annotate(count=Count("id"), total=Sum("grand_total"))
+        )
+
+        by_status: dict = {}
+        by_type: dict = {}
+        total_count = 0
+        total_amount = 0.0
+        for r in rows:
+            by_status[r["status"]] = by_status.get(r["status"], 0) + r["count"]
+            entry = by_type.setdefault(r["invoice_type"], {"count": 0, "total": 0.0})
+            entry["count"] += r["count"]
+            entry["total"] = float(entry["total"]) + float(r["total"] or 0)
+            total_count += r["count"]
+            total_amount += float(r["total"] or 0)
+
+        if total_count == 0:
+            pill = "no_activity"
+        else:
+            needs_action = sum(by_status.get(s, 0) for s in _NEEDS_ACTION_STATUSES)
+            settled = sum(by_status.get(s, 0) for s in _SETTLED_STATUSES)
+            if needs_action > 0:
+                pill = "needs_action"
+            elif settled == total_count:
+                pill = "complete"
+            else:
+                pill = "in_progress"
+
+        out.append(
+            {
+                "year": year,
+                "month": month,
+                "month_label": month_start.strftime("%B %Y"),
+                "pill": pill,
+                "total_count": total_count,
+                "total_amount": total_amount,
+                "by_status": by_status,
+                "by_type": by_type,
+                "needs_action_count": sum(
+                    by_status.get(s, 0) for s in _NEEDS_ACTION_STATUSES
+                ),
+            }
+        )
+    return out

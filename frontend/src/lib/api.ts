@@ -1586,6 +1586,46 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ signing_mode, accept_consent }),
     }),
+  // PORTAL_PLAN Phase 4 — accountant portal landing.
+  getPortalSummary: () =>
+    request<{
+      results: Array<{
+        organization_id: string;
+        legal_name: string;
+        tin: string;
+        registration_number: string;
+        signing_mode: "intermediary" | "self_signed";
+        intermediary_consent_at: string | null;
+        auto_submit_default: boolean;
+        subscription_state: string;
+        trial_state: string;
+        role: string;
+        connector_type: string;
+        connector_last_sync_at: string | null;
+        last_activity_at: string | null;
+      }>;
+    }>("/identity/portal/summary/"),
+  // PORTAL_PLAN Phase 4 — monthly consolidation rollup for one org.
+  getMonthlyBuckets: (params: { organizationId?: string; months?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.organizationId) search.set("organization_id", params.organizationId);
+    if (params.months) search.set("months", String(params.months));
+    const qs = search.toString();
+    return request<{
+      organization_id: string;
+      results: Array<{
+        year: number;
+        month: number;
+        month_label: string;
+        pill: "no_activity" | "complete" | "needs_action" | "in_progress";
+        total_count: number;
+        total_amount: number;
+        by_status: Record<string, number>;
+        by_type: Record<string, { count: number; total: number }>;
+        needs_action_count: number;
+      }>;
+    }>(`/invoices/monthly-buckets/${qs ? `?${qs}` : ""}`);
+  },
   // PORTAL_PLAN Phase 3 — auto-submit toggle + confidence threshold.
   getAutoSubmit: () =>
     request<{
