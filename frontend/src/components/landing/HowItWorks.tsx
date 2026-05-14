@@ -1,5 +1,9 @@
 // Section 4 — How it works. Four-step visual flow. Captions are scannable in
-// ~20 seconds.
+// ~20 seconds. Each step fades up with a small stagger so the eye moves
+// across in sequence.
+
+import { Reveal } from "./Reveal";
+import { staggerDelay } from "./stagger";
 
 const STEPS = [
   {
@@ -28,18 +32,22 @@ export function HowItWorks() {
   return (
     <section className="border-b border-slate-100">
       <div className="mx-auto max-w-7xl px-4 py-16 md:px-8 md:py-24">
-        <div className="max-w-2xl">
-          <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-            From a PDF to a validated LHDN submission, <em>without typing</em>.
-          </h2>
-        </div>
+        <Reveal>
+          <div className="max-w-2xl">
+            <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
+              From a PDF to a validated LHDN submission, <em>without typing</em>.
+            </h2>
+          </div>
+        </Reveal>
         <ol className="mt-12 grid gap-8 md:grid-cols-4">
-          {STEPS.map((step) => (
-            <li key={step.n} className="flex flex-col gap-3">
-              <span className="font-display text-lg font-bold text-slate-400">{step.n}</span>
-              <h3 className="text-xl font-semibold">{step.title}</h3>
-              <p className="text-base text-slate-600">{step.body}</p>
-            </li>
+          {STEPS.map((step, i) => (
+            <Reveal key={step.n} as="li" delay={staggerDelay(i)}>
+              <div className="flex flex-col gap-3">
+                <span className="font-display text-lg font-bold text-slate-400">{step.n}</span>
+                <h3 className="text-xl font-semibold">{step.title}</h3>
+                <p className="text-base text-slate-600">{step.body}</p>
+              </div>
+            </Reveal>
           ))}
         </ol>
       </div>

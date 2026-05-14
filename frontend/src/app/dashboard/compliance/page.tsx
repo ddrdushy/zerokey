@@ -52,7 +52,7 @@ export default function ComplianceDashboardPage() {
               Compliance posture
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              How your invoicing operation is doing against LHDN's enforcement
+              How your invoicing operation is doing against LHDN&apos;s enforcement
               expectations. Numbers are derived from your validated submissions.
             </p>
           </div>
@@ -145,7 +145,7 @@ export default function ComplianceDashboardPage() {
           </>
         ) : (
           <div className="rounded-xl border border-error/30 bg-error/5 p-6 text-sm text-error">
-            Couldn't load compliance posture.
+            Couldn&apos;t load compliance posture.
           </div>
         )}
       </div>

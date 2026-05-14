@@ -9,13 +9,26 @@
 // redirect to the dashboard; on failure we surface the error and
 // link back to /sign-in.
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import { api, ApiError } from "@/lib/api";
 
+// useSearchParams() must run beneath a Suspense boundary in Next 14, or
+// the App Router's static prerender bails on this route. The IdP always
+// supplies ?code & ?state, so this is purely a request-time concern.
+export const dynamic = "force-dynamic";
+
 export default function SsoCallbackPage() {
+  return (
+    <Suspense fallback={<CallbackFallback />}>
+      <CallbackInner />
+    </Suspense>
+  );
+}
+
+function CallbackInner() {
   const router = useRouter();
   const search = useSearchParams();
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +87,19 @@ export default function SsoCallbackPage() {
           </p>
         </>
       )}
+    </main>
+  );
+}
+
+function CallbackFallback() {
+  return (
+    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-6 px-4 py-16 md:px-8">
+      <Link href="/" className="font-display text-xl font-bold tracking-tight">
+        ZeroKey
+      </Link>
+      <h1 className="font-display text-2xl font-bold tracking-tight">
+        Finishing sign-in…
+      </h1>
     </main>
   );
 }

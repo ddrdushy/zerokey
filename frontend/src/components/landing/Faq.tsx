@@ -1,5 +1,9 @@
-// Section 11 — FAQ. Native <details>/<summary> for the accordion (no JS needed,
-// keyboard-accessible, screen-reader-friendly out of the box).
+// Section 11 — FAQ. Native <details>/<summary> for the accordion (no JS
+// needed, keyboard-accessible, screen-reader-friendly out of the box).
+// Whole section fades in on scroll; each row fades with a tiny stagger.
+
+import { Reveal } from "./Reveal";
+import { staggerDelay } from "./stagger";
 
 const FAQS: { q: string; a: string }[] = [
   {
@@ -22,29 +26,41 @@ const FAQS: { q: string; a: string }[] = [
     q: "How does pricing work if I have an unusually high invoice month?",
     a: "Overages bill per invoice at the rate for your tier. There is no plan auto-upgrade. You can move tiers any time.",
   },
+  {
+    q: "Which accounting systems do you integrate with?",
+    a: "SQL Account, AutoCount and Sage UBS at launch. Additional connectors are added as customers request them; our public connector roadmap lives in the documentation.",
+  },
+  {
+    q: "What happens if LHDN's MyInvois system is down?",
+    a: "We queue signed submissions locally and retry until LHDN accepts them. Your audit log shows the queued state, the retry timeline, and the final acceptance UUID — nothing is lost.",
+  },
 ];
 
 export function Faq() {
   return (
-    <section className="border-b border-slate-100">
+    <section id="faq" className="border-b border-slate-100">
       <div className="mx-auto max-w-3xl px-4 py-16 md:px-8 md:py-24">
-        <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-          Frequently asked questions
-        </h2>
+        <Reveal>
+          <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
+            Frequently asked questions
+          </h2>
+        </Reveal>
         <div className="mt-8 divide-y divide-slate-100 border-y border-slate-100">
-          {FAQS.map((faq) => (
-            <details key={faq.q} className="group py-5">
-              <summary className="flex cursor-pointer list-none items-center justify-between text-left text-base font-medium text-ink">
-                {faq.q}
-                <span
-                  aria-hidden="true"
-                  className="ml-4 text-2xl text-slate-400 transition-transform duration-ack ease-zk group-open:rotate-45"
-                >
-                  +
-                </span>
-              </summary>
-              <p className="mt-3 text-base text-slate-600">{faq.a}</p>
-            </details>
+          {FAQS.map((faq, i) => (
+            <Reveal key={faq.q} delay={staggerDelay(i, 0.04)}>
+              <details className="group py-5">
+                <summary className="flex cursor-pointer list-none items-center justify-between text-left text-base font-medium text-ink transition-colors duration-ack ease-zk hover:text-slate-600">
+                  <span>{faq.q}</span>
+                  <span
+                    aria-hidden="true"
+                    className="ml-4 text-2xl text-slate-400 transition-transform duration-panel ease-zk group-open:rotate-45"
+                  >
+                    +
+                  </span>
+                </summary>
+                <p className="mt-3 text-base text-slate-600">{faq.a}</p>
+              </details>
+            </Reveal>
           ))}
         </div>
       </div>

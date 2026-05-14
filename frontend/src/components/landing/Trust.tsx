@@ -1,5 +1,8 @@
 // Section 7 — trust and security. Four pillars; calm, specific, no marketing
-// brochure tone.
+// brochure tone. Cards lift on hover (subtle), fade in on scroll.
+
+import { Reveal } from "./Reveal";
+import { staggerDelay } from "./stagger";
 
 const PILLARS = [
   {
@@ -24,17 +27,23 @@ export function Trust() {
   return (
     <section className="border-b border-slate-100 bg-ink text-paper">
       <div className="mx-auto max-w-7xl px-4 py-16 md:px-8 md:py-24">
-        <div className="max-w-2xl">
-          <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
-            Built to BFSI standards. <em className="text-signal">Sold for SMEs.</em>
-          </h2>
-        </div>
+        <Reveal>
+          <div className="max-w-2xl">
+            <h2 className="font-display text-3xl font-bold tracking-tight md:text-4xl">
+              Built to BFSI standards. <em className="text-signal">Sold for SMEs.</em>
+            </h2>
+          </div>
+        </Reveal>
         <div className="mt-12 grid gap-8 md:grid-cols-2">
-          {PILLARS.map((pillar) => (
-            <div key={pillar.title} className="rounded-xl border border-slate-800 p-8">
-              <h3 className="text-xl font-semibold text-paper">{pillar.title}</h3>
-              <p className="mt-3 text-base text-slate-400">{pillar.body}</p>
-            </div>
+          {PILLARS.map((pillar, i) => (
+            <Reveal key={pillar.title} delay={staggerDelay(i)}>
+              <div className="group rounded-xl border border-slate-800 p-8 transition-colors duration-panel ease-zk hover:border-signal/40">
+                <h3 className="text-xl font-semibold text-paper transition-colors duration-panel ease-zk group-hover:text-signal">
+                  {pillar.title}
+                </h3>
+                <p className="mt-3 text-base text-slate-400">{pillar.body}</p>
+              </div>
+            </Reveal>
           ))}
         </div>
       </div>
