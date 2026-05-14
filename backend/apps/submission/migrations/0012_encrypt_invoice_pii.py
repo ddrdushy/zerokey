@@ -38,6 +38,18 @@ _PII_FIELDS = (
 
 
 def _encrypt_existing_rows(apps, schema_editor):
+    # Fast path on an empty table: the live-model iterator below
+    # SELECTs every column on the current model, which on a fresh-DB
+    # migrate would include columns added by later migrations (e.g.
+    # ``scheduled_submit_at`` from 0013) that don't exist yet. Skip
+    # the iteration entirely when there's nothing to encrypt.
+    HistoricalInvoice = apps.get_model("submission", "Invoice")
+    table = HistoricalInvoice._meta.db_table
+    with schema_editor.connection.cursor() as cur:
+        cur.execute(f'SELECT 1 FROM "{table}" LIMIT 1;')
+        if cur.fetchone() is None:
+            return
+
     # We CAN'T use ``apps.get_model`` here — the historical model has
     # plain CharField/TextField on the PII columns and won't auto-
     # encrypt on save. Use the live model so the EncryptedCharField
