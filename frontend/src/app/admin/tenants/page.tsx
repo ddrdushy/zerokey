@@ -15,6 +15,7 @@ import { Search, Trash2, Users } from "lucide-react";
 
 import { api, ApiError, type PlatformTenant } from "@/lib/api";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
 
 export default function TenantDirectoryPage() {
   const [tenants, setTenants] = useState<PlatformTenant[] | null>(null);
@@ -51,17 +52,22 @@ export default function TenantDirectoryPage() {
     };
   }, [debouncedSearch]);
 
-  async function onDeleteTenant(t: PlatformTenant) {
-    const confirmMsg = `Delete tenant "${t.legal_name}" (TIN ${t.tin})?\n\nThis is a soft-delete — the row stays in the database but the tenant disappears from sign-in and admin listings.`;
-    if (!window.confirm(confirmMsg)) return;
-    const reason = window.prompt("Reason for deletion (required, recorded in the audit log):");
-    if (!reason || !reason.trim()) return;
+  const [deleteTarget, setDeleteTarget] = useState<PlatformTenant | null>(null);
+
+  function onRequestDelete(t: PlatformTenant) {
     setError(null);
+    setDeleteTarget(t);
+  }
+
+  async function onConfirmDelete(reason: string) {
+    if (!deleteTarget) return;
     try {
-      await api.adminDeleteTenant(t.id, reason.trim());
-      setTenants((cur) => (cur ? cur.filter((x) => x.id !== t.id) : cur));
+      await api.adminDeleteTenant(deleteTarget.id, reason);
+      setTenants((cur) => (cur ? cur.filter((x) => x.id !== deleteTarget.id) : cur));
+      setDeleteTarget(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to delete tenant.");
+      // Re-throw with a friendly message so the dialog surfaces it inline.
+      throw new Error(err instanceof ApiError ? err.message : "Failed to delete tenant.");
     }
   }
 
@@ -127,9 +133,39 @@ export default function TenantDirectoryPage() {
         ) : sorted.length === 0 ? (
           <EmptyState filtered={!!debouncedSearch} />
         ) : (
-          <TenantTable tenants={sorted} onDelete={onDeleteTenant} />
+          <TenantTable tenants={sorted} onDelete={onRequestDelete} />
         )}
       </div>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title={deleteTarget ? `Delete ${deleteTarget.legal_name}?` : ""}
+        body={
+          deleteTarget ? (
+            <div className="space-y-2">
+              <p>
+                This soft-deletes the tenant. The Organization row stays in the database (the audit
+                chain isn&apos;t broken), but it disappears from sign-in flows and admin listings.
+              </p>
+              <p className="rounded-md bg-slate-50 px-3 py-2 text-2xs">
+                <span className="font-semibold text-ink">TIN:</span>{" "}
+                <code className="font-mono text-slate-600">{deleteTarget.tin}</code>
+                <br />
+                <span className="font-semibold text-ink">Members:</span>{" "}
+                <span className="text-slate-600">{deleteTarget.member_count}</span>
+                {" · "}
+                <span className="font-semibold text-ink">Invoices:</span>{" "}
+                <span className="text-slate-600">{deleteTarget.ingestion_jobs_total}</span>
+              </p>
+            </div>
+          ) : null
+        }
+        confirmLabel="Delete tenant"
+        danger
+        requireReason
+        reasonPlaceholder="e.g. duplicate test signup; smoke-test cleanup"
+        onConfirm={onConfirmDelete}
+      />
     </AdminShell>
   );
 }
