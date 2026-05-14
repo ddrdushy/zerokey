@@ -19,7 +19,11 @@ def healthz(_request) -> JsonResponse:
 
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
+    # Django's built-in admin is moved out of `/admin/` because that path is
+    # owned by the customer-facing Next.js platform-admin UI. The Django
+    # admin remains available at `/django-admin/` for internal use; nginx
+    # proxies it explicitly while letting `/admin/` fall through to Next.
+    path("django-admin/", admin.site.urls),
     path("healthz", healthz, name="healthz"),
     # OpenAPI / docs
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
