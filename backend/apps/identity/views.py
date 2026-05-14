@@ -53,7 +53,16 @@ def register(request: Request) -> Response:
     # Set the active organization first so the auth signal handler picks it up,
     # then call login() — which fires user_logged_in and records the event.
     request.session["organization_id"] = str(result.organization.id)
-    login(request, result.user)
+    # Slice 104 added a second AUTHENTICATION_BACKENDS entry (Axes), so
+    # Django requires an explicit ``backend`` arg when logging in a user
+    # that didn't come through ``authenticate()``. The freshly-created
+    # registration user has no ``.backend`` attribute, so pin it to the
+    # password ModelBackend explicitly.
+    login(
+        request,
+        result.user,
+        backend="django.contrib.auth.backends.ModelBackend",
+    )
 
     return Response(
         UserSerializer(result.user, context={"request": request}).data,
