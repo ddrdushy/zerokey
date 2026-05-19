@@ -1,0 +1,21 @@
+{
+  "name": "zerokey-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZeroKey desktop app — Electron shell over a bundled Django sidecar.",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron .",
+    "lint": "echo \"(lint: configured in Phase 5)\""
+  },
+  "dependencies": {
+    "keytar": "^7.9.0"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

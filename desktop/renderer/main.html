@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ZeroKey</title>
+    <link rel="stylesheet" href="activate.css" />
+  </head>
+  <body>
+    <main class="card" role="main">
+      <div class="brand">
+        <span class="dot"></span>
+        ZeroKey
+      </div>
+      <h1>Welcome to ZeroKey desktop</h1>
+      <p class="muted">
+        Phase 2 of the desktop pivot: the activation flow works and your
+        license is cached. The full app shell (invoice ingestion,
+        submission, monthly close) lands in Phase 3 when the sidecar
+        gains the rest of the API surface.
+      </p>
+
+      <section id="status-block" style="margin-top: 18px">
+        <p class="muted" id="license-line">Loading license…</p>
+        <p class="muted" id="sidecar-line">Checking sidecar…</p>
+      </section>
+
+      <button id="sign-out" type="button" style="margin-top: 20px">
+        Sign out
+      </button>
+    </main>
+
+    <script>
+      (async () => {
+        const license = await window.zk.getLicense();
+        const sidecar = await window.zk.sidecarUrl();
+
+        document.getElementById("license-line").textContent = license
+          ? `Activated: ${license.organization_legal_name} (${license.plan}, expires ${new Date(license.expires_at).toLocaleDateString()})`
+          : "No license cached.";
+        document.getElementById("sidecar-line").textContent = sidecar
+          ? `Sidecar: ${sidecar}`
+          : "Sidecar: not running";
+
+        document.getElementById("sign-out").addEventListener("click", async () => {
+          await window.zk.signOut();
+          await window.zk.goToActivate();
+        });
+      })();
+    </script>
+  </body>
+</html>

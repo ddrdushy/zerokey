@@ -1,0 +1,169 @@
+/* Phase 2 — bare activation flow. Phase 3 replaces this with the
+   React renderer once the sidecar serves the app shell.
+   Brand colours mirror the marketing site / Tailwind config. */
+
+:root {
+  --ink: #1a1a1a;
+  --paper: #fbfaf7;
+  --slate-100: #f1f1ee;
+  --slate-200: #e4e4df;
+  --slate-400: #a5a59c;
+  --slate-500: #7a7a72;
+  --slate-600: #595952;
+  --signal: #ffb84d;
+  --success: #2f9c5e;
+  --error: #c44a4a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.card {
+  width: 100%;
+  max-width: 460px;
+  background: #fff;
+  border: 1px solid var(--slate-100);
+  border-radius: 12px;
+  padding: 36px 32px;
+  box-shadow: 0 12px 36px rgba(15, 15, 15, 0.04);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--signal);
+  display: inline-block;
+}
+
+h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 18px 0 8px;
+}
+
+.muted {
+  color: var(--slate-500);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  background: var(--slate-100);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+form {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--slate-400);
+  font-weight: 500;
+}
+
+input {
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--slate-200);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+input:focus {
+  border-color: var(--ink);
+}
+
+button {
+  margin-top: 12px;
+  background: var(--ink);
+  color: var(--paper);
+  border: 0;
+  padding: 11px 18px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  background: #333;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.status {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.status.error {
+  border: 1px solid rgba(196, 74, 74, 0.3);
+  background: rgba(196, 74, 74, 0.06);
+  color: var(--error);
+}
+
+.status.success {
+  border: 1px solid rgba(47, 156, 94, 0.3);
+  background: rgba(47, 156, 94, 0.06);
+  color: var(--success);
+}
+
+.footnote {
+  margin-top: 16px;
+  font-size: 11px;
+  line-height: 1.4;
+}

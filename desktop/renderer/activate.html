@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Activate ZeroKey</title>
+    <link rel="stylesheet" href="activate.css" />
+  </head>
+  <body>
+    <main class="card" role="main">
+      <header>
+        <div class="brand">
+          <span class="dot"></span>
+          ZeroKey
+        </div>
+        <h1>Enter your license key</h1>
+        <p class="muted">
+          You got a key by email from Symprio when you bought ZeroKey.
+          It looks like <code>ZK-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX</code>.
+        </p>
+      </header>
+
+      <form id="activate-form" autocomplete="off">
+        <label for="key">License key</label>
+        <input
+          id="key"
+          name="key"
+          type="text"
+          placeholder="ZK-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
+          spellcheck="false"
+          autocapitalize="characters"
+          required
+        />
+
+        <div id="status" class="status" hidden></div>
+
+        <button id="submit" type="submit">Activate</button>
+        <p class="footnote muted">
+          ZeroKey only contacts the cloud to validate your license.
+          Your invoice data stays on this machine.
+        </p>
+      </form>
+    </main>
+
+    <script src="activate.js"></script>
+  </body>
+</html>

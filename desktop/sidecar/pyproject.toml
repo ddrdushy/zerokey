@@ -1,0 +1,15 @@
+[project]
+name = "zerokey-desktop-sidecar"
+version = "0.1.0"
+description = "ZeroKey desktop sidecar — bundled Django process that hosts the tenant features locally on the customer's PC."
+requires-python = ">=3.12,<3.13"
+# Deliberately a much smaller dep set than the cloud backend. The
+# OCR/torch stack stays on the cloud (we'll consider local OCR in a
+# later phase); for Phase 2 we just need Django serving /healthz so
+# the Electron main process can prove the sidecar pattern works.
+#
+# Phase 3 will add: djangorestframework, the LHDN-submission deps
+# (cryptography, requests, lxml), the connector deps. Still no torch.
+dependencies = [
+    "django>=5.1,<5.2",
+]
