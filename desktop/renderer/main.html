@@ -5,48 +5,49 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ZeroKey</title>
     <link rel="stylesheet" href="activate.css" />
+    <link rel="stylesheet" href="main.css" />
   </head>
-  <body>
-    <main class="card" role="main">
+  <body class="app">
+    <!-- License-policy banner. JS hides/shows + colours based on
+         status. -->
+    <div id="banner" class="banner" hidden></div>
+
+    <header class="topbar">
       <div class="brand">
         <span class="dot"></span>
         ZeroKey
+        <span id="topbar-org" class="org-name"></span>
       </div>
-      <h1>Welcome to ZeroKey desktop</h1>
-      <p class="muted">
-        Phase 2 of the desktop pivot: the activation flow works and your
-        license is cached. The full app shell (invoice ingestion,
-        submission, monthly close) lands in Phase 3 when the sidecar
-        gains the rest of the API surface.
-      </p>
+      <div class="topbar-right">
+        <span id="topbar-plan" class="plan-badge"></span>
+        <button id="sign-out" type="button" class="ghost">Sign out</button>
+      </div>
+    </header>
 
-      <section id="status-block" style="margin-top: 18px">
-        <p class="muted" id="license-line">Loading license…</p>
-        <p class="muted" id="sidecar-line">Checking sidecar…</p>
+    <main class="main">
+      <section class="card-stack">
+        <article class="card">
+          <h2>Invoices</h2>
+          <p class="muted" id="invoices-meta">Loading…</p>
+          <ul class="invoice-list" id="invoice-list"></ul>
+          <p class="muted small">
+            Phase 3+ lands document ingestion. For now this proves the
+            renderer can talk to the local sidecar with your entitlement.
+          </p>
+        </article>
+
+        <article class="card">
+          <h2>Sidecar</h2>
+          <dl class="kv">
+            <dt>URL</dt><dd id="sc-url">—</dd>
+            <dt>Identity</dt><dd id="sc-me">—</dd>
+            <dt>Last heartbeat</dt><dd id="sc-heartbeat">—</dd>
+            <dt>Heartbeat failures</dt><dd id="sc-hb-fail">0</dd>
+          </dl>
+        </article>
       </section>
-
-      <button id="sign-out" type="button" style="margin-top: 20px">
-        Sign out
-      </button>
     </main>
 
-    <script>
-      (async () => {
-        const license = await window.zk.getLicense();
-        const sidecar = await window.zk.sidecarUrl();
-
-        document.getElementById("license-line").textContent = license
-          ? `Activated: ${license.organization_legal_name} (${license.plan}, expires ${new Date(license.expires_at).toLocaleDateString()})`
-          : "No license cached.";
-        document.getElementById("sidecar-line").textContent = sidecar
-          ? `Sidecar: ${sidecar}`
-          : "Sidecar: not running";
-
-        document.getElementById("sign-out").addEventListener("click", async () => {
-          await window.zk.signOut();
-          await window.zk.goToActivate();
-        });
-      })();
-    </script>
+    <script src="main.js"></script>
   </body>
 </html>

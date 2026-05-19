@@ -59,9 +59,19 @@ async function startSidecar() {
 
   // eslint-disable-next-line no-console
   console.log(`[zerokey] launching sidecar: ${cmd} ${fullArgs.join(" ")}`);
+  // Forward the cloud Ed25519 public key + the licensing API base
+  // so the sidecar can verify entitlement headers and call the cloud
+  // signing endpoint. Both come from the Electron process's env.
   const child = spawn(cmd, fullArgs, {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, ZK_SIDECAR_PORT: String(port) },
+    env: {
+      ...process.env,
+      ZK_SIDECAR_PORT: String(port),
+      ZK_DESKTOP_LICENSING_PUBLIC_KEY_PEM:
+        process.env.ZK_DESKTOP_LICENSING_PUBLIC_KEY_PEM || "",
+      ZK_LICENSE_API_BASE:
+        process.env.ZK_LICENSE_API_BASE || "https://zerokey.symprio.com",
+    },
   });
 
   child.stdout.on("data", (chunk) => {

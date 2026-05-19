@@ -25,6 +25,9 @@ const {
   heartbeatLicense,
   machineFingerprint,
   desktopVersion,
+  getHeartbeatState,
+  recordHeartbeatSuccess,
+  recordHeartbeatFailure,
 } = require("./license");
 
 const HEARTBEAT_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -95,11 +98,13 @@ async function runHeartbeat() {
       version: desktopVersion(),
     });
     await setCachedEntitlement(result);
+    await recordHeartbeatSuccess();
     // eslint-disable-next-line no-console
     console.log("[zerokey] heartbeat ok");
   } catch (err) {
-    // Offline grace: a single failed heartbeat doesn't change behaviour.
-    // Phase 4 will track consecutive failures and surface a banner.
+    await recordHeartbeatFailure(err.message || String(err));
+    // Offline grace: a single failure is OK. Phase 4 surfaces the
+    // consecutive-failure count to the renderer banner.
     // eslint-disable-next-line no-console
     console.warn("[zerokey] heartbeat failed:", err.message || err);
   }
@@ -109,6 +114,26 @@ async function runHeartbeat() {
 
 ipcMain.handle("license:get", async () => {
   return await getCachedEntitlement();
+});
+
+ipcMain.handle("license:status", async () => {
+  // Composite shape for the renderer banner: trust state, calendar
+  // state, heartbeat state. Renderer formats; main just reports.
+  const cached = await getCachedEntitlement();
+  const hb = await getHeartbeatState();
+  if (!cached) {
+    return { activated: false, policy: null, heartbeat: hb };
+  }
+  return {
+    activated: true,
+    license_id: cached.license_id,
+    organization_legal_name: cached.organization_legal_name,
+    plan: cached.plan,
+    status: cached.status,
+    expires_at: cached.expires_at,
+    policy: cached._policy || null,
+    heartbeat: hb,
+  };
 });
 
 ipcMain.handle("license:activate", async (_event, key) => {
@@ -128,6 +153,63 @@ ipcMain.handle("license:signOut", async () => {
 
 ipcMain.handle("sidecar:url", () => {
   return sidecarHandle ? `http://127.0.0.1:${sidecarHandle.port}` : null;
+});
+
+// Phase 4 — sidecar HTTP proxy IPC.
+//
+// The renderer doesn't talk to the sidecar directly because doing so
+// would require the renderer to handle the entitlement header itself
+// (and have access to it — which we keep out of the renderer for
+// XSS-defence reasons). Instead the renderer calls window.zk.fetch()
+// here; we attach the cached entitlement and proxy to the sidecar.
+//
+// Read-only mode: if the cached entitlement's policy is "read_only"
+// or "blocked", we reject any non-GET request before sending it.
+ipcMain.handle("sidecar:fetch", async (_event, { path, method, body }) => {
+  if (!sidecarHandle) {
+    return { ok: false, status: 0, body: { detail: "Sidecar not running." } };
+  }
+  const cached = await getCachedEntitlement();
+  if (!cached) {
+    return { ok: false, status: 401, body: { detail: "Not activated." } };
+  }
+  const policy = cached._policy;
+  const verb = String(method || "GET").toUpperCase();
+  if (verb !== "GET" && policy && policy.state !== "active" && policy.state !== "expiring_soon") {
+    return {
+      ok: false,
+      status: 403,
+      body: {
+        detail: `Desktop is in ${policy.state} mode — mutating requests are blocked.`,
+        code: policy.state,
+      },
+    };
+  }
+
+  const url = `http://127.0.0.1:${sidecarHandle.port}${path}`;
+  try {
+    const res = await fetch(url, {
+      method: verb,
+      headers: {
+        "content-type": "application/json",
+        "x-zk-entitlement": cached.entitlement || "",
+      },
+      body: body && verb !== "GET" ? JSON.stringify(body) : undefined,
+    });
+    let responseBody;
+    try {
+      responseBody = await res.json();
+    } catch {
+      responseBody = { detail: `non-JSON response (status ${res.status})` };
+    }
+    return { ok: res.ok, status: res.status, body: responseBody };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      body: { detail: `Sidecar request failed: ${err.message || err}` },
+    };
+  }
 });
 
 ipcMain.handle("nav:toMain", () => {

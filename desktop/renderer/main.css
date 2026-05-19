@@ -1,0 +1,163 @@
+/* Phase 4 — minimal main-app shell. Brand colours match activate.css.
+   This is the post-activation surface; Phase 5+ will host the real
+   invoice list / ingestion / submission UI. */
+
+body.app {
+  display: block;
+  padding: 0;
+}
+
+.banner {
+  padding: 10px 20px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--slate-200);
+}
+
+.banner.active {
+  display: none !important;
+}
+
+.banner.warning {
+  background: rgba(255, 184, 77, 0.15);
+  color: var(--ink);
+}
+
+.banner.error {
+  background: rgba(196, 74, 74, 0.1);
+  color: var(--error);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--slate-100);
+  background: var(--paper);
+}
+
+.topbar .org-name {
+  color: var(--slate-500);
+  font-weight: 400;
+  font-size: 13px;
+  margin-left: 8px;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.plan-badge {
+  background: var(--slate-100);
+  color: var(--slate-600);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+button.ghost {
+  margin-top: 0;
+  background: transparent;
+  color: var(--slate-500);
+  padding: 6px 12px;
+  font-weight: 500;
+  font-size: 12px;
+}
+
+button.ghost:hover {
+  background: var(--slate-100);
+  color: var(--ink);
+}
+
+.main {
+  padding: 24px 20px;
+}
+
+.card-stack {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+@media (max-width: 800px) {
+  .card-stack {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--slate-100);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.card h2 {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+}
+
+.muted.small {
+  font-size: 11px;
+  margin-top: 12px;
+}
+
+.invoice-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.invoice-list li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--slate-100);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.invoice-list li:last-child {
+  border-bottom: 0;
+}
+
+.invoice-list .empty {
+  color: var(--slate-500);
+  font-style: italic;
+  padding: 16px 0;
+  text-align: center;
+}
+
+dl.kv {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  font-size: 12px;
+}
+
+dl.kv dt {
+  color: var(--slate-400);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+
+dl.kv dd {
+  margin: 0;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
