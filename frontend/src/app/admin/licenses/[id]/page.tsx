@@ -35,6 +35,12 @@ export default function LicenseDetailPage() {
   const router = useRouter();
   const [license, setLicense] = useState<LicenseRow | null>(null);
   const [heartbeats, setHeartbeats] = useState<LicenseHeartbeatRow[]>([]);
+  const [telemetry, setTelemetry] = useState<
+    Awaited<ReturnType<typeof api.adminGetLicense>>["telemetry"]
+  >([]);
+  const [telemetrySummary, setTelemetrySummary] = useState<
+    Awaited<ReturnType<typeof api.adminGetLicense>>["telemetry_summary"] | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [reveal, setReveal] = useState<LicenseIssuanceResponse | null>(null);
@@ -45,6 +51,8 @@ export default function LicenseDetailPage() {
       const r = await api.adminGetLicense(params.id);
       setLicense(r.license);
       setHeartbeats(r.recent_heartbeats);
+      setTelemetry(r.telemetry);
+      setTelemetrySummary(r.telemetry_summary);
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         router.replace("/admin/licenses");
@@ -227,6 +235,93 @@ export default function LicenseDetailPage() {
 
             <section>
               <h2 className="mb-2 text-2xs font-medium uppercase tracking-wider text-slate-400">
+                Usage (last 30 days)
+              </h2>
+              {telemetrySummary && telemetrySummary.days_reporting > 0 ? (
+                <div className="rounded-md border border-slate-100 bg-white p-4">
+                  <div className="grid gap-4 md:grid-cols-4">
+                    <Stat
+                      label="Days reporting"
+                      value={telemetrySummary.days_reporting}
+                    />
+                    <Stat
+                      label="Submitted"
+                      value={telemetrySummary.invoices_submitted_total}
+                      tone="success"
+                    />
+                    <Stat
+                      label="Failed"
+                      value={telemetrySummary.invoices_failed_total}
+                      tone={
+                        telemetrySummary.invoices_failed_total > 0 ? "warning" : "muted"
+                      }
+                    />
+                    <Stat
+                      label="Last day reported"
+                      value={telemetrySummary.last_seen ?? "—"}
+                    />
+                  </div>
+                  {telemetry.length > 0 && (
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="w-full text-2xs">
+                        <thead className="text-slate-400">
+                          <tr>
+                            <th className="px-2 py-1 text-left font-medium uppercase tracking-wider">
+                              Day
+                            </th>
+                            <th className="px-2 py-1 text-right font-medium uppercase tracking-wider">
+                              Ingested
+                            </th>
+                            <th className="px-2 py-1 text-right font-medium uppercase tracking-wider">
+                              Submitted
+                            </th>
+                            <th className="px-2 py-1 text-right font-medium uppercase tracking-wider">
+                              Failed
+                            </th>
+                            <th className="px-2 py-1 text-right font-medium uppercase tracking-wider">
+                              B2C bundled
+                            </th>
+                            <th className="px-2 py-1 text-left font-medium uppercase tracking-wider">
+                              Version
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {telemetry.slice(0, 10).map((t) => (
+                            <tr key={t.day}>
+                              <td className="px-2 py-1 text-slate-600">{t.day}</td>
+                              <td className="px-2 py-1 text-right tabular-nums">
+                                {t.invoices_ingested}
+                              </td>
+                              <td className="px-2 py-1 text-right tabular-nums text-success">
+                                {t.invoices_submitted}
+                              </td>
+                              <td className="px-2 py-1 text-right tabular-nums text-warning">
+                                {t.invoices_failed}
+                              </td>
+                              <td className="px-2 py-1 text-right tabular-nums">
+                                {t.consolidated_b2c_built}
+                              </td>
+                              <td className="px-2 py-1 text-slate-500">
+                                {t.desktop_version || "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-md border border-slate-100 bg-white p-6 text-2xs text-slate-500">
+                  Telemetry is opt-in. This customer hasn&apos;t enabled it (or
+                  hasn&apos;t reported yet).
+                </div>
+              )}
+            </section>
+
+            <section>
+              <h2 className="mb-2 text-2xs font-medium uppercase tracking-wider text-slate-400">
                 Recent heartbeats
               </h2>
               {heartbeats.length === 0 ? (
@@ -323,6 +418,36 @@ function ResultPill({ result }: { result: LicenseHeartbeatRow["result"] }) {
     </span>
   );
 }
+
+function Stat({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: number | string;
+  tone?: "default" | "success" | "warning" | "muted";
+}) {
+  const toneClass =
+    tone === "success"
+      ? "text-success"
+      : tone === "warning"
+        ? "text-warning"
+        : tone === "muted"
+          ? "text-slate-400"
+          : "text-ink";
+  return (
+    <div>
+      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">
+        {label}
+      </div>
+      <div className={`mt-0.5 font-display text-lg font-bold ${toneClass}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 
 function Card({ label, children }: { label: string; children: React.ReactNode }) {
   return (

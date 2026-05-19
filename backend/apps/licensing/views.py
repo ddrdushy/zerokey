@@ -32,7 +32,7 @@ from apps.administration.permissions import IsPlatformStaff
 
 from . import services
 from .entitlements import public_key_pem
-from .models import License, LicenseHeartbeat
+from .models import DesktopTelemetry, License, LicenseHeartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -274,7 +274,44 @@ def admin_detail_view(_request: Request, license_id) -> Response:
             h["entitlement_id"] = str(h["entitlement_id"])
         if h.get("id"):
             h["id"] = str(h["id"])
-    return Response({"license": _serialise_license(lic), "recent_heartbeats": hbs})
+
+    # DESKTOP_PIVOT_PLAN Phase 6 — last 30 days of telemetry counters
+    # so the operator can answer "is this customer actually using it?"
+    # without paging into another screen. Counts only, never invoice data.
+    telemetry_rows = list(
+        DesktopTelemetry.objects.filter(license=lic)
+        .order_by("-day")[:30]
+        .values(
+            "day",
+            "invoices_ingested",
+            "invoices_submitted",
+            "invoices_failed",
+            "consolidated_b2c_built",
+            "desktop_version",
+            "received_at",
+        )
+    )
+    for t in telemetry_rows:
+        t["day"] = t["day"].isoformat()
+        if isinstance(t.get("received_at"), datetime):
+            t["received_at"] = t["received_at"].isoformat()
+    telemetry_summary = {
+        "days_reporting": len(telemetry_rows),
+        "invoices_submitted_total": sum(
+            t["invoices_submitted"] for t in telemetry_rows
+        ),
+        "invoices_failed_total": sum(t["invoices_failed"] for t in telemetry_rows),
+        "last_seen": telemetry_rows[0]["day"] if telemetry_rows else None,
+    }
+
+    return Response(
+        {
+            "license": _serialise_license(lic),
+            "recent_heartbeats": hbs,
+            "telemetry": telemetry_rows,
+            "telemetry_summary": telemetry_summary,
+        }
+    )
 
 
 @api_view(["POST"])

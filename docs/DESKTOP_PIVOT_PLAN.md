@@ -477,8 +477,21 @@ cloud rotates and old entitlements re-sign on next heartbeat.
 
 ## Status
 
-- **Phase 1**: in progress.
-- Phases 2–6: pending.
+- **Phase 1** — SHIPPED `235cf49` (cloud licensing app + super admin UI + deprecation banner).
+- **Phase 2** — SHIPPED `2353325` (Electron + Python sidecar scaffolding).
+- **Phase 3a** — SHIPPED `f53b303` (cloud intermediary signing endpoint + sidecar shims).
+- **Phase 3b** — SHIPPED `7fa71ca` (sidecar loads cloud apps via shared source).
+- **Phase 3c** — SHIPPED `ba4cf3d` (entitlement-bearer auth + first-run org bootstrap + remote signer for intermediary mode).
+- **Phase 4** — SHIPPED `7f05d0a` (Electron-side Ed25519 verification + read-only enforcement + working renderer).
+- **Phase 5** — SHIPPED `406f5bb` (electron-builder + electron-updater + license-gated /download).
+- **Phase 6** — SHIPPED in the next commit (telemetry receiver + renewal-reminder Celery task + super admin health card).
+
+Remaining real-world ops (not engineering):
+- EV code-signing cert for Windows.
+- Apple developer cert + notarisation pipeline.
+- `releases.zerokey.symprio.com` S3 + CloudFront + signed-URL keypair.
+- CI job that runs `electron-builder --publish` per platform.
+- Symprio LHDN intermediary registration paperwork.
 
 Each phase is marked SHIPPED in this doc as it lands, with the commit
 SHA next to it. Drift starts when nobody bothers; don't drift.

@@ -356,6 +356,20 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 60.0 * 60.0,
         "options": {"queue": "low"},
     },
+    # DESKTOP_PIVOT_PLAN Phase 6 — daily desktop-license housekeeping.
+    # Renewal reminders go out 30 / 7 / 1 days before expiry; expired
+    # licenses get their status flipped so the inventory is accurate
+    # without waiting for the customer to heartbeat.
+    "licensing.send_renewal_reminders": {
+        "task": "apps.licensing.send_renewal_reminders",
+        "schedule": 60.0 * 60.0 * 24,
+        "options": {"queue": "low"},
+    },
+    "licensing.flip_expired_licenses": {
+        "task": "apps.licensing.flip_expired_licenses",
+        "schedule": 60.0 * 60.0 * 24,
+        "options": {"queue": "low"},
+    },
 }
 
 # --- Logging --------------------------------------------------------------------------

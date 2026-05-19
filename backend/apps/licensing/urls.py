@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import release_views, signing_views, views
+from . import release_views, signing_views, telemetry_views, views
 
 app_name = "licensing"
 
@@ -19,6 +19,13 @@ urlpatterns = [
         "desktop-release/",
         release_views.desktop_release_view,
         name="desktop-release",
+    ),
+    # DESKTOP_PIVOT_PLAN Phase 6 — opt-in usage telemetry from the
+    # desktop. Entitlement-bearer auth; counts only, never invoice data.
+    path(
+        "telemetry/",
+        telemetry_views.telemetry_post_view,
+        name="telemetry",
     ),
     # Super admin endpoints.
     path("admin/issue/", views.admin_issue_view, name="admin-issue"),

@@ -2082,9 +2082,25 @@ export const api = {
     );
   },
   adminGetLicense: (id: string) =>
-    request<{ license: LicenseRow; recent_heartbeats: LicenseHeartbeatRow[] }>(
-      `/licenses/admin/${id}/`,
-    ),
+    request<{
+      license: LicenseRow;
+      recent_heartbeats: LicenseHeartbeatRow[];
+      telemetry: Array<{
+        day: string;
+        invoices_ingested: number;
+        invoices_submitted: number;
+        invoices_failed: number;
+        consolidated_b2c_built: number;
+        desktop_version: string;
+        received_at: string;
+      }>;
+      telemetry_summary: {
+        days_reporting: number;
+        invoices_submitted_total: number;
+        invoices_failed_total: number;
+        last_seen: string | null;
+      };
+    }>(`/licenses/admin/${id}/`),
   adminIssueLicense: (body: {
     owner_user_id: string;
     organization_legal_name: string;

@@ -136,6 +136,52 @@ class License(TimestampedModel):
         return self.expires_at > timezone.now()
 
 
+class DesktopTelemetry(TimestampedModel):
+    """Per-license opt-in usage counters.
+
+    DESKTOP_PIVOT_PLAN Phase 6. The desktop POSTs a daily roll-up
+    (counts only — never invoice contents) so super admin can see
+    "how is this customer's install actually doing?" without violating
+    the privacy promise that invoice data stays local.
+
+    Opt-in semantics: the desktop sends nothing until the user toggles
+    "share usage data" in Settings. The cloud's only enforcement is
+    that the endpoint requires a valid entitlement — we trust the
+    desktop to respect the opt-in flag locally.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    license = models.ForeignKey(
+        License,
+        on_delete=models.CASCADE,
+        related_name="telemetry",
+    )
+    # The calendar day this roll-up covers (in the customer's local
+    # timezone, which the desktop records). One row per license per day.
+    day = models.DateField(db_index=True)
+
+    # Counts. All scoped to the calendar day above.
+    invoices_ingested = models.IntegerField(default=0)
+    invoices_submitted = models.IntegerField(default=0)
+    invoices_failed = models.IntegerField(default=0)
+    consolidated_b2c_built = models.IntegerField(default=0)
+
+    # Identifiers for context — never sensitive, never invoice data.
+    desktop_version = models.CharField(max_length=32, blank=True, default="")
+    received_at = models.DateTimeField(default=timezone.now, db_index=True)
+    received_ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        db_table = "license_desktop_telemetry"
+        ordering = ["-day"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["license", "day"],
+                name="license_telemetry_one_per_day",
+            ),
+        ]
+
+
 class LicenseHeartbeat(TimestampedModel):
     """Append-only validation log.
 
