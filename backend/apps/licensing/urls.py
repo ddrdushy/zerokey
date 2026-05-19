@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import views
+from . import signing_views, views
 
 app_name = "licensing"
 
@@ -11,6 +11,8 @@ urlpatterns = [
     path("public-key/", views.public_key_view, name="public-key"),
     path("validate/", views.validate_view, name="validate"),
     path("heartbeat/", views.heartbeat_view, name="heartbeat"),
+    # DESKTOP_PIVOT_PLAN Phase 3 — cloud intermediary signing.
+    path("sign/document/", signing_views.sign_document_view, name="sign-document"),
     # Super admin endpoints.
     path("admin/issue/", views.admin_issue_view, name="admin-issue"),
     path("admin/", views.admin_list_view, name="admin-list"),
