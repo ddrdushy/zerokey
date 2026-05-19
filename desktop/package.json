@@ -7,15 +7,81 @@
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
-    "lint": "echo \"(lint: configured in Phase 5)\""
+    "lint": "echo \"(lint: configured in Phase 5)\"",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "publish": "electron-builder --publish always"
   },
   "dependencies": {
+    "electron-updater": "^6.3.0",
     "keytar": "^7.9.0"
   },
   "devDependencies": {
-    "electron": "^32.0.0"
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
   },
   "engines": {
     "node": ">=20"
+  },
+  "build": {
+    "appId": "com.symprio.zerokey",
+    "productName": "ZeroKey",
+    "copyright": "© Symprio Sdn Bhd",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "!**/*.{md,log,DS_Store}",
+      "!sidecar/_data/**",
+      "!sidecar/__pycache__/**",
+      "!sidecar/**/__pycache__/**",
+      "!sidecar/.venv/**",
+      "!sidecar/tests/**"
+    ],
+    "extraResources": [
+      {
+        "from": "sidecar",
+        "to": "sidecar",
+        "filter": [
+          "**/*",
+          "!_data/**",
+          "!__pycache__/**",
+          "!**/__pycache__/**",
+          "!.venv/**",
+          "!tests/**"
+        ]
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "publisherName": "Symprio Sdn Bhd"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "category": "public.app-category.business",
+      "target": ["dmg"],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Office"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://releases.zerokey.symprio.com/${channel}",
+      "channel": "stable",
+      "useMultipleRangeRequest": false
+    }
   }
 }

@@ -17,6 +17,7 @@ const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("node:path");
 
 const { startSidecar, stopSidecar } = require("./sidecar");
+const autoUpdate = require("./auto_update");
 const {
   getCachedEntitlement,
   setCachedEntitlement,
@@ -79,6 +80,9 @@ async function bootstrap() {
   const initial = entitlement ? "main.html" : "activate.html";
   createWindow(initial);
   scheduleHeartbeat();
+  // Phase 5 — kick off auto-update polling. No-op in dev (unpackaged
+  // app); in production it asks the user before downloading.
+  autoUpdate.init();
 }
 
 function scheduleHeartbeat() {
@@ -238,6 +242,7 @@ app.on("activate", () => {
 
 app.on("before-quit", async (event) => {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  autoUpdate.shutdown();
   if (sidecarHandle && !sidecarHandle.stopped) {
     event.preventDefault();
     try {

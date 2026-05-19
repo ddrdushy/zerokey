@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import signing_views, views
+from . import release_views, signing_views, views
 
 app_name = "licensing"
 
@@ -13,6 +13,13 @@ urlpatterns = [
     path("heartbeat/", views.heartbeat_view, name="heartbeat"),
     # DESKTOP_PIVOT_PLAN Phase 3 — cloud intermediary signing.
     path("sign/document/", signing_views.sign_document_view, name="sign-document"),
+    # DESKTOP_PIVOT_PLAN Phase 5 — installer download metadata (gated
+    # by the calling customer holding at least one active license).
+    path(
+        "desktop-release/",
+        release_views.desktop_release_view,
+        name="desktop-release",
+    ),
     # Super admin endpoints.
     path("admin/issue/", views.admin_issue_view, name="admin-issue"),
     path("admin/", views.admin_list_view, name="admin-list"),

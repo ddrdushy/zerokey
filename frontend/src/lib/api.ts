@@ -2119,4 +2119,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
+  // DESKTOP_PIVOT_PLAN Phase 5 — installer download metadata.
+  // 403 = no active license; the /download page treats that as
+  // "Buy a license" CTA.
+  desktopRelease: () =>
+    request<{
+      version: string;
+      channel: string;
+      platforms: Record<
+        "windows" | "mac" | "linux",
+        { url: string; filename: string; size_bytes: number | null; sha256: string }
+      >;
+      release_notes_url: string;
+      expires_in_seconds: number;
+    }>("/licenses/desktop-release/"),
 };
