@@ -20,6 +20,7 @@ import {
   Cog,
   CreditCard,
   Flag,
+  KeyRound,
   LogOut,
   Menu,
   Network,
@@ -45,6 +46,8 @@ const NAV: NavItem[] = [
   { href: "/admin/health", label: "System health", icon: Activity },
   { href: "/admin/audit", label: "Platform audit", icon: ScrollText },
   { href: "/admin/tenants", label: "Tenants", icon: Users },
+  // DESKTOP_PIVOT_PLAN Phase 1 — licensing inventory for the desktop app.
+  { href: "/admin/licenses", label: "Licenses", icon: KeyRound },
   { href: "/admin/plans", label: "Plans + pricing", icon: CreditCard },
   { href: "/admin/flags", label: "Feature flags", icon: Flag },
   { href: "/admin/engines", label: "Engines", icon: Cog },

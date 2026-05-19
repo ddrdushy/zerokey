@@ -53,4 +53,6 @@ urlpatterns = [
     path("api/v1/billing/", include("apps.billing.urls")),
     path("api/v1/integrations/", include("apps.integrations.urls")),
     path("api/v1/connectors/", include("apps.connectors.urls")),
+    # DESKTOP_PIVOT_PLAN Phase 1 — license issuance + entitlements.
+    path("api/v1/licenses/", include("apps.licensing.urls")),
 ]

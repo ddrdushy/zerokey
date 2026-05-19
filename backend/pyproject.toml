@@ -51,6 +51,11 @@ dependencies = [
     # sentry-sdk: error + performance tracing per OPERATIONS.md
     # ("Sentry … used for catching unhandled exceptions").
     "sentry-sdk[django]>=2.18,<3.0",
+    # DESKTOP_PIVOT_PLAN Phase 1 — Ed25519 signing for desktop
+    # entitlements. cryptography is also a transitive dep of boto3
+    # and authlib so we'd be loading it anyway; declared explicit
+    # for documentation. Ed25519 lives in cryptography since 2.6.
+    "cryptography>=43.0",
 ]
 
 [dependency-groups]

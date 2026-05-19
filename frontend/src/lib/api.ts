@@ -1080,6 +1080,47 @@ async function pullConnectorDocuments(args: {
   return body as DocumentPullResult;
 }
 
+// DESKTOP_PIVOT_PLAN Phase 1 — license issuance + entitlements.
+export type LicenseRow = {
+  id: string;
+  owner_user_id: string;
+  organization_legal_name: string;
+  organization_tin: string;
+  plan: "starter" | "professional" | "enterprise";
+  status: "active" | "suspended" | "revoked" | "expired";
+  issued_at: string;
+  expires_at: string;
+  bound_fingerprint_hash: string;
+  bound_at: string | null;
+  last_heartbeat_at: string | null;
+  last_heartbeat_ip: string | null;
+  last_desktop_version: string;
+  revoked_at: string | null;
+  revoke_reason: string;
+};
+
+export type LicenseHeartbeatRow = {
+  id: string;
+  event_type: "validate" | "heartbeat";
+  result:
+    | "ok"
+    | "fingerprint_mismatch"
+    | "revoked"
+    | "expired"
+    | "suspended"
+    | "unknown_key";
+  at: string;
+  ip: string | null;
+  desktop_version: string;
+  entitlement_id: string | null;
+};
+
+export type LicenseIssuanceResponse = {
+  license: LicenseRow;
+  plaintext_key: string;
+  _warning: string;
+};
+
 export const api = {
   ensureCsrf: () => request<{ detail: string }>("/identity/csrf/"),
   // Slice 97 — OIDC SSO.
@@ -2022,5 +2063,60 @@ export const api = {
     request<{ removed: boolean }>("/connectors/locks/unlock/", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  // DESKTOP_PIVOT_PLAN Phase 1 — super admin license management.
+  adminListLicenses: (params?: {
+    status?: string;
+    plan?: string;
+    q?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.plan) qs.set("plan", params.plan);
+    if (params?.q) qs.set("q", params.q);
+    if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+    const search = qs.toString();
+    return request<{ results: LicenseRow[]; count: number }>(
+      `/licenses/admin/${search ? `?${search}` : ""}`,
+    );
+  },
+  adminGetLicense: (id: string) =>
+    request<{ license: LicenseRow; recent_heartbeats: LicenseHeartbeatRow[] }>(
+      `/licenses/admin/${id}/`,
+    ),
+  adminIssueLicense: (body: {
+    owner_user_id: string;
+    organization_legal_name: string;
+    organization_tin: string;
+    plan: "starter" | "professional" | "enterprise";
+    validity_days?: number;
+  }) =>
+    request<LicenseIssuanceResponse>("/licenses/admin/issue/", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  adminRevokeLicense: (id: string, reason: string) =>
+    request<{ license: LicenseRow }>(`/licenses/admin/${id}/revoke/`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  adminRegenerateLicenseKey: (id: string) =>
+    request<LicenseIssuanceResponse>(`/licenses/admin/${id}/regenerate/`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  adminRenewLicense: (id: string, days: number) =>
+    request<{ license: LicenseRow }>(`/licenses/admin/${id}/renew/`, {
+      method: "POST",
+      body: JSON.stringify({ days }),
+    }),
+  // Customer self-serve.
+  myLicenses: () =>
+    request<{ results: LicenseRow[]; count: number }>("/licenses/me/"),
+  regenerateMyLicenseKey: (id: string) =>
+    request<LicenseIssuanceResponse>(`/licenses/me/${id}/regenerate/`, {
+      method: "POST",
+      body: JSON.stringify({}),
     }),
 };

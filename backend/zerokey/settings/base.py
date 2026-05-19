@@ -62,6 +62,9 @@ LOCAL_APPS = [
     "apps.connectors",
     "apps.notifications",
     "apps.administration",
+    # DESKTOP_PIVOT_PLAN Phase 1 — license issuance + signed
+    # entitlements for the desktop app.
+    "apps.licensing",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -422,3 +425,19 @@ CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=["http://localhost:3000"],
 )
+
+# --- Licensing -----------------------------------------------------------------------
+# DESKTOP_PIVOT_PLAN Phase 1 — Ed25519 keypair used to sign desktop
+# entitlements. In dev, leave both blank and an ephemeral keypair is
+# generated on first use (with a loud warning). In prod, generate
+# once with:
+#   from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+#   from cryptography.hazmat.primitives import serialization as s
+#   k = Ed25519PrivateKey.generate()
+#   priv = k.private_bytes(s.Encoding.PEM, s.PrivateFormat.PKCS8, s.NoEncryption()).decode()
+#   pub  = k.public_key().public_bytes(s.Encoding.PEM, s.PublicFormat.SubjectPublicKeyInfo).decode()
+# Then inject both PEMs as env vars. The public key is also embedded
+# in the desktop binary at build time so it can verify offline.
+
+LICENSING_ED25519_PRIVATE_KEY_PEM = env("LICENSING_ED25519_PRIVATE_KEY_PEM", default="")
+LICENSING_ED25519_PUBLIC_KEY_PEM = env("LICENSING_ED25519_PUBLIC_KEY_PEM", default="")

@@ -30,6 +30,7 @@ import { SubscriptionStateBanner } from "@/components/billing/SubscriptionStateB
 import { NotificationBell } from "./NotificationBell";
 import { GlobalSearch } from "./GlobalSearch";
 import { CertExpiryBanner } from "./CertExpiryBanner";
+import { DesktopPivotBanner } from "./DesktopPivotBanner";
 
 // Persistent shell that wraps every authenticated page. The sidebar groups
 // follow the bounded-context map from ARCHITECTURE.md; pages that aren't
@@ -146,6 +147,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             onLogout={onLogout}
             onOpenMobileNav={() => setMobileNavOpen(true)}
           />
+          {me && <DesktopPivotBanner />}
           {me && <CertExpiryBanner />}
           <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
             {error && (
