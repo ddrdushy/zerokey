@@ -1,9 +1,15 @@
 "use client";
 
-// Section 8 — pricing. Comparative grid scannable in 10 seconds. Numbers here
-// are placeholders; canonical values live in BUSINESS_MODEL.md and are wired
-// from the backend Plan catalog once Phase 5 lands. Cards stagger-fade-in;
-// highlight tier lifts on hover.
+// Section 8 — pricing.
+//
+// DESKTOP_PIVOT_PLAN reshapes this from a SaaS subscription grid into
+// three annual desktop licenses tracking apps/licensing/services.py
+// PLAN_FEATURES. One license = one LHDN TIN. Numbers below are
+// placeholders until BUSINESS_MODEL.md is updated; CTAs all point at
+// /download.
+
+import Link from "next/link";
+import { Check } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Reveal } from "./Reveal";
@@ -13,32 +19,57 @@ import { useT } from "@/lib/i18n";
 type Tier = {
   name: string;
   price: string;
-  invoices: string;
-  seats: string;
+  cadence: string;
+  pitch: string;
+  features: string[];
   highlight?: boolean;
   cta: string;
   ctaVariant?: "primary" | "outline" | "signal";
 };
 
 const TIERS: Tier[] = [
-  { name: "Free Trial", price: "RM 0", invoices: "20 / 14 days", seats: "1", cta: "Start free" },
-  { name: "Starter", price: "RM 99", invoices: "50 / mo", seats: "2", cta: "Choose Starter" },
   {
-    name: "Growth",
-    price: "RM 299",
-    invoices: "250 / mo",
-    seats: "5",
+    name: "Starter",
+    price: "RM 599",
+    cadence: "per company / year",
+    pitch: "For SMEs that send invoices by hand or from spreadsheets.",
+    features: [
+      "Manual + CSV invoice entry",
+      "Symprio intermediary signs for you",
+      "LHDN MyInvois submission",
+      "Monthly consolidation view",
+      "30-day offline grace",
+    ],
+    cta: "Get Starter",
+  },
+  {
+    name: "Professional",
+    price: "RM 1,499",
+    cadence: "per company / year",
+    pitch: "For SMEs running SQL Account, AutoCount or Sage UBS.",
+    features: [
+      "Everything in Starter",
+      "ERP connectors (SQL Account / AutoCount / Sage UBS)",
+      "Auto-submit after validation passes",
+      "Consolidated B2C bundling",
+      "Bring-your-own LHDN cert (optional)",
+    ],
     highlight: true,
-    cta: "Choose Growth",
+    cta: "Get Professional",
     ctaVariant: "signal",
   },
-  { name: "Scale", price: "RM 699", invoices: "1,000 / mo", seats: "15", cta: "Choose Scale" },
-  { name: "Pro", price: "RM 1,499", invoices: "5,000 / mo", seats: "50", cta: "Choose Pro" },
   {
-    name: "Custom",
-    price: "From RM 5,000",
-    invoices: "Negotiated",
-    seats: "Unlimited",
+    name: "Enterprise",
+    price: "From RM 3,999",
+    cadence: "per company / year",
+    pitch: "Multi-user, approval workflow, dedicated support.",
+    features: [
+      "Everything in Professional",
+      "Two-step approval workflow",
+      "Audit log export",
+      "Priority support + SLA",
+      "Volume discounts for 3+ TINs",
+    ],
     cta: "Talk to sales",
     ctaVariant: "outline",
   },
@@ -57,9 +88,9 @@ export function Pricing() {
             <p className="mt-4 text-lg text-slate-600">{t("landing.pricing.sub")}</p>
           </div>
         </Reveal>
-        <div className="mt-12 grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+        <div className="mt-12 grid gap-4 md:grid-cols-3">
           {TIERS.map((tier, i) => (
-            <Reveal key={tier.name} delay={staggerDelay(i, 0.05)}>
+            <Reveal key={tier.name} delay={staggerDelay(i, 0.06)}>
               <div
                 className={[
                   "flex h-full flex-col gap-4 rounded-xl border p-6 transition-all duration-panel ease-zk hover:-translate-y-1 hover:shadow-lg",
@@ -74,28 +105,40 @@ export function Pricing() {
                   </div>
                   {tier.highlight ? (
                     <span className="rounded-full bg-signal px-2 py-0.5 text-2xs font-semibold text-ink">
-                      Popular
+                      Most popular
                     </span>
                   ) : null}
                 </div>
-                <div className="font-display text-2xl font-bold">{tier.price}</div>
-                <dl className="space-y-2 text-2xs opacity-80">
-                  <div>
-                    <dt className="opacity-70">Invoices</dt>
-                    <dd>{tier.invoices}</dd>
-                  </div>
-                  <div>
-                    <dt className="opacity-70">Seats</dt>
-                    <dd>{tier.seats}</dd>
-                  </div>
-                </dl>
-                <Button
-                  variant={tier.ctaVariant ?? (tier.highlight ? "signal" : "outline")}
-                  size="sm"
-                  className="mt-auto"
+                <div>
+                  <div className="font-display text-3xl font-bold">{tier.price}</div>
+                  <div className="text-2xs opacity-70">{tier.cadence}</div>
+                </div>
+                <p className="text-2xs leading-relaxed opacity-80">{tier.pitch}</p>
+                <ul className="flex flex-1 flex-col gap-2 text-2xs">
+                  {tier.features.map((f) => (
+                    <li key={f} className="flex items-start gap-2">
+                      <Check
+                        className={[
+                          "mt-0.5 h-3.5 w-3.5 shrink-0",
+                          tier.highlight ? "text-signal" : "text-success",
+                        ].join(" ")}
+                      />
+                      <span className="opacity-90">{f}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  href={tier.name === "Enterprise" ? "/contact" : "/download"}
+                  className="mt-2"
                 >
-                  {tier.cta}
-                </Button>
+                  <Button
+                    variant={tier.ctaVariant ?? (tier.highlight ? "signal" : "outline")}
+                    size="sm"
+                    className="w-full"
+                  >
+                    {tier.cta}
+                  </Button>
+                </Link>
               </div>
             </Reveal>
           ))}

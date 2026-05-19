@@ -4,6 +4,8 @@
 // USER_PERSONAS.md. SME owner leads (largest segment + most time-sensitive),
 // then finance/ops, then tech, then BFSI/enterprise on the right.
 
+import Link from "next/link";
+
 import { Reveal } from "./Reveal";
 import { staggerDelay } from "./stagger";
 import { Button } from "@/components/ui/button";
@@ -14,7 +16,7 @@ type Persona = {
   headline: string;
   description: string;
   bullets: string[];
-  cta: { label: string; variant: "primary" | "outline" | "signal" };
+  cta: { label: string; variant: "primary" | "outline" | "signal"; href: string };
 };
 
 const PERSONAS: Persona[] = [
@@ -28,7 +30,7 @@ const PERSONAS: Persona[] = [
       "Pricing that fits your invoice volume",
       "Support in your language",
     ],
-    cta: { label: "Start free trial", variant: "primary" },
+    cta: { label: "Download for Windows", variant: "primary", href: "/download" },
   },
   {
     badge: "Finance & ops",
@@ -40,7 +42,7 @@ const PERSONAS: Persona[] = [
       "Audit-grade record keeping, exportable",
       "Role-based permissions, multi-user",
     ],
-    cta: { label: "Start free trial", variant: "primary" },
+    cta: { label: "Download for Windows", variant: "primary", href: "/download" },
   },
   {
     badge: "Technical team",
@@ -52,7 +54,7 @@ const PERSONAS: Persona[] = [
       "Sandbox environment for development",
       "Webhooks for async integration",
     ],
-    cta: { label: "View API docs", variant: "outline" },
+    cta: { label: "View API docs", variant: "outline", href: "/api" },
   },
   {
     badge: "Enterprise / BFSI",
@@ -64,7 +66,7 @@ const PERSONAS: Persona[] = [
       "Custom retention and data residency",
       "Dedicated solution architect",
     ],
-    cta: { label: "Talk to sales", variant: "outline" },
+    cta: { label: "Talk to sales", variant: "outline", href: "/contact" },
   },
 ];
 
@@ -102,9 +104,11 @@ export function Personas() {
                     </li>
                   ))}
                 </ul>
-                <Button variant={p.cta.variant} size="sm" className="mt-auto self-start">
-                  {p.cta.label}
-                </Button>
+                <Link href={p.cta.href} className="mt-auto self-start">
+                  <Button variant={p.cta.variant} size="sm">
+                    {p.cta.label}
+                  </Button>
+                </Link>
               </div>
             </Reveal>
           ))}

@@ -13,6 +13,8 @@ import { motion, useReducedMotion } from "framer-motion";
 import type { Variants } from "framer-motion";
 import { Calendar, CheckCircle2, ShieldCheck } from "lucide-react";
 
+import Link from "next/link";
+
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
 
@@ -105,12 +107,16 @@ export function Hero() {
           </motion.p>
 
           <motion.div variants={item} className="flex flex-wrap items-center gap-3">
-            <Button variant="primary" size="lg">
-              {t("landing.hero.cta_primary")}
-            </Button>
-            <Button variant="outline" size="lg">
-              {t("landing.hero.cta_secondary")}
-            </Button>
+            <Link href="/download">
+              <Button variant="primary" size="lg">
+                {t("landing.hero.cta_primary")}
+              </Button>
+            </Link>
+            <Link href="/contact">
+              <Button variant="outline" size="lg">
+                {t("landing.hero.cta_secondary")}
+              </Button>
+            </Link>
           </motion.div>
 
           <motion.ul

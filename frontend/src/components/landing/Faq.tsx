@@ -10,32 +10,32 @@ import { useT } from "@/lib/i18n";
 
 const FAQS: { q: string; a: string }[] = [
   {
-    q: "Do I need to be registered with LHDN before signing up?",
-    a: "Yes. ZeroKey signs invoices using your LHDN-issued certificate, so you need an active MyInvois registration first. We can guide you through the registration during onboarding if you have not started.",
+    q: "Where does my invoice data live?",
+    a: "On your own computer. ZeroKey installs as a desktop application and stores everything in an encrypted local database. The only thing the cloud sees is your license check — never your invoice contents.",
   },
   {
-    q: "Can I switch from another e-invoicing tool to ZeroKey?",
-    a: "Yes. We import your customer master and recent invoice history during onboarding, and our extraction learns from your historical data to reduce review effort from day one.",
+    q: "Do I need to have my own LHDN certificate?",
+    a: "No. Symprio is a registered LHDN intermediary, so we can sign invoices on your behalf — you skip the cert paperwork entirely. If you already have your own LHDN-issued certificate (or your security policy requires it), Professional and Enterprise plans let you bring your own and sign locally.",
   },
   {
-    q: "What happens to my data if I cancel?",
-    a: "You can export your full invoice history and audit log at any time. After cancellation we retain your data for the period required by Malaysian tax law and then delete it.",
+    q: "What if my internet goes down?",
+    a: "The app keeps working for 30 days on a cached entitlement. After that it drops to read-only until you reconnect for a heartbeat. You won't lose any data or be locked out unexpectedly.",
   },
   {
-    q: "Is my data stored in Malaysia?",
-    a: "Yes. Your data lives in a Malaysian datacentre. We replicate to Singapore for disaster recovery only — failover, not regular operation. Nothing leaves the region without your consent.",
+    q: "Can I move ZeroKey to a new computer?",
+    a: "Yes. Export your data, regenerate your license key from the portal, and re-activate on the new machine. There's no extra fee — one license stays with one company TIN for the year, wherever you run it.",
   },
   {
-    q: "How does pricing work if I have an unusually high invoice month?",
-    a: "Overages bill per invoice at the rate for your tier. There is no plan auto-upgrade. You can move tiers any time.",
+    q: "How does pricing work?",
+    a: "One annual license per Malaysian company (one LHDN TIN). No subscription, no per-invoice fees. Three tiers — Starter for manual entry, Professional for ERP connectors and auto-submit, Enterprise for multi-user approval workflows.",
   },
   {
     q: "Which accounting systems do you integrate with?",
-    a: "SQL Account, AutoCount and Sage UBS at launch. Additional connectors are added as customers request them; our public connector roadmap lives in the documentation.",
+    a: "SQL Account, AutoCount and Sage UBS via CSV import on Professional and Enterprise. Live polling via an on-prem agent is on the roadmap. Tell us what you use — additional connectors are added on customer request.",
   },
   {
     q: "What happens if LHDN's MyInvois system is down?",
-    a: "We queue signed submissions locally and retry until LHDN accepts them. Your audit log shows the queued state, the retry timeline, and the final acceptance UUID — nothing is lost.",
+    a: "Your desktop queues signed submissions locally and retries until LHDN accepts them. Your audit log shows the queued state, the retry timeline, and the final acceptance UUID — nothing is lost.",
   },
 ];
 

@@ -3,6 +3,8 @@
 // fit on the home page: a feature matrix, an FAQ snippet, and a money-back
 // guarantee callout.
 
+import Link from "next/link";
+
 import { Header } from "@/components/landing/Header";
 import { Footer } from "@/components/landing/Footer";
 import { Pricing } from "@/components/landing/Pricing";
@@ -18,19 +20,24 @@ type Row = {
   tiers: ("✓" | "—" | string)[];
 };
 
-// Tier order matches the Pricing grid: Trial, Starter, Growth, Scale, Pro, Custom
+// DESKTOP_PIVOT_PLAN — three desktop tiers tracking apps/licensing/services.py PLAN_FEATURES.
 const FEATURE_MATRIX: Row[] = [
-  { feature: "LHDN MyInvois submission", tiers: ["✓", "✓", "✓", "✓", "✓", "✓"] },
-  { feature: "Multi-format ingestion", tiers: ["✓", "✓", "✓", "✓", "✓", "✓"] },
-  { feature: "Email & WhatsApp inbox", tiers: ["—", "✓", "✓", "✓", "✓", "✓"] },
-  { feature: "SQL/AutoCount/Sage UBS connectors", tiers: ["—", "—", "✓", "✓", "✓", "✓"] },
-  { feature: "API + webhooks", tiers: ["—", "—", "✓", "✓", "✓", "✓"] },
-  { feature: "SSO (OIDC / SAML)", tiers: ["—", "—", "—", "✓", "✓", "✓"] },
-  { feature: "Custom retention windows", tiers: ["—", "—", "—", "—", "✓", "✓"] },
-  { feature: "Dedicated solution architect", tiers: ["—", "—", "—", "—", "—", "✓"] },
+  { feature: "Local-only invoice data (no cloud sync)", tiers: ["✓", "✓", "✓"] },
+  { feature: "LHDN MyInvois submission", tiers: ["✓", "✓", "✓"] },
+  { feature: "Manual + CSV invoice entry", tiers: ["✓", "✓", "✓"] },
+  { feature: "Symprio intermediary signing", tiers: ["✓", "✓", "✓"] },
+  { feature: "Monthly consolidation view", tiers: ["✓", "✓", "✓"] },
+  { feature: "30-day offline grace", tiers: ["✓", "✓", "✓"] },
+  { feature: "SQL/AutoCount/Sage UBS connectors", tiers: ["—", "✓", "✓"] },
+  { feature: "Auto-submit on validation pass", tiers: ["—", "✓", "✓"] },
+  { feature: "Consolidated B2C bundling", tiers: ["—", "✓", "✓"] },
+  { feature: "Bring-your-own LHDN cert", tiers: ["—", "✓", "✓"] },
+  { feature: "Two-step approval workflow", tiers: ["—", "—", "✓"] },
+  { feature: "Audit log export", tiers: ["—", "—", "✓"] },
+  { feature: "Priority support + SLA", tiers: ["—", "—", "✓"] },
 ];
 
-const TIER_HEADERS = ["Trial", "Starter", "Growth", "Scale", "Pro", "Custom"];
+const TIER_HEADERS = ["Starter", "Professional", "Enterprise"];
 
 export default function PricingPage() {
   return (
@@ -60,13 +67,14 @@ function PageHero() {
         </Reveal>
         <Reveal delay={0.06}>
           <h1 className="mt-3 max-w-3xl font-display text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">
-            Fair pricing, in Ringgit. <em>No surprise invoices.</em>
+            Annual license. <em>No subscription.</em>
           </h1>
         </Reveal>
         <Reveal delay={0.12}>
           <p className="mt-6 max-w-2xl text-lg text-slate-600">
-            Pick the tier that fits the invoices you actually send. Move up, move down, cancel —
-            all self-serve, all the time.
+            One license covers one Malaysian company for the year. The desktop app
+            installs on your Windows PC and your invoice data stays there. Move up
+            tiers any time; we pro-rate the difference.
           </p>
         </Reveal>
       </div>
@@ -130,12 +138,18 @@ function FeatureMatrix() {
 
 function Guarantee() {
   const PROMISES = [
-    { title: "14-day free trial", body: "20 invoices. No credit card. Full product." },
+    {
+      title: "Your data stays local",
+      body: "Invoice contents never leave your PC. The cloud only sees license checks — no MyInvois payload, no customer master.",
+    },
     {
       title: "30-day money back",
-      body: "If you decide ZeroKey isn't the right fit in the first month, we refund.",
+      body: "If ZeroKey isn't the right fit in the first month, we refund the full license fee.",
     },
-    { title: "Cancel any time", body: "Self-serve from your billing settings. No retention calls." },
+    {
+      title: "Move it any time",
+      body: "Your license isn't tied to one machine for the year. Regenerate the key from the portal and re-activate elsewhere.",
+    },
   ];
   return (
     <section className="border-b border-slate-100 bg-ink text-paper">
@@ -150,9 +164,11 @@ function Guarantee() {
                 Three commitments we are happy to be held to.
               </p>
               <div className="mt-6">
-                <Button variant="signal" size="lg">
-                  Start free trial
-                </Button>
+                <Link href="/download">
+                  <Button variant="signal" size="lg">
+                    Download for Windows
+                  </Button>
+                </Link>
               </div>
             </div>
           </Reveal>

@@ -164,7 +164,9 @@ export function Header() {
           >
             {t("landing.header.signin")}
           </Link>
-          <Link href="/sign-up">
+          {/* DESKTOP_PIVOT_PLAN — the primary CTA now points at /download
+              (installer + license CTA) instead of the old SaaS sign-up. */}
+          <Link href="/download">
             <Button size="sm" variant="primary">
               {t("landing.header.cta")}
             </Button>

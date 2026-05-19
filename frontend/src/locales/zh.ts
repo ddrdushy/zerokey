@@ -54,18 +54,18 @@ const zh: Record<string, string> = {
   "landing.header.nav.customers": "客户",
   "landing.header.nav.resources": "资源",
   "landing.header.signin": "登录",
-  "landing.header.cta": "免费试用",
+  "landing.header.cta": "Windows 下载",
   "landing.header.lang_label": "语言",
 
   // Hero
-  "landing.hero.live_pill": "LHDN 第四阶段已上线",
+  "landing.hero.live_pill": "全新:ZeroKey 现已成为桌面应用",
   "landing.hero.headline": "LHDN 电子发票,从此不再头痛。",
   "landing.hero.tagline_part1": "告别 PDF。",
   "landing.hero.tagline_part2": "告别密钥。",
   "landing.hero.subhead":
-    "自 2027 年 1 月起,马来西亚中小企业每张不合规的发票将面临高达 RM 20,000 的罚款。ZeroKey 全程托管您的每一张发票 — 准确、可审计、快速。",
-  "landing.hero.cta_primary": "免费试用",
-  "landing.hero.cta_secondary": "预约演示",
+    "将 ZeroKey 安装到您的 Windows 电脑。发票数据永不离开您的机器。每家公司一份年度许可证 — 由 Symprio 代您签名并提交至 LHDN,或您也可使用自己的证书。自 2027 年 1 月起,不合规发票将面临罚款。",
+  "landing.hero.cta_primary": "Windows 下载",
+  "landing.hero.cta_secondary": "联系我们",
   "landing.hero.trust.symprio": "Symprio Sdn Bhd 产品",
   "landing.hero.trust.mdec": "MDEC 认证",
   "landing.hero.trust.lhdn": "LHDN 注册软件中介",
@@ -77,11 +77,11 @@ const zh: Record<string, string> = {
   "landing.howitworks.headline_em": "无需输入",
   "landing.trust.headline_a": "按 BFSI 标准打造。",
   "landing.trust.headline_em": "为中小企业而生。",
-  "landing.pricing.headline": "价格匹配您实际发送的发票数量。",
+  "landing.pricing.headline": "每家公司一份许可证。每年支付一次。",
   "landing.pricing.sub":
-    "所有套餐均包含 LHDN MyInvois 提交。免费试用无需信用卡。可随时切换套餐。",
+    "所有套餐均包含 LHDN MyInvois 提交,以及 30 天离线宽限期。桌面应用支持 Windows。无订阅、无按张计费。",
   "landing.pricing.note":
-    "所有价格以 MYR 为单位。30 天退款保证。年付节省 15%。",
+    "所有价格以 MYR 为单位,按年付费。30 天退款保证。许可证可随时转移至新机器。",
   "landing.faq.headline": "常见问题",
   "landing.whyzerokey.headline_a": "三个选择,三种取舍。",
   "landing.whyzerokey.headline_em": "这就是我们的位置。",
@@ -98,10 +98,10 @@ const zh: Record<string, string> = {
   // Final CTA
   "landing.cta_final.headline": "别再害怕电子发票季节。",
   "landing.cta_final.sub":
-    "上传一张 PDF。我们负责签署、提交和追踪。您的团队继续做自己的本职工作。",
-  "landing.cta_final.cta_primary": "免费试用",
-  "landing.cta_final.cta_secondary": "预约演示",
-  "landing.cta_final.note": "14 天免费试用。无需信用卡。可随时取消。",
+    "安装到您的电脑。发票数据留在本机。一份年度许可证,包含 LHDN 提交。",
+  "landing.cta_final.cta_primary": "Windows 下载",
+  "landing.cta_final.cta_secondary": "联系我们",
+  "landing.cta_final.note": "每家公司一份年度许可证。30 天退款保证。",
 
   // Footer
   "landing.footer.col.product": "产品",

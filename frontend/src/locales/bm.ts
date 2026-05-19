@@ -74,18 +74,18 @@ const bm: Record<string, string> = {
   "landing.header.nav.customers": "Pelanggan",
   "landing.header.nav.resources": "Sumber",
   "landing.header.signin": "Log masuk",
-  "landing.header.cta": "Mula percubaan percuma",
+  "landing.header.cta": "Muat turun untuk Windows",
   "landing.header.lang_label": "Bahasa",
 
   // Hero
-  "landing.hero.live_pill": "Sedia untuk LHDN Fasa 4",
+  "landing.hero.live_pill": "Baharu: ZeroKey kini aplikasi desktop",
   "landing.hero.headline": "E-invois LHDN tanpa kerumitan.",
   "landing.hero.tagline_part1": "Lupakan PDF.",
   "landing.hero.tagline_part2": "Lupakan kunci.",
   "landing.hero.subhead":
-    "PKS Malaysia menghadapi penalti sehingga RM 20,000 setiap invois yang tidak patuh mulai Januari 2027. ZeroKey menguruskan setiap invois — dari muat naik sehingga ke LHDN — dengan tepat, beraudit dan pantas.",
-  "landing.hero.cta_primary": "Mula percubaan percuma",
-  "landing.hero.cta_secondary": "Tempah demo",
+    "Pasang ZeroKey pada PC Windows anda. Data invois tidak meninggalkan mesin anda. Satu lesen tahunan setiap syarikat — Symprio menandatangan dan menghantar ke LHDN bagi pihak anda, atau anda gunakan sijil sendiri. Penalti untuk invois tidak patuh bermula Januari 2027.",
+  "landing.hero.cta_primary": "Muat turun untuk Windows",
+  "landing.hero.cta_secondary": "Hubungi kami",
   "landing.hero.trust.symprio": "Produk Symprio Sdn Bhd",
   "landing.hero.trust.mdec": "Diiktiraf MDEC",
   "landing.hero.trust.lhdn": "Perantara perisian berdaftar LHDN",
@@ -97,11 +97,11 @@ const bm: Record<string, string> = {
   "landing.howitworks.headline_em": "tanpa menaip",
   "landing.trust.headline_a": "Dibina pada piawaian BFSI. ",
   "landing.trust.headline_em": "Dijual untuk PKS.",
-  "landing.pricing.headline": "Harga yang sesuai dengan jumlah invois sebenar anda.",
+  "landing.pricing.headline": "Satu lesen setiap syarikat. Bayar sekali setahun.",
   "landing.pricing.sub":
-    "Semua pelan termasuk penghantaran LHDN MyInvois. Percubaan percuma tanpa kad kredit. Tukar pelan bila-bila masa.",
+    "Semua pelan termasuk penghantaran LHDN MyInvois dan 30 hari kelonggaran luar talian. Aplikasi desktop dipasang pada Windows. Tiada langganan, tiada bayaran setiap invois.",
   "landing.pricing.note":
-    "Semua harga dalam MYR. Jaminan pulangan wang 30 hari. Bil tahunan menjimatkan 15%.",
+    "Semua harga dalam MYR, dibilkan tahunan. Jaminan pulangan wang 30 hari. Anda boleh memindahkan lesen ke mesin baharu bila-bila masa.",
   "landing.faq.headline": "Soalan lazim",
   "landing.whyzerokey.headline_a": "Tiga pilihan, tiga tukar-tukar. ",
   "landing.whyzerokey.headline_em": "Inilah tempat kami.",
@@ -118,10 +118,10 @@ const bm: Record<string, string> = {
   // Final CTA
   "landing.cta_final.headline": "Berhenti bimbang tentang musim e-invois.",
   "landing.cta_final.sub":
-    "Lepaskan satu PDF. Kami tandatangan, hantar dan jejak. Pasukan anda kekal pada kerja harian.",
-  "landing.cta_final.cta_primary": "Mula percubaan percuma",
-  "landing.cta_final.cta_secondary": "Tempah demo",
-  "landing.cta_final.note": "Percubaan percuma 14 hari. Tiada kad kredit. Batal bila-bila masa.",
+    "Pasang pada PC anda. Data invois kekal pada mesin anda. Satu lesen tahunan, penghantaran LHDN termasuk.",
+  "landing.cta_final.cta_primary": "Muat turun untuk Windows",
+  "landing.cta_final.cta_secondary": "Hubungi kami",
+  "landing.cta_final.note": "Lesen tahunan setiap syarikat. Jaminan pulangan wang 30 hari.",
 
   // Footer
   "landing.footer.col.product": "Produk",

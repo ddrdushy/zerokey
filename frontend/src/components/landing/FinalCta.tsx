@@ -3,6 +3,8 @@
 // Section 12 — final CTA. Tighter restatement of the value prop on a strong
 // dark surface. Reminder line removes last-minute friction.
 
+import Link from "next/link";
+
 import { Button } from "@/components/ui/button";
 import { Reveal } from "./Reveal";
 import { staggerDelay } from "./stagger";
@@ -29,12 +31,16 @@ export function FinalCta() {
         <Reveal direction="right" delay={staggerDelay(1)}>
           <div className="flex flex-col items-start gap-3 md:items-end">
             <div className="flex gap-3">
-              <Button variant="signal" size="lg">
-                {t("landing.cta_final.cta_primary")}
-              </Button>
-              <Button variant="outline" size="lg" className="border-slate-800 text-paper">
-                {t("landing.cta_final.cta_secondary")}
-              </Button>
+              <Link href="/download">
+                <Button variant="signal" size="lg">
+                  {t("landing.cta_final.cta_primary")}
+                </Button>
+              </Link>
+              <Link href="/contact">
+                <Button variant="outline" size="lg" className="border-slate-800 text-paper">
+                  {t("landing.cta_final.cta_secondary")}
+                </Button>
+              </Link>
             </div>
             <p className="text-2xs uppercase tracking-wider text-slate-400">
               {t("landing.cta_final.note")}

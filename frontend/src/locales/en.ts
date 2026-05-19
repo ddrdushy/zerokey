@@ -78,18 +78,18 @@ const en: Record<string, string> = {
   "landing.header.nav.customers": "Customers",
   "landing.header.nav.resources": "Resources",
   "landing.header.signin": "Sign in",
-  "landing.header.cta": "Start free trial",
+  "landing.header.cta": "Download for Windows",
   "landing.header.lang_label": "Language",
 
   // Hero
-  "landing.hero.live_pill": "Live for LHDN Phase 4",
+  "landing.hero.live_pill": "New: ZeroKey is now a desktop app",
   "landing.hero.headline": "LHDN e-invoicing without the headaches.",
   "landing.hero.tagline_part1": "Drop the PDF.",
   "landing.hero.tagline_part2": "Drop the Keys.",
   "landing.hero.subhead":
-    "Malaysian SMEs face penalties up to RM 20,000 per non-compliant invoice from January 2027. ZeroKey handles every invoice from upload to LHDN — accurate, audited, and fast.",
-  "landing.hero.cta_primary": "Start free trial",
-  "landing.hero.cta_secondary": "Book a demo",
+    "Install ZeroKey on your Windows PC. Your invoice data never leaves the machine. One annual license per company — Symprio signs and submits to LHDN on your behalf, or you bring your own cert. Penalties for non-compliant invoices start January 2027.",
+  "landing.hero.cta_primary": "Download for Windows",
+  "landing.hero.cta_secondary": "Talk to us",
   "landing.hero.trust.symprio": "A product of Symprio Sdn Bhd",
   "landing.hero.trust.mdec": "MDEC accredited",
   "landing.hero.trust.lhdn": "LHDN registered software intermediary",
@@ -101,11 +101,11 @@ const en: Record<string, string> = {
   "landing.howitworks.headline_em": "without typing",
   "landing.trust.headline_a": "Built to BFSI standards. ",
   "landing.trust.headline_em": "Sold for SMEs.",
-  "landing.pricing.headline": "Pricing that fits the invoices you actually send.",
+  "landing.pricing.headline": "One license per company. Pay once a year.",
   "landing.pricing.sub":
-    "All plans include LHDN MyInvois submission. Free trial requires no credit card. Switch plans any time.",
+    "All plans include LHDN MyInvois submission and 30 days of offline grace. The desktop app installs on Windows. No subscription, no per-invoice fees.",
   "landing.pricing.note":
-    "All prices in MYR. 30-day money-back guarantee. Annual billing saves 15%.",
+    "All prices in MYR, billed annually. 30-day money-back guarantee. You can move your license to a new machine any time.",
   "landing.faq.headline": "Frequently asked questions",
   "landing.whyzerokey.headline_a": "Three alternatives, three trade-offs. ",
   "landing.whyzerokey.headline_em": "Here is where we fit.",
@@ -122,10 +122,10 @@ const en: Record<string, string> = {
   // Final CTA
   "landing.cta_final.headline": "Stop dreading e-invoicing season.",
   "landing.cta_final.sub":
-    "Drop a PDF. We sign, submit, and track. Your team keeps their day job.",
-  "landing.cta_final.cta_primary": "Start free trial",
-  "landing.cta_final.cta_secondary": "Book a demo",
-  "landing.cta_final.note": "Free 14-day trial. No credit card. Cancel anytime.",
+    "Install on your PC. Keep your invoice data on your machine. One annual license, LHDN submission included.",
+  "landing.cta_final.cta_primary": "Download for Windows",
+  "landing.cta_final.cta_secondary": "Talk to us",
+  "landing.cta_final.note": "Annual license per company. 30-day money-back guarantee.",
 
   // Footer
   "landing.footer.col.product": "Product",
