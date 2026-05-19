@@ -43,6 +43,33 @@ from collections.abc import Generator
 _state = threading.local()
 
 
+# --- Cloud API compatibility shims -----------------------------------------
+# The cloud's apps.identity.tenancy exposes set_tenant + clear_tenant
+# as the lower-level primitives that tenant_context wraps. We mirror
+# them here so cloud code paths like
+#   from apps.identity.tenancy import set_tenant, super_admin_context
+# resolve to no-op equivalents on the desktop. None of these touch
+# the database — RLS is a Postgres concept and SQLite has no equivalent.
+
+TENANT_VAR = "app.current_tenant_id"
+SUPER_ADMIN_VAR = "app.is_super_admin"
+
+
+def set_tenant(tenant_id: uuid.UUID | str | None) -> None:
+    """No-op stand-in for the cloud's set_tenant().
+
+    Records the value on the thread-local so any code that calls
+    ``current_tenant_id()`` next sees it. The cloud writes a Postgres
+    GUC; we just remember.
+    """
+    _state.active_org_id = str(tenant_id) if tenant_id else None
+
+
+def clear_tenant() -> None:
+    """No-op stand-in for the cloud's clear_tenant()."""
+    _state.active_org_id = None
+
+
 def set_desktop_org_id(org_id: uuid.UUID | str | None) -> None:
     """Pin the org id for the lifetime of the sidecar process.
 

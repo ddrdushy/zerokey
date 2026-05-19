@@ -14,6 +14,18 @@ _PII_FIELDS = ("phone", "sst_number", "address")
 
 
 def _encrypt_existing_rows(apps, schema_editor):
+    # Fast path on an empty table: the live-model iterator below
+    # SELECTs every column on the current model, which on a fresh-DB
+    # migrate would include columns added by later migrations that
+    # don't exist yet. Skip the iteration entirely when there's
+    # nothing to encrypt. Same pattern as submission/0012.
+    HistoricalCustomerMaster = apps.get_model("enrichment", "CustomerMaster")
+    table = HistoricalCustomerMaster._meta.db_table
+    with schema_editor.connection.cursor() as cur:
+        cur.execute(f'SELECT 1 FROM "{table}" LIMIT 1;')
+        if cur.fetchone() is None:
+            return
+
     # Use live model (not the historical one from ``apps.get_model``)
     # so the EncryptedCharField/TextField subclasses' get_prep_value
     # auto-encrypts on save. encrypt_value is idempotent so re-running
