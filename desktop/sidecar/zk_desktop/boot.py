@@ -69,7 +69,52 @@ def install_tenancy_shim() -> None:
     LOG.info("zerokey.sidecar.boot: apps.identity.tenancy → zk_desktop.tenancy")
 
 
+def install_remote_signer_for_intermediary() -> None:
+    """Wrap apps.submission.certificates.ensure_certificate so the
+    intermediary branch returns a remote-signer proxy on the desktop.
+
+    The cloud's ensure_certificate dispatches on Organization.signing_mode.
+    For INTERMEDIARY it normally loads the platform-level private key
+    from SystemSetting (cloud only) — which the desktop has no access
+    to. We wrap the function so that, after the cloud's dispatch picks
+    the intermediary branch, we substitute the private_key with our
+    RemoteRsaSigner. The caller's downstream code (XAdES signing) calls
+    ``.sign()`` and gets the cloud-signed bytes back transparently.
+
+    Self-signed orgs are unaffected — those use a local cert on the
+    desktop's own filesystem like before.
+    """
+    # Defer the imports until after sys.path is wired.
+    from apps.submission import certificates as cloud_certificates
+    from zk_desktop import remote_signer
+
+    original = cloud_certificates.ensure_certificate
+
+    def patched(*, organization_id):
+        loaded = original(organization_id=organization_id)
+        if loaded.kind != "intermediary":
+            return loaded
+        # Swap in the remote signer. dataclasses.replace() preserves
+        # frozen-ness; we keep the cert + cert_pem so XAdES can still
+        # build KeyInfo, but the private_key field becomes a proxy
+        # that round-trips through the cloud.
+        import dataclasses
+
+        proxy = remote_signer.RemoteRsaSigner(cert_serial_hex=loaded.serial_hex)
+        return dataclasses.replace(loaded, private_key=proxy)
+
+    cloud_certificates.ensure_certificate = patched
+    LOG.info(
+        "zerokey.sidecar.boot: apps.submission.certificates.ensure_certificate "
+        "patched → remote signer for intermediary orgs"
+    )
+
+
 def boot() -> None:
     """One-call entrypoint — invoked from settings before INSTALLED_APPS."""
     add_cloud_apps_to_sys_path()
     install_tenancy_shim()
+    # The remote-signer patch runs lazily on first invocation because
+    # it depends on the cloud submission module being importable,
+    # which needs INSTALLED_APPS to be loaded first. We register it as
+    # a post-app-ready hook instead — see zk_desktop.apps.SidecarConfig.

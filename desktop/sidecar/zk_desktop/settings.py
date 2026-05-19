@@ -61,6 +61,8 @@ DESKTOP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 # on identity + administration + audit.
 
 INSTALLED_APPS = [
+    # Sidecar shell — owns the late-binding monkeypatches in ready().
+    "zk_desktop.apps.SidecarConfig",
     "django.contrib.contenttypes",
     "django.contrib.auth",
     # Sessions are present so admin's IsPlatformStaff works during
@@ -127,19 +129,45 @@ DATABASES = {
     }
 }
 
+# In-process cache — sessions backed here (which the desktop barely
+# uses), and the cloud's rate-limit / idempotency code falls back
+# cleanly when it can't reach Redis.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "zerokey-sidecar",
+    }
+}
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 USE_TZ = True
 TIME_ZONE = "Asia/Kuala_Lumpur"
 
 
 # --- DRF --------------------------------------------------------------------
-# Single-user desktop; no throttling, no auth. Everything that responds
-# is gated by the entitlement (added in Phase 4).
+# DESKTOP_PIVOT_PLAN Phase 3c — entitlement-bearer auth.
+#
+# The renderer puts the cached entitlement in the X-ZK-Entitlement
+# header on every API call. EntitlementAuthentication verifies the
+# Ed25519 signature against the embedded cloud public key, bootstraps
+# the local Organization + User on first sight, pins tenancy.
+#
+# We keep AllowAny as the default permission so individual views
+# don't break — the auth class still binds the user when an
+# entitlement is supplied, and Phase 4 will wire IsAuthenticated +
+# active-entitlement requirements on mutating endpoints.
 REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "zk_desktop.entitlement_auth.EntitlementAuthentication",
+    ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
-    "DEFAULT_AUTHENTICATION_CLASSES": [],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
 }
+
+# Default true so DRF doesn't require CSRF tokens on these
+# entitlement-authed requests. Renderer is same-origin (sidecar +
+# renderer both on 127.0.0.1) so CSRF would be belt-and-braces anyway.
+SESSION_ENGINE = "django.contrib.sessions.backends.cache"
 
 
 # --- Cloud signing endpoint (where to call for intermediary signing) -------
@@ -180,8 +208,25 @@ STRIPE_WEBHOOK_SECRET = ""
 CELERY_BROKER_URL = ""
 CELERY_RESULT_BACKEND = ""
 SENTRY_DSN = ""
-LICENSING_ED25519_PRIVATE_KEY_PEM = ""
-LICENSING_ED25519_PUBLIC_KEY_PEM = ""
+# Honour env if set — useful for tests that need to sign + verify
+# entitlements end-to-end on the desktop side without touching the
+# cloud. In normal desktop runs the private key isn't set and the
+# desktop never tries to issue; we only verify.
+LICENSING_ED25519_PRIVATE_KEY_PEM = os.environ.get(
+    "LICENSING_ED25519_PRIVATE_KEY_PEM", ""
+)
+LICENSING_ED25519_PUBLIC_KEY_PEM = os.environ.get(
+    "LICENSING_ED25519_PUBLIC_KEY_PEM", ""
+)
+
+# DESKTOP_PIVOT_PLAN Phase 3c — the cloud's Ed25519 PUBLIC key for
+# verifying signed entitlements. The desktop fetches this once from
+# /api/v1/licenses/public-key/ at first activation and caches it.
+# Phase 5 embeds it at PyInstaller build time so a tampered binary
+# can't trust an entitlement signed by an attacker's key.
+ZK_DESKTOP_LICENSING_PUBLIC_KEY_PEM = os.environ.get(
+    "ZK_DESKTOP_LICENSING_PUBLIC_KEY_PEM", ""
+)
 
 # Encryption key for apps.administration.fields.EncryptedTextField.
 # In production this is a base64 Fernet key from KMS; on desktop we
